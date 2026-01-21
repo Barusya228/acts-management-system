@@ -1,0 +1,20 @@
+.upload-section {
+  margin: 20px 0;
+}
+
+.file-input {
+  margin-bottom: 15px;
+}
+
+.preview-container {
+  margin-top: 15px;
+  text-align: center;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 300px;
+  border: 2px solid #ddd;
+  border-radius: 4px;
+}
+

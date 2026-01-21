@@ -1,0 +1,29 @@
+.act-info {
+  display: grid;
+  gap: 10px;
+}
+
+.info-row {
+  display: flex;
+  gap: 10px;
+}
+
+.info-row strong {
+  min-width: 150px;
+}
+
+.signature-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+}
+
+.signature-section h3 {
+  margin-bottom: 10px;
+}
+
+.signed-badge {
+  color: #28a745;
+  font-weight: bold;
+}
+
