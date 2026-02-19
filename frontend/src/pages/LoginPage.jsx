@@ -27,7 +27,19 @@ function LoginPage() {
       await login(email, password)
       // Navigation will happen automatically via useEffect when user is set
     } catch (err) {
-      setError(err.response?.data?.detail || err.message || 'Ошибка входа')
+      const detail = err.response?.data?.detail
+    
+      if (Array.isArray(detail)) {
+        // FastAPI validation errors
+        setError(detail.map(e => e.msg).join(', '))
+      } else if (typeof detail === 'string') {
+        setError(detail)
+      } else if (err.message) {
+        setError(err.message)
+      } else {
+        setError('Ошибка входа')
+      }
+    
       setLoading(false)
     }
   }
@@ -78,7 +90,7 @@ function LoginPage() {
         </form>
         <div className="login-hint">
           <p>Для тестирования используйте:</p>
-          <p>Email: admin@acts.local</p>
+          <p>Email: admin@example.com</p>
           <p>Password: admin123</p>
         </div>
       </div>
