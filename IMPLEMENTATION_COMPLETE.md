@@ -75,8 +75,10 @@ acts-management-system/
 ├── .gitignore
 ├── README.md                  # Главная документация
 ├── PROJECT_SUMMARY.md         # Этот файл
-├── install.bat                # Скрипт установки (Windows)
-└── start.bat                  # Скрипт запуска (Windows)
+├── scripts/
+│   └── windows/
+│       ├── install.bat        # Скрипт установки (Windows)
+│       └── start.bat          # Скрипт запуска (Windows)
 ```
 
 ## Реализованный функционал

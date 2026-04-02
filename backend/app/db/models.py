@@ -60,7 +60,9 @@ class Act(Base):
     party2_name = Column(String, nullable=False)
     issue_date = Column(Date, nullable=False)
     item_name = Column(String, nullable=False)
+    item_serial = Column(String, nullable=True)
     receiver_email = Column(String, nullable=False)
+    extra_data_json = Column(JSON, nullable=True)
     status = Column(SQLEnum(ActStatus), nullable=False, default=ActStatus.DRAFT)
     current_version = Column(Integer, nullable=False, default=1)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
@@ -72,7 +74,6 @@ class Act(Base):
     creator = relationship("User", back_populates="created_acts", foreign_keys=[created_by])
     versions = relationship("ActVersion", back_populates="act", cascade="all, delete-orphan")
     file_assets = relationship("FileAsset", back_populates="act", cascade="all, delete-orphan")
-    audit_logs = relationship("AuditLog", back_populates="act")
 
 class ActVersion(Base):
     __tablename__ = "act_versions"
@@ -119,4 +120,3 @@ class AuditLog(Base):
     
     # Relationships
     user = relationship("User", back_populates="audit_logs")
-    act = relationship("Act", back_populates="audit_logs", foreign_keys=[entity_id], primaryjoin="and_(AuditLog.entity_id==Act.id, AuditLog.entity_type=='act')", viewonly=True)

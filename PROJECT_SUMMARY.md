@@ -44,8 +44,10 @@ acts-management-system/
 │   ├── next.config.js                  # Next.js конфигурация
 │   ├── README.md                       # Документация
 │   └── SETUP.md                        # Инструкция по установке
-├── install.bat                         # Скрипт установки (Windows)
-├── start.bat                           # Скрипт запуска (Windows)
+├── scripts/
+│   └── windows/
+│       ├── install.bat                 # Скрипт установки (Windows)
+│       └── start.bat                   # Скрипт запуска (Windows)
 └── README.md                           # Главная документация
 ```
 
@@ -90,16 +92,16 @@ acts-management-system/
 
 ```bash
 # Установка зависимостей
-install.bat
+scripts\windows\install.bat
 
 # Запуск приложения
-start.bat
+scripts\windows\start.bat
 ```
 
 ### Вариант 2: Ручная установка
 
 ```bash
-cd acts-frontend
+cd frontend
 npm install
 npm run dev
 ```

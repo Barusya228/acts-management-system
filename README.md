@@ -29,7 +29,6 @@ acts-digitalization/
 │   ├── tailwind.config.ts
 │   └── ...
 ├── docker-compose.yml     # Docker Compose (PostgreSQL, backend, frontend)
-├── .env.example           # Пример переменных окружения
 └── README.md
 ```
 
@@ -87,6 +86,24 @@ http://localhost:3000
 - Пароль: `admin123`
 
 ## Локальная разработка
+
+### Windows Quick Start
+
+```bat
+scripts\windows\backend-install.bat
+scripts\windows\frontend-install.bat
+
+REM database setup still required once
+cd backend
+venv\Scripts\activate
+alembic upgrade head
+python scripts\seed_admin.py
+python scripts\seed_templates.py
+
+REM back to repo root, then run both services
+cd ..
+scripts\windows\start.bat
+```
 
 ### Backend
 
@@ -242,6 +259,7 @@ SMTP_PASSWORD=
 SMTP_FROM=
 SMTP_TLS=true
 STORAGE_PATH=./storage
+APP_BASE_URL=http://localhost:8000
 ```
 
 ### Frontend (.env.local)

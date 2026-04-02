@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { use, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import Layout from '@/components/Layout';
+import { useToast } from '@/contexts/ToastContext';
 
 interface ActFormData {
   party1_name: string;
@@ -12,9 +13,39 @@ interface ActFormData {
   item_name: string;
   item_serial: string;
   receiver_email: string;
+  template_id: string;
+  change_note: string;
 }
 
-export default function ActEditPage({ params }: { params: { id: string } }) {
+interface TemplateField {
+  name: string;
+  type: string;
+  label: string;
+  required: boolean;
+}
+
+interface TemplateOption {
+  id: string;
+  code: string;
+  name: string;
+  schema_json?: {
+    fields?: TemplateField[];
+  };
+}
+
+const reservedFields = new Set([
+  'party1_name',
+  'party2_name',
+  'issue_date',
+  'item_name',
+  'item_serial',
+  'receiver_email',
+]);
+
+export default function ActEditPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const [templates, setTemplates] = useState<TemplateOption[]>([]);
+  const [extraData, setExtraData] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState<ActFormData>({
     party1_name: '',
     party2_name: '',
@@ -22,20 +53,35 @@ export default function ActEditPage({ params }: { params: { id: string } }) {
     item_name: '',
     item_serial: '',
     receiver_email: '',
+    template_id: '',
+    change_note: '',
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const { showToast } = useToast();
   const router = useRouter();
 
-  useEffect(() => {
-    fetchAct();
-  }, [params.id]);
+  const selectedTemplate = templates.find((template) => template.id === formData.template_id);
+  const dynamicFields = (selectedTemplate?.schema_json?.fields || []).filter(
+    (field) => !reservedFields.has(field.name)
+  );
 
-  const fetchAct = async () => {
+  useEffect(() => {
+    fetchData();
+  }, [id]);
+
+  const fetchData = async () => {
     try {
-      const res = await api.get(`/api/acts/${params.id}`);
-      const act = res.data;
+      const [actRes, templatesRes] = await Promise.all([
+        api.get(`/api/acts/${id}`),
+        api.get('/api/templates?is_active=true'),
+      ]);
+
+      const act = actRes.data;
+      const templateList = Array.isArray(templatesRes.data) ? templatesRes.data : [];
+      setTemplates(templateList);
+
       setFormData({
         party1_name: act.party1_name,
         party2_name: act.party2_name,
@@ -43,9 +89,23 @@ export default function ActEditPage({ params }: { params: { id: string } }) {
         item_name: act.item_name,
         item_serial: act.item_serial,
         receiver_email: act.receiver_email,
+        template_id: act.template_id,
+        change_note: '',
       });
+
+      const template = templateList.find((item) => item.id === act.template_id);
+      const dynamicTemplateFields = (template?.schema_json?.fields || []).filter(
+        (field) => !reservedFields.has(field.name)
+      );
+      const initialExtra: Record<string, string> = {};
+      dynamicTemplateFields.forEach((field) => {
+        initialExtra[field.name] = String(act.extra_data_json?.[field.name] ?? '');
+      });
+      setExtraData(initialExtra);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Ошибка загрузки акта');
+      const msg = err.response?.data?.detail || 'Ошибка загрузки акта';
+      setError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -57,13 +117,17 @@ export default function ActEditPage({ params }: { params: { id: string } }) {
     setError('');
 
     try {
-      await api.put(`/api/acts/${params.id}`, {
+      await api.patch(`/api/acts/${id}`, {
         ...formData,
         issue_date: new Date(formData.issue_date).toISOString(),
+        extra_data_json: extraData,
       });
-      router.push(`/acts/${params.id}`);
+      showToast('Изменения сохранены, версия обновлена', 'success');
+      router.push(`/acts/${id}`);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Ошибка сохранения акта');
+      const msg = err.response?.data?.detail || 'Ошибка сохранения акта';
+      setError(msg);
+      showToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -74,6 +138,13 @@ export default function ActEditPage({ params }: { params: { id: string } }) {
       ...formData,
       [e.target.name]: e.target.value,
     });
+  };
+
+  const handleExtraFieldChange = (name: string, value: string) => {
+    setExtraData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   };
 
   if (loading) {
@@ -185,6 +256,45 @@ export default function ActEditPage({ params }: { params: { id: string } }) {
               required
             />
           </div>
+
+          <div className="mb-6">
+            <label htmlFor="change_note" className="block text-sm font-medium text-gray-700 mb-2">
+              Комментарий к изменению версии
+            </label>
+            <input
+              type="text"
+              id="change_note"
+              name="change_note"
+              value={formData.change_note}
+              onChange={handleChange}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Например: Обновили серийный номер"
+            />
+          </div>
+
+          {dynamicFields.length > 0 && (
+            <div className="mb-6">
+              <h2 className="mb-3 text-base font-semibold text-gray-800">Поля по шаблону</h2>
+              <div className="grid grid-cols-1 gap-4">
+                {dynamicFields.map((field) => (
+                  <div key={field.name}>
+                    <label htmlFor={field.name} className="block text-sm font-medium text-gray-700 mb-2">
+                      {field.label}
+                      {field.required ? ' *' : ''}
+                    </label>
+                    <input
+                      type={field.type === 'email' ? 'email' : field.type === 'date' ? 'date' : 'text'}
+                      id={field.name}
+                      value={extraData[field.name] || ''}
+                      onChange={(e) => handleExtraFieldChange(field.name, e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required={field.required}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-4">
             <button
