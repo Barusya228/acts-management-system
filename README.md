@@ -1,107 +1,146 @@
-# Acts Digitalization System
+# Acts Management System
 
-Веб-приложение для цифровизации актов выдачи техники.
-Монорепозиторий с backend на FastAPI и frontend на Next.js (App Router) с Tailwind CSS.
+Веб-приложение для цифровизации актов выдачи и возврата техники.
+Монорепозиторий содержит backend на FastAPI и frontend на Next.js (App Router).
+
+## Что умеет система
+
+- создание актов выдачи техники по шаблонам
+- подписание акта двумя сторонами
+- запуск и подписание процесса возврата техники
+- хранение версий акта и PDF для каждой версии
+- гостевой вход для подписания без отдельной учётной записи сотрудника
+- справочник участников (сотрудники и IT-менеджеры)
+- email-уведомления при создании и завершении процессов
 
 ## Структура проекта
 
+```text
+acts-management-system/
+|-- backend/                  # FastAPI, SQLAlchemy, Alembic
+|   |-- app/
+|   |   |-- api/              # auth, acts, templates, participants
+|   |   |-- core/             # config, security, db deps
+|   |   |-- db/               # модели БД
+|   |   |-- schemas/          # pydantic-схемы
+|   |   |-- services/         # PDF и email логика
+|   |   `-- utils/            # storage, pdf и др.
+|   |-- alembic/              # миграции
+|   |-- scripts/              # сиды и сервисные скрипты
+|   `-- requirements.txt
+|-- frontend/                 # Next.js приложение
+|   |-- app/                  # маршруты страниц
+|   |-- components/           # UI и формы
+|   |-- contexts/             # auth context
+|   |-- lib/                  # API клиент и утилиты
+|   `-- package.json
+|-- scripts/windows/          # bat-скрипты для Windows
+|-- docker-compose.yml
+`-- README.md
 ```
-acts-digitalization/
-├── backend/                # FastAPI приложение
-│   ├── app/
-│   │   ├── api/           # API роуты (v1)
-│   │   ├── core/          # Конфигурация, безопасность, БД
-│   │   ├── db/            # Модели SQLAlchemy
-│   │   ├── schemas/       # Pydantic схемы
-│   │   ├── services/      # Бизнес-логика
-│   │   └── utils/         # Утилиты (PDF, email и др.)
-│   ├── alembic/           # Миграции БД
-│   ├── scripts/           # Скрипты для начальных данных
-│   ├── storage/           # Хранилище PDF и подписей
-│   ├── tests/             # Тесты
-│   └── requirements.txt
-├── frontend/              # Next.js приложение
-│   ├── app/               # App Router (маршруты)
-│   ├── components/        # React компоненты (UI)
-│   ├── contexts/          # Контексты (Auth и др.)
-│   ├── lib/               # API клиент, утилиты
-│   ├── package.json
-│   ├── tailwind.config.ts
-│   └── ...
-├── docker-compose.yml     # Docker Compose (PostgreSQL, backend, frontend)
-└── README.md
-```
+
+## Роли
+
+- `ADMIN` - управление шаблонами, участниками и полным циклом работы
+- `GUEST` - ограниченный доступ для просмотра и подписания актов
+
+По умолчанию seed-скрипт создаёт двух пользователей:
+
+- `admin@example.com` / `admin123`
+- `guest@example.com` / `guest123`
+
+## Основные статусы акта
+
+- `DRAFT`
+- `SIGNED_PARTY2`
+- `COMPLETED`
+- `RETURN_INITIATED`
+- `RETURN_SIGNED_PARTY1`
+- `RETURNED`
+
+Типовой сценарий выдачи:
+
+1. Создать акт.
+2. Подписать со стороны получателя.
+3. Подписать со стороны передающей стороны.
+4. Получить финальный PDF и завершённый статус.
+
+Типовой сценарий возврата:
+
+1. Запустить возврат для завершённого акта.
+2. Подписать возврат одной стороной.
+3. Подписать возврат второй стороной.
+4. Получить финальный PDF возврата и статус `RETURNED`.
 
 ## Требования
 
-- Docker и Docker Compose (рекомендуемый способ)
-- Или локально: Python 3.11+, Node.js 18+, PostgreSQL 15+
+- Docker и Docker Compose для контейнерного запуска
+- или локально: Python 3.11+, Node.js 18+, PostgreSQL 15+
 
-## Быстрый старт (Docker)
+## Быстрый старт через Docker
 
-### 1. Клонируйте репозиторий
+1. Клонируйте репозиторий:
 
 ```bash
 git clone <repository-url>
 cd acts-management-system
 ```
 
-### 2. Настройте переменные окружения
+2. Подготовьте переменные окружения:
 
 ```bash
-# Backend
 cp backend/.env.example backend/.env
-
-# Frontend
 cp frontend/.env.example frontend/.env.local
 ```
 
-При необходимости отредактируйте `.env` файлы (пароли, порты и т.д.)
-
-### 3. Запустите контейнеры
+3. Запустите сервисы:
 
 ```bash
 docker-compose up -d
 ```
 
-Будут запущены:
-- PostgreSQL на порту 5432
-- Backend API на http://localhost:8000
-- Frontend на http://localhost:3000
-
-### 4. Примените миграции и загрузите начальные данные
+4. Примените миграции и заполните начальные данные:
 
 ```bash
 docker-compose exec backend alembic upgrade head
 docker-compose exec backend python scripts/seed_admin.py
 docker-compose exec backend python scripts/seed_templates.py
+docker-compose exec backend python scripts/seed_employees.py
 ```
 
-### 5. Откройте приложение в браузере
+5. Откройте приложение:
 
-http://localhost:3000
-
-**Учётные данные по умолчанию:**
-- Email: `admin@example.com`
-- Пароль: `admin123`
+- frontend: `http://localhost:3000`
+- backend API: `http://localhost:8000`
+- Swagger UI: `http://localhost:8000/docs`
 
 ## Локальная разработка
 
-### Windows Quick Start
+### Windows
+
+Установка зависимостей:
 
 ```bat
 scripts\windows\backend-install.bat
 scripts\windows\frontend-install.bat
+```
 
-REM database setup still required once
+Первичная настройка базы:
+
+```bat
+docker-compose up -d db
 cd backend
 venv\Scripts\activate
 alembic upgrade head
 python scripts\seed_admin.py
 python scripts\seed_templates.py
-
-REM back to repo root, then run both services
+python scripts\seed_employees.py
 cd ..
+```
+
+Запуск backend и frontend:
+
+```bat
 scripts\windows\start.bat
 ```
 
@@ -110,20 +149,13 @@ scripts\windows\start.bat
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # или venv\Scripts\activate на Windows
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Настройте .env
 cp .env.example .env
-
-# Запустите миграции
 alembic upgrade head
-
-# Добавьте тестовые данные
 python scripts/seed_admin.py
 python scripts/seed_templates.py
-
-# Запустите сервер
+python scripts/seed_employees.py
 uvicorn app.main:app --reload
 ```
 
@@ -132,121 +164,118 @@ uvicorn app.main:app --reload
 ```bash
 cd frontend
 npm install
-
-# Настройте .env.local
 cp .env.example .env.local
-
 npm run dev
 ```
 
-Теперь фронтенд доступен на http://localhost:3000, а API — на http://localhost:8000.
+## Основные страницы frontend
 
-## API Документация
+- `/login` - вход администратора
+- `/guest` - гостевой вход
+- `/acts/create` - создание акта
+- `/acts/[id]` - просмотр акта
+- `/acts/[id]/edit` - редактирование акта
+- `/templates` - управление шаблонами
+- `/participants` - справочник участников
 
-После запуска бэкенда документация доступна по адресам:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
+## Основные API endpoints
 
-### Основные API endpoints
+### Auth
 
-#### Авторизация
-- `POST /api/auth/login` — вход
-- `GET /api/auth/me` — информация о текущем пользователе
+- `POST /api/auth/login` - вход по email и паролю
+- `POST /api/auth/guest-login` - вход гостевым пользователем
+- `GET /api/auth/me` - текущий пользователь
 
-#### Акты
-- `GET /api/acts` — список актов (фильтры, пагинация)
-- `POST /api/acts` — создать акт
-- `GET /api/acts/{id}` — получить акт
-- `PATCH /api/acts/{id}` — обновить акт (создаёт новую версию)
-- `POST /api/acts/{id}/sign/party1` — подписать стороной 1
-- `POST /api/acts/{id}/sign/party2` — подписать стороной 2
-- `GET /api/acts/{id}/versions` — история версий
-- `GET /api/acts/{id}/download/pdf` — скачать PDF
+### Acts
 
-#### Шаблоны (только для ADMIN)
-- `GET /api/templates` — список шаблонов
-- `POST /api/templates` — создать шаблон
-- `GET /api/templates/{id}` — получить шаблон
-- `PATCH /api/templates/{id}` — обновить шаблон
+- `GET /api/acts` - список актов с фильтрами и пагинацией
+- `POST /api/acts` - создать акт
+- `GET /api/acts/{id}` - получить акт
+- `PATCH /api/acts/{id}` - обновить акт и создать новую версию
+- `DELETE /api/acts/{id}` - удалить акт, только `ADMIN`
+- `POST /api/acts/{id}/sign/party1` - подпись первой стороны
+- `POST /api/acts/{id}/sign/party2` - подпись второй стороны
+- `POST /api/acts/{id}/return` - запустить возврат техники
+- `GET /api/acts/{id}/versions` - история версий
+- `GET /api/acts/{id}/download/pdf` - скачать последний PDF
+- `GET /api/acts/{id}/preview/pdf` - открыть последний PDF inline
+- `GET /api/acts/{id}/versions/{version_number}/download/pdf` - скачать PDF конкретной версии
 
-## Модели базы данных
+### Templates
+
+- `GET /api/templates` - список шаблонов
+- `POST /api/templates` - создать шаблон, только `ADMIN`
+- `GET /api/templates/{id}` - получить шаблон
+- `PATCH /api/templates/{id}` - обновить шаблон, только `ADMIN`
+
+### Participants
+
+- `GET /api/participants` - список участников
+- `POST /api/participants` - создать участника, только `ADMIN`
+- `PATCH /api/participants/{participant_id}` - обновить участника, только `ADMIN`
+- `POST /api/participants/bulk` - массовое добавление участников, только `ADMIN`
+
+## Модель данных верхнего уровня
 
 ### users
-- `id` (UUID) PK
-- `email` (unique)
+
+- `email`
 - `full_name`
-- `password_hash`
-- `role` (ADMIN / STAFF)
-- `is_active` (bool)
-- `created_at` (timestamptz)
+- `role` (`ADMIN`, `GUEST`)
+- `is_active`
+
+### participants
+
+- `full_name`
+- `kind` (`IT_MANAGER`, `EMPLOYEE`)
+- `email`
+- `department`
+- `title`
+- `sticker_emoji`
+- `is_active`
 
 ### templates
-- `id` (UUID) PK
-- `code` (string, например IPAD, GENERIC)
+
+- `code`
 - `name`
-- `description` (optional)
-- `schema_json` (JSONB)
-- `is_active` (bool)
-- `created_at` (timestamptz)
+- `description`
+- `schema_json`
+- `is_active`
 
 ### acts
-- `id` (UUID) PK
-- `template_id` (FK -> templates.id)
+
+- `template_id`
 - `party1_name`
 - `party2_name`
-- `issue_date` (date)
+- `issue_date`
 - `item_name`
+- `item_serial`
 - `receiver_email`
-- `status` (enum: DRAFT, SIGNED_PARTY1, SIGNED_PARTY2, COMPLETED)
-- `current_version` (integer)
-- `created_by` (FK -> users.id)
-- `created_at` (timestamptz)
-- `updated_at` (timestamptz)
+- `extra_data_json`
+- `return_date`
+- `return_note`
+- `status`
+- `current_version`
 
 ### act_versions
-- `id` (UUID) PK
-- `act_id` (FK -> acts.id)
-- `version_number` (integer)
-- `data_json` (JSONB)
-- `pdf_file_id` (FK -> file_assets.id, nullable)
-- `change_note` (text, optional)
-- `created_by` (FK -> users.id)
-- `created_at` (timestamptz)
+
+- снимок данных акта на момент версии
+- `change_note`
+- ссылка на PDF версии
 
 ### file_assets
-- `id` (UUID) PK
-- `act_id` (FK -> acts.id, nullable)
-- `kind` (PDF, SIGNATURE_PARTY1, SIGNATURE_PARTY2)
-- `storage_path` (string)
-- `mime_type`
-- `size_bytes` (integer)
-- `sha256` (string, optional)
-- `created_at` (timestamptz)
 
-### audit_log
-- `id` (UUID) PK
-- `user_id` (FK -> users.id, nullable)
-- `entity_type` (string)
-- `entity_id` (UUID)
-- `action` (string)
-- `metadata_json` (JSONB, nullable)
-- `created_at` (timestamptz)
-
-## Особенности
-
-- **JWT авторизация** — все endpoints защищены, кроме логина
-- **Версионирование актов** — каждое изменение создаёт новую версию
-- **PDF генерация** — автоматическая при создании/обновлении акта
-- **Подписи** — поддержка canvas и загрузки PNG
-- **Email уведомления** — отправка получателю при создании акта
-- **Аудит** — логирование всех действий пользователей
-- **Tailwind CSS** — стилизация фронтенда
-- **Next.js App Router** — современный подход к маршрутизации
+- `PDF`
+- `SIGNATURE_PARTY1`
+- `SIGNATURE_PARTY2`
+- `RETURN_SIGNATURE_PARTY1`
+- `RETURN_SIGNATURE_PARTY2`
 
 ## Переменные окружения
 
-### Backend (.env)
-```
+### Backend `.env`
+
+```env
 DATABASE_URL=postgresql://user:pass@db:5432/acts_db
 SECRET_KEY=your-secret-key-here
 ALGORITHM=HS256
@@ -262,23 +291,41 @@ STORAGE_PATH=./storage
 APP_BASE_URL=http://localhost:8000
 ```
 
-### Frontend (.env.local)
-```
+### Frontend `.env.local`
+
+```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-## Разработка
+## Полезные команды
 
-### Добавление новой миграции (backend)
+Создать миграцию:
+
 ```bash
 cd backend
-alembic revision --autogenerate -m "описание"
+alembic revision --autogenerate -m "describe change"
+```
+
+Применить миграции:
+
+```bash
+cd backend
 alembic upgrade head
 ```
 
-### Добавление новой страницы (frontend)
-Создайте папку в `frontend/app/` с файлом `page.tsx`. Для динамических маршрутов используйте `[param]`.
+Очистить базу служебным скриптом:
 
-## Лицензия
+```bash
+cd backend
+python scripts/clear_database.py
+```
+
+## Примечания
+
+- PDF и подписи сохраняются в `backend/storage/`
+- frontend работает на Next.js 15
+- backend подключает роуты `auth`, `acts`, `templates`, `participants`
+
+## License
 
 MIT
