@@ -126,6 +126,50 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     }
   };
 
+  const openOrDownloadPdf = async (
+    endpoint: string,
+    fallbackFilename: string,
+    mode: 'preview' | 'download'
+  ) => {
+    try {
+      const res = await api.get(endpoint, { responseType: 'blob' });
+      const blob = new Blob([res.data], {
+        type: res.headers['content-type'] || 'application/pdf',
+      });
+
+      const objectUrl = URL.createObjectURL(blob);
+
+      if (mode === 'preview') {
+        window.open(objectUrl, '_blank', 'noopener,noreferrer');
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        return;
+      }
+
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = fallbackFilename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+    } catch {
+      showToast('Не удалось загрузить PDF', 'error');
+    }
+  };
+
+  const handlePreviewCurrentPdf = () =>
+    openOrDownloadPdf(`/api/acts/${id}/preview/pdf`, `act_${id}_preview.pdf`, 'preview');
+
+  const handleDownloadCurrentPdf = () =>
+    openOrDownloadPdf(`/api/acts/${id}/download/pdf`, `act_${id}.pdf`, 'download');
+
+  const handleDownloadVersionPdf = (versionNumber: number) =>
+    openOrDownloadPdf(
+      `/api/acts/${id}/versions/${versionNumber}/download/pdf`,
+      `act_${id}_v${versionNumber}.pdf`,
+      'download'
+    );
+
   const getStatusLabel = (status: string) => {
     const labels: Record<string, string> = {
       DRAFT: 'Черновик',
@@ -168,21 +212,20 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-2xl font-bold">Просмотр акта</h1>
           <div className="flex gap-2">
-            <a
-              href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/acts/${act.id}/preview/pdf`}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              type="button"
+              onClick={handlePreviewCurrentPdf}
               className="bg-slate-700 text-white px-4 py-2 rounded hover:bg-slate-800"
             >
               Предпросмотр PDF
-            </a>
-            <a
-              href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/acts/${act.id}/download/pdf`}
-              download
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadCurrentPdf}
               className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
             >
               Скачать PDF
-            </a>
+            </button>
             <Link
               href={`/acts/${act.id}/edit`}
               className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
@@ -365,14 +408,13 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                           {new Date(version.created_at).toLocaleString('ru-RU')}
                         </span>
                         {version.pdf_file_id && (
-                          <a
-                            href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/acts/${act.id}/versions/${version.version_number}/download/pdf`}
-                            target="_blank"
-                            rel="noreferrer"
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadVersionPdf(version.version_number)}
                             className="rounded bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-700"
                           >
                             PDF
-                          </a>
+                          </button>
                         )}
                       </div>
                     </div>
