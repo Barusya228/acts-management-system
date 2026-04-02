@@ -8,18 +8,29 @@ from app.core.database import Base
 
 class UserRole(str, enum.Enum):
     ADMIN = "ADMIN"
-    STAFF = "STAFF"
+    GUEST = "GUEST"
+
+
+class ParticipantKind(str, enum.Enum):
+    IT_MANAGER = "IT_MANAGER"
+    EMPLOYEE = "EMPLOYEE"
 
 class ActStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     SIGNED_PARTY1 = "SIGNED_PARTY1"
     SIGNED_PARTY2 = "SIGNED_PARTY2"
     COMPLETED = "COMPLETED"
+    RETURN_INITIATED = "RETURN_INITIATED"
+    RETURN_SIGNED_PARTY1 = "RETURN_SIGNED_PARTY1"
+    RETURN_SIGNED_PARTY2 = "RETURN_SIGNED_PARTY2"
+    RETURNED = "RETURNED"
 
 class FileAssetKind(str, enum.Enum):
     PDF = "PDF"
     SIGNATURE_PARTY1 = "SIGNATURE_PARTY1"
     SIGNATURE_PARTY2 = "SIGNATURE_PARTY2"
+    RETURN_SIGNATURE_PARTY1 = "RETURN_SIGNATURE_PARTY1"
+    RETURN_SIGNATURE_PARTY2 = "RETURN_SIGNATURE_PARTY2"
 
 class User(Base):
     __tablename__ = "users"
@@ -28,7 +39,7 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     full_name = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(SQLEnum(UserRole), nullable=False, default=UserRole.STAFF)
+    role = Column(SQLEnum(UserRole), nullable=False, default=UserRole.GUEST)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
@@ -36,6 +47,20 @@ class User(Base):
     created_acts = relationship("Act", back_populates="creator", foreign_keys="Act.created_by")
     act_versions = relationship("ActVersion", back_populates="creator")
     audit_logs = relationship("AuditLog", back_populates="user")
+
+
+class Participant(Base):
+    __tablename__ = "participants"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    full_name = Column(String, nullable=False)
+    email = Column(String, nullable=True, index=True)
+    department = Column(String, nullable=True)
+    title = Column(String, nullable=True)
+    sticker_emoji = Column(String, nullable=True)
+    kind = Column(SQLEnum(ParticipantKind), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 class Template(Base):
     __tablename__ = "templates"
@@ -63,6 +88,8 @@ class Act(Base):
     item_serial = Column(String, nullable=True)
     receiver_email = Column(String, nullable=False)
     extra_data_json = Column(JSON, nullable=True)
+    return_date = Column(Date, nullable=True)
+    return_note = Column(Text, nullable=True)
     status = Column(SQLEnum(ActStatus), nullable=False, default=ActStatus.DRAFT)
     current_version = Column(Integer, nullable=False, default=1)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

@@ -5,12 +5,16 @@ from typing import Optional
 from uuid import UUID
 from datetime import datetime
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_current_admin_user, get_current_guest_or_admin_user
 from app.core.config import settings
 from app.db.models import Act, ActVersion, Template, User, ActStatus, FileAsset, FileAssetKind
-from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse
+from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
-from app.services.email_service import send_act_created_email
+from app.services.email_service import (
+    send_act_completed_email,
+    send_act_created_email,
+    send_return_completed_email,
+)
 from app.utils.storage import resolve_storage_path, save_data_url_file
 
 router = APIRouter()
@@ -103,7 +107,16 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
             normalized[key] = payload[key]
     return normalized
 
-@router.get("/", response_model=ActListResponse)
+
+def _is_return_flow(status_value: ActStatus) -> bool:
+    return status_value in {
+        ActStatus.RETURN_INITIATED,
+        ActStatus.RETURN_SIGNED_PARTY1,
+        ActStatus.RETURN_SIGNED_PARTY2,
+        ActStatus.RETURNED,
+    }
+
+@router.get("", response_model=ActListResponse)
 async def list_acts(
     party1: Optional[str] = Query(None),
     party2: Optional[str] = Query(None),
@@ -112,7 +125,7 @@ async def list_acts(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     query = db.query(Act)
     
@@ -135,11 +148,11 @@ async def list_acts(
         "page_size": page_size
     }
 
-@router.post("/", response_model=ActResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ActResponse, status_code=status.HTTP_201_CREATED)
 async def create_act(
     act_data: ActCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     # Verify template exists
     template = db.query(Template).filter(Template.id == act_data.template_id).first()
@@ -192,7 +205,7 @@ async def create_act(
 async def get_act(
     act_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
     
@@ -209,7 +222,7 @@ async def update_act(
     act_id: UUID,
     act_data: ActUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
     
@@ -254,14 +267,14 @@ async def update_act(
     
     db.commit()
     db.refresh(act)
-    
+
     return act
 
 @router.delete("/{act_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_act(
     act_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
     
@@ -281,7 +294,7 @@ async def sign_party1(
     act_id: UUID,
     signature: SignatureRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
     
@@ -291,27 +304,38 @@ async def sign_party1(
             detail="Act not found"
         )
     
-    if act.status != ActStatus.DRAFT:
+    if act.status == ActStatus.SIGNED_PARTY2:
+        act.status = ActStatus.COMPLETED
+    elif act.status == ActStatus.RETURN_INITIATED:
+        act.status = ActStatus.RETURN_SIGNED_PARTY1
+    else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Act already signed by party1"
+            detail="Подпись стороны 1 сейчас недоступна по порядку процесса"
         )
     
     relative_path, mime_type, size_bytes, sha256 = save_data_url_file(
         signature.signature_data,
         relative_dir=f"acts/{act.id}",
-        filename_stem=f"signature_party1_v{act.current_version}"
+        filename_stem=(
+            f"return_signature_party1_v{act.current_version}"
+            if _is_return_flow(act.status)
+            else f"signature_party1_v{act.current_version}"
+        )
     )
     db.add(FileAsset(
         act_id=act.id,
-        kind=FileAssetKind.SIGNATURE_PARTY1,
+        kind=(
+            FileAssetKind.RETURN_SIGNATURE_PARTY1
+            if _is_return_flow(act.status)
+            else FileAssetKind.SIGNATURE_PARTY1
+        ),
         storage_path=relative_path,
         mime_type=mime_type,
         size_bytes=size_bytes,
         sha256=sha256,
     ))
 
-    act.status = ActStatus.SIGNED_PARTY1
     act.current_version += 1
     act.updated_at = datetime.utcnow()
 
@@ -323,10 +347,20 @@ async def sign_party1(
     )
     db.add(version)
     db.flush()
-    create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
+    pdf_asset = create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
     
     db.commit()
     db.refresh(act)
+
+    if pdf_asset.storage_path and act.status == ActStatus.COMPLETED:
+        try:
+            await send_act_completed_email(
+                act,
+                pdf_path=resolve_storage_path(pdf_asset.storage_path),
+            )
+        except Exception:
+            # Email delivery should not break signing flow.
+            pass
     
     return act
 
@@ -335,7 +369,7 @@ async def sign_party2(
     act_id: UUID,
     signature: SignatureRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
     
@@ -345,29 +379,37 @@ async def sign_party2(
             detail="Act not found"
         )
     
+    if act.status == ActStatus.DRAFT:
+        act.status = ActStatus.SIGNED_PARTY2
+    elif act.status == ActStatus.RETURN_SIGNED_PARTY1:
+        act.status = ActStatus.RETURNED
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Подпись стороны 2 сейчас недоступна по порядку процесса"
+        )
+
     relative_path, mime_type, size_bytes, sha256 = save_data_url_file(
         signature.signature_data,
         relative_dir=f"acts/{act.id}",
-        filename_stem=f"signature_party2_v{act.current_version}"
+        filename_stem=(
+            f"return_signature_party2_v{act.current_version}"
+            if _is_return_flow(act.status)
+            else f"signature_party2_v{act.current_version}"
+        )
     )
     db.add(FileAsset(
         act_id=act.id,
-        kind=FileAssetKind.SIGNATURE_PARTY2,
+        kind=(
+            FileAssetKind.RETURN_SIGNATURE_PARTY2
+            if _is_return_flow(act.status)
+            else FileAssetKind.SIGNATURE_PARTY2
+        ),
         storage_path=relative_path,
         mime_type=mime_type,
         size_bytes=size_bytes,
         sha256=sha256,
     ))
-
-    if act.status == ActStatus.DRAFT:
-        act.status = ActStatus.SIGNED_PARTY2
-    elif act.status == ActStatus.SIGNED_PARTY1:
-        act.status = ActStatus.COMPLETED
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid act status for party2 signature"
-        )
     
     act.current_version += 1
     act.updated_at = datetime.utcnow()
@@ -380,10 +422,20 @@ async def sign_party2(
     )
     db.add(version)
     db.flush()
-    create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
+    pdf_asset = create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
     
     db.commit()
     db.refresh(act)
+
+    if pdf_asset.storage_path and act.status == ActStatus.RETURNED:
+        try:
+            await send_return_completed_email(
+                act,
+                pdf_path=resolve_storage_path(pdf_asset.storage_path),
+            )
+        except Exception:
+            # Email delivery should not break signing flow.
+            pass
     
     return act
 
@@ -391,7 +443,7 @@ async def sign_party2(
 async def get_act_versions(
     act_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
     
@@ -406,11 +458,54 @@ async def get_act_versions(
     return versions
 
 
+@router.post("/{act_id}/return", response_model=ActResponse)
+async def start_return_flow(
+    act_id: UUID,
+    payload: ReturnStartRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user)
+):
+    act = db.query(Act).filter(Act.id == act_id).first()
+
+    if not act:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Act not found"
+        )
+
+    if act.status != ActStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Возврат можно начать только после полного завершения акта выдачи"
+        )
+
+    act.return_date = payload.return_date
+    act.return_note = payload.return_note
+    act.status = ActStatus.RETURN_INITIATED
+    act.current_version += 1
+    act.updated_at = datetime.utcnow()
+
+    version = ActVersion(
+        act_id=act.id,
+        version_number=act.current_version,
+        data_json=build_act_snapshot(act),
+        change_note="Инициирован возврат техники",
+        created_by=current_user.id,
+    )
+    db.add(version)
+    db.flush()
+    create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
+
+    db.commit()
+    db.refresh(act)
+    return act
+
+
 @router.get("/{act_id}/download/pdf")
 async def download_act_pdf(
     act_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
 
@@ -452,7 +547,7 @@ async def download_act_pdf(
 async def preview_act_pdf(
     act_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
 
@@ -495,7 +590,7 @@ async def download_act_pdf_by_version(
     act_id: UUID,
     version_number: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_guest_or_admin_user)
 ):
     act = db.query(Act).filter(Act.id == act_id).first()
 

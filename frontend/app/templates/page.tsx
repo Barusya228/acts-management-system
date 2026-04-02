@@ -6,6 +6,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import Layout from '@/components/Layout';
 import api from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
+import PageHeader from '@/components/ui/PageHeader';
+import SurfaceCard from '@/components/ui/SurfaceCard';
+import SectionTitle from '@/components/ui/SectionTitle';
 
 interface TemplateField {
   name: string;
@@ -232,9 +235,11 @@ export default function TemplatesPage() {
   return (
     <Layout>
       <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-bold">Шаблоны актов</h1>
-        </div>
+        <PageHeader
+          eyebrow="Конструктор документов"
+          title="Шаблоны актов"
+          description="Управляйте структурой документов, описанием полей и активностью шаблонов для выдачи и возврата техники."
+        />
 
         {error && (
           <div className="mb-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-red-700">
@@ -242,10 +247,10 @@ export default function TemplatesPage() {
           </div>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded shadow bg-white overflow-hidden">
+        <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <SurfaceCard className="overflow-hidden">
             <div className="border-b px-6 py-4">
-              <h2 className="text-lg font-semibold">Список шаблонов</h2>
+              <SectionTitle title="Список шаблонов" description="Активные и архивные конфигурации документов." />
             </div>
 
             {loading ? (
@@ -302,9 +307,9 @@ export default function TemplatesPage() {
                 ))}
               </div>
             )}
-          </div>
+          </SurfaceCard>
 
-          <div className="rounded shadow bg-white p-6">
+          <SurfaceCard className="p-5 md:p-6 xl:self-start">
             <h2 className="mb-4 text-lg font-semibold">
               {editingId ? 'Редактирование шаблона' : 'Создание шаблона'}
             </h2>
@@ -476,7 +481,7 @@ export default function TemplatesPage() {
                 )}
               </div>
             </form>
-          </div>
+          </SurfaceCard>
         </div>
       </div>
     </Layout>

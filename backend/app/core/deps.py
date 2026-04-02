@@ -60,3 +60,14 @@ async def get_current_admin_user(
             detail="Not enough permissions"
         )
     return current_user
+
+
+async def get_current_guest_or_admin_user(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    if current_user.role not in {UserRole.ADMIN, UserRole.GUEST}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Недостаточно прав"
+        )
+    return current_user

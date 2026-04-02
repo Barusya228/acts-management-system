@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import Layout from '@/components/Layout';
 import { useToast } from '@/contexts/ToastContext';
+import PageHeader from '@/components/ui/PageHeader';
+import SurfaceCard from '@/components/ui/SurfaceCard';
+import ParticipantPicker from '@/components/ParticipantPicker';
 
 interface ActFormData {
   party1_name: string;
@@ -33,6 +36,15 @@ interface TemplateOption {
   };
 }
 
+interface ParticipantOption {
+  id: string;
+  full_name: string;
+  email?: string | null;
+  department?: string | null;
+  title?: string | null;
+  kind: 'IT_MANAGER' | 'EMPLOYEE';
+}
+
 const reservedFields = new Set([
   'party1_name',
   'party2_name',
@@ -45,6 +57,9 @@ const reservedFields = new Set([
 export default function ActEditPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
+  const [participants, setParticipants] = useState<ParticipantOption[]>([]);
+  const [party1ParticipantId, setParty1ParticipantId] = useState('');
+  const [party2ParticipantId, setParty2ParticipantId] = useState('');
   const [extraData, setExtraData] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState<ActFormData>({
     party1_name: '',
@@ -63,6 +78,9 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
   const router = useRouter();
 
   const selectedTemplate = templates.find((template) => template.id === formData.template_id);
+  const itManagers = participants.filter((participant) => participant.kind === 'IT_MANAGER');
+  const employees = participants.filter((participant) => participant.kind === 'EMPLOYEE');
+  const selectedEmployee = employees.find((participant) => participant.id === party2ParticipantId);
   const dynamicFields = (selectedTemplate?.schema_json?.fields || []).filter(
     (field) => !reservedFields.has(field.name)
   );
@@ -73,14 +91,22 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
 
   const fetchData = async () => {
     try {
-      const [actRes, templatesRes] = await Promise.all([
+      const [actRes, templatesRes, participantsRes] = await Promise.all([
         api.get(`/api/acts/${id}`),
         api.get('/api/templates?is_active=true'),
+        api.get('/api/participants?is_active=true'),
       ]);
 
       const act = actRes.data;
       const templateList = Array.isArray(templatesRes.data) ? templatesRes.data : [];
+      const participantsList = Array.isArray(participantsRes.data) ? participantsRes.data : [];
       setTemplates(templateList);
+      setParticipants(participantsList);
+
+      const matchedParty1 = participantsList.find((item) => item.kind === 'IT_MANAGER' && item.full_name === act.party1_name);
+      const matchedParty2 = participantsList.find((item) => item.kind === 'EMPLOYEE' && item.full_name === act.party2_name);
+      setParty1ParticipantId(matchedParty1?.id || '');
+      setParty2ParticipantId(matchedParty2?.id || '');
 
       setFormData({
         party1_name: act.party1_name,
@@ -133,7 +159,7 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
@@ -157,8 +183,12 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
 
   return (
     <Layout>
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-2xl font-bold mb-6">Редактирование акта</h1>
+      <div className="mx-auto max-w-3xl">
+        <PageHeader
+          eyebrow="Редактирование"
+          title="Изменение акта"
+          description="Обновите данные документа. Каждое сохранение создает новую версию и фиксирует историю изменений."
+        />
 
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
@@ -166,34 +196,40 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="bg-white rounded shadow p-6">
+        <SurfaceCard className="p-5 md:p-6">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div className="mb-4">
-            <label htmlFor="party1_name" className="block text-sm font-medium text-gray-700 mb-2">
-              Сторона 1 (Передающая)
-            </label>
-            <input
-              type="text"
-              id="party1_name"
-              name="party1_name"
-              value={formData.party1_name}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
+            <ParticipantPicker
+              label="Сторона 1 (IT / Передающая)"
+              placeholder="Найдите IT-менеджера по имени, отделу или email"
+              value={party1ParticipantId}
+              options={itManagers}
+              onSelect={(participant) => {
+                setParty1ParticipantId(participant.id);
+                setFormData((prev) => ({
+                  ...prev,
+                  party1_name: participant.full_name,
+                }));
+              }}
+              helperText="Выбранный IT-менеджер используется как сторона 1 для этого акта."
             />
           </div>
 
           <div className="mb-4">
-            <label htmlFor="party2_name" className="block text-sm font-medium text-gray-700 mb-2">
-              Сторона 2 (Получающая)
-            </label>
-            <input
-              type="text"
-              id="party2_name"
-              name="party2_name"
-              value={formData.party2_name}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
+            <ParticipantPicker
+              label="Сторона 2 (Получающая)"
+              placeholder="Найдите сотрудника по имени, отделу или email"
+              value={party2ParticipantId}
+              options={employees}
+              onSelect={(participant) => {
+                setParty2ParticipantId(participant.id);
+                setFormData((prev) => ({
+                  ...prev,
+                  party2_name: participant.full_name,
+                  receiver_email: participant.email || '',
+                }));
+              }}
+              helperText="Email получателя обновится автоматически из карточки выбранного сотрудника."
             />
           </div>
 
@@ -252,9 +288,15 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
               name="receiver_email"
               value={formData.receiver_email}
               onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              readOnly={Boolean(selectedEmployee?.email)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 read-only:bg-gray-100 read-only:text-gray-600"
               required
             />
+            <p className="mt-2 text-xs text-gray-500">
+              {selectedEmployee?.email
+                ? 'Почта подставлена автоматически из карточки выбранного сотрудника.'
+                : 'Если у сотрудника нет email в справочнике, его можно изменить вручную.'}
+            </p>
           </div>
 
           <div className="mb-6">
@@ -275,7 +317,7 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
           {dynamicFields.length > 0 && (
             <div className="mb-6">
               <h2 className="mb-3 text-base font-semibold text-gray-800">Поля по шаблону</h2>
-              <div className="grid grid-cols-1 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {dynamicFields.map((field) => (
                   <div key={field.name}>
                     <label htmlFor={field.name} className="block text-sm font-medium text-gray-700 mb-2">
@@ -313,6 +355,7 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
             </button>
           </div>
         </form>
+        </SurfaceCard>
       </div>
     </Layout>
   );

@@ -14,6 +14,8 @@ def build_act_snapshot(act: Act) -> dict:
         "item_name": act.item_name,
         "item_serial": act.item_serial,
         "receiver_email": act.receiver_email,
+        "return_date": act.return_date.isoformat() if act.return_date else None,
+        "return_note": act.return_note,
         "status": act.status.value if hasattr(act.status, "value") else str(act.status),
         "current_version": act.current_version,
         "created_at": act.created_at.isoformat() if act.created_at else None,
@@ -25,31 +27,59 @@ def build_act_snapshot(act: Act) -> dict:
 def create_pdf_asset_for_version(db, act: Act, version: ActVersion, template_name: str | None = None) -> FileAsset:
     snapshot = build_act_snapshot(act)
 
-    party1_asset = (
+    issue_party1_asset = (
         db.query(FileAsset)
         .filter(FileAsset.act_id == act.id, FileAsset.kind == FileAssetKind.SIGNATURE_PARTY1)
         .order_by(FileAsset.created_at.desc())
         .first()
     )
-    party2_asset = (
+    issue_party2_asset = (
         db.query(FileAsset)
         .filter(FileAsset.act_id == act.id, FileAsset.kind == FileAssetKind.SIGNATURE_PARTY2)
         .order_by(FileAsset.created_at.desc())
         .first()
     )
-
-    party1_signature_path = (
-        str(resolve_storage_path(party1_asset.storage_path)) if party1_asset and party1_asset.storage_path else None
+    return_party1_asset = (
+        db.query(FileAsset)
+        .filter(FileAsset.act_id == act.id, FileAsset.kind == FileAssetKind.RETURN_SIGNATURE_PARTY1)
+        .order_by(FileAsset.created_at.desc())
+        .first()
     )
-    party2_signature_path = (
-        str(resolve_storage_path(party2_asset.storage_path)) if party2_asset and party2_asset.storage_path else None
+    return_party2_asset = (
+        db.query(FileAsset)
+        .filter(FileAsset.act_id == act.id, FileAsset.kind == FileAssetKind.RETURN_SIGNATURE_PARTY2)
+        .order_by(FileAsset.created_at.desc())
+        .first()
+    )
+
+    issue_party1_signature_path = (
+        str(resolve_storage_path(issue_party1_asset.storage_path))
+        if issue_party1_asset and issue_party1_asset.storage_path
+        else None
+    )
+    issue_party2_signature_path = (
+        str(resolve_storage_path(issue_party2_asset.storage_path))
+        if issue_party2_asset and issue_party2_asset.storage_path
+        else None
+    )
+    return_party1_signature_path = (
+        str(resolve_storage_path(return_party1_asset.storage_path))
+        if return_party1_asset and return_party1_asset.storage_path
+        else None
+    )
+    return_party2_signature_path = (
+        str(resolve_storage_path(return_party2_asset.storage_path))
+        if return_party2_asset and return_party2_asset.storage_path
+        else None
     )
 
     pdf_bytes = build_act_pdf_bytes(
         snapshot,
         template_name=template_name,
-        signature_party1_path=party1_signature_path,
-        signature_party2_path=party2_signature_path,
+        issue_signature_party1_path=issue_party1_signature_path,
+        issue_signature_party2_path=issue_party2_signature_path,
+        return_signature_party1_path=return_party1_signature_path,
+        return_signature_party2_path=return_party2_signature_path,
     )
     relative_path, size_bytes, sha256 = save_bytes(
         relative_dir=f"acts/{act.id}",

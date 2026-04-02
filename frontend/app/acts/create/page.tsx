@@ -6,6 +6,9 @@ import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import Layout from '@/components/Layout';
 import { useToast } from '@/contexts/ToastContext';
+import PageHeader from '@/components/ui/PageHeader';
+import SurfaceCard from '@/components/ui/SurfaceCard';
+import ParticipantPicker from '@/components/ParticipantPicker';
 
 interface ActFormData {
   party1_name: string;
@@ -32,6 +35,15 @@ interface TemplateOption {
   };
 }
 
+interface ParticipantOption {
+  id: string;
+  full_name: string;
+  email?: string | null;
+  department?: string | null;
+  title?: string | null;
+  kind: 'IT_MANAGER' | 'EMPLOYEE';
+}
+
 const reservedFields = new Set([
   'party1_name',
   'party2_name',
@@ -43,7 +55,10 @@ const reservedFields = new Set([
 
 export default function ActCreatePage() {
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
+  const [participants, setParticipants] = useState<ParticipantOption[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [party1ParticipantId, setParty1ParticipantId] = useState('');
+  const [party2ParticipantId, setParty2ParticipantId] = useState('');
   const [extraData, setExtraData] = useState<Record<string, string>>({});
   const [formData, setFormData] = useState<ActFormData>({
     party1_name: '',
@@ -60,13 +75,26 @@ export default function ActCreatePage() {
   const router = useRouter();
 
   const selectedTemplate = templates.find((template) => template.id === formData.template_id);
+  const itManagers = participants.filter((participant) => participant.kind === 'IT_MANAGER');
+  const employees = participants.filter((participant) => participant.kind === 'EMPLOYEE');
+  const selectedEmployee = employees.find((participant) => participant.id === party2ParticipantId);
   const dynamicFields = (selectedTemplate?.schema_json?.fields || []).filter(
     (field) => !reservedFields.has(field.name)
   );
 
   useEffect(() => {
     fetchTemplates();
+    fetchParticipants();
   }, []);
+
+  const fetchParticipants = async () => {
+    try {
+      const res = await api.get('/api/participants?is_active=true');
+      setParticipants(Array.isArray(res.data) ? res.data : []);
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Ошибка загрузки участников', 'error');
+    }
+  };
 
   const fetchTemplates = async () => {
     setLoadingTemplates(true);
@@ -151,8 +179,12 @@ export default function ActCreatePage() {
 
   return (
     <Layout>
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-2xl font-bold mb-6">Создание нового акта</h1>
+      <div className="mx-auto max-w-3xl">
+        <PageHeader
+          eyebrow="Создание"
+          title="Новый акт"
+          description="Заполните основные данные выдачи техники, выберите шаблон и добавьте нужные поля по структуре документа."
+        />
 
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
@@ -160,7 +192,8 @@ export default function ActCreatePage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="bg-white rounded shadow p-6">
+        <SurfaceCard className="p-5 md:p-6">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div className="mb-4">
             <label htmlFor="template_id" className="block text-sm font-medium text-gray-700 mb-2">
               Шаблон акта *
@@ -187,34 +220,37 @@ export default function ActCreatePage() {
           </div>
 
           <div className="mb-4">
-            <label htmlFor="party1_name" className="block text-sm font-medium text-gray-700 mb-2">
-              Сторона 1 (Передающая) *
-            </label>
-            <input
-              type="text"
-              id="party1_name"
-              name="party1_name"
-              value={formData.party1_name}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              placeholder="Например: ООО 'Компания'"
+            <ParticipantPicker
+              label="Сторона 1 (IT / Передающая)"
+              placeholder="Найдите IT-менеджера по имени, отделу или email"
+              value={party1ParticipantId}
+              options={itManagers}
+              onSelect={(participant) => {
+                setParty1ParticipantId(participant.id);
+                setFormData((prev) => ({
+                  ...prev,
+                  party1_name: participant.full_name,
+                }));
+              }}
+              helperText="Выбранный IT-менеджер будет подставлен как сторона 1 во все данные акта."
             />
           </div>
 
           <div className="mb-4">
-            <label htmlFor="party2_name" className="block text-sm font-medium text-gray-700 mb-2">
-              Сторона 2 (Получающая) *
-            </label>
-            <input
-              type="text"
-              id="party2_name"
-              name="party2_name"
-              value={formData.party2_name}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              placeholder="Например: Иванов Иван Иванович"
+            <ParticipantPicker
+              label="Сторона 2 (Получающая)"
+              placeholder="Найдите сотрудника по имени, отделу или email"
+              value={party2ParticipantId}
+              options={employees}
+              onSelect={(participant) => {
+                setParty2ParticipantId(participant.id);
+                setFormData((prev) => ({
+                  ...prev,
+                  party2_name: participant.full_name,
+                  receiver_email: participant.email || '',
+                }));
+              }}
+              helperText="Email получателя заполнится автоматически, если он указан в карточке сотрудника."
             />
           </div>
 
@@ -275,16 +311,22 @@ export default function ActCreatePage() {
               name="receiver_email"
               value={formData.receiver_email}
               onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              readOnly={Boolean(selectedEmployee?.email)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 read-only:bg-gray-100 read-only:text-gray-600"
               required
-              placeholder="example@domain.com"
+              placeholder={selectedEmployee?.email ? 'Email подставлен автоматически' : 'example@domain.com'}
             />
+            <p className="mt-2 text-xs text-gray-500">
+              {selectedEmployee?.email
+                ? 'Почта подставлена автоматически из карточки получателя.'
+                : 'Если у сотрудника в справочнике нет email, его можно указать вручную.'}
+            </p>
           </div>
 
           {dynamicFields.length > 0 && (
             <div className="mb-6">
               <h2 className="mb-3 text-base font-semibold text-gray-800">Поля по шаблону</h2>
-              <div className="grid grid-cols-1 gap-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {dynamicFields.map((field) => (
                   <div key={field.name}>
                     <label htmlFor={field.name} className="block text-sm font-medium text-gray-700 mb-2">
@@ -322,6 +364,7 @@ export default function ActCreatePage() {
             </button>
           </div>
         </form>
+        </SurfaceCard>
       </div>
     </Layout>
   );

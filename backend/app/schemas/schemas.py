@@ -56,6 +56,37 @@ class TemplateResponse(TemplateBase):
     class Config:
         from_attributes = True
 
+
+class ParticipantBase(BaseModel):
+    full_name: str
+    email: Optional[EmailStr] = None
+    department: Optional[str] = None
+    title: Optional[str] = None
+    sticker_emoji: Optional[str] = None
+    kind: str
+
+
+class ParticipantCreate(ParticipantBase):
+    pass
+
+
+class ParticipantUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    department: Optional[str] = None
+    title: Optional[str] = None
+    sticker_emoji: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ParticipantResponse(ParticipantBase):
+    id: UUID4
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 # Act schemas
 class ActBase(BaseModel):
     template_id: UUID4
@@ -66,6 +97,8 @@ class ActBase(BaseModel):
     item_serial: Optional[str] = None
     receiver_email: EmailStr
     extra_data_json: Optional[dict] = None
+    return_date: Optional[date] = None
+    return_note: Optional[str] = None
 
 class ActCreate(ActBase):
     pass
@@ -78,6 +111,8 @@ class ActUpdate(BaseModel):
     item_serial: Optional[str] = None
     receiver_email: Optional[EmailStr] = None
     extra_data_json: Optional[dict] = None
+    return_date: Optional[date] = None
+    return_note: Optional[str] = None
     change_note: Optional[str] = None
 
 class ActResponse(ActBase):
@@ -100,6 +135,11 @@ class ActListResponse(BaseModel):
 # Signature schemas
 class SignatureRequest(BaseModel):
     signature_data: str  # Base64 encoded image
+
+
+class ReturnStartRequest(BaseModel):
+    return_date: date
+    return_note: Optional[str] = None
 
 # Version schemas
 class ActVersionResponse(BaseModel):

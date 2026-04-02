@@ -15,6 +15,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  loginAsGuest: () => Promise<void>;
   logout: () => void;
 }
 
@@ -54,6 +55,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await fetchUser();
   };
 
+  const loginAsGuest = async () => {
+    const res = await api.post('/api/auth/guest-login');
+    const { access_token } = res.data;
+    localStorage.setItem('token', access_token);
+    api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+    await fetchUser();
+  };
+
   const logout = () => {
     localStorage.removeItem('token');
     delete api.defaults.headers.common['Authorization'];
@@ -61,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, loginAsGuest, logout }}>
       {children}
     </AuthContext.Provider>
   );

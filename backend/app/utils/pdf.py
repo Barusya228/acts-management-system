@@ -27,8 +27,10 @@ def _register_font() -> str:
 def build_act_pdf_bytes(
     act_data: dict,
     template_name: str | None = None,
-    signature_party1_path: str | None = None,
-    signature_party2_path: str | None = None,
+    issue_signature_party1_path: str | None = None,
+    issue_signature_party2_path: str | None = None,
+    return_signature_party1_path: str | None = None,
+    return_signature_party2_path: str | None = None,
 ) -> bytes:
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
@@ -61,6 +63,13 @@ def build_act_pdf_bytes(
         line(f"Серийный номер: {act_data['item_serial']}")
     line(f"Email получателя: {act_data['receiver_email']}")
 
+    if act_data.get("return_date"):
+        line("")
+        line("Блок возврата:", 12, 20)
+        line(f"Дата возврата: {act_data['return_date']}")
+        if act_data.get("return_note"):
+            line(f"Комментарий возврата: {act_data['return_note']}")
+
     extra_data = act_data.get("extra_data_json") or {}
     if extra_data:
         line("")
@@ -69,7 +78,7 @@ def build_act_pdf_bytes(
             line(f"{key}: {value}", 11, 18)
 
     line("")
-    line("Подписи:", 12, 20)
+    line("Блок выдачи:", 12, 20)
 
     def draw_signature(label: str, signature_path: str | None) -> None:
         nonlocal y
@@ -91,8 +100,18 @@ def build_act_pdf_bytes(
 
         line("(подпись отсутствует)", 10, 16)
 
-    draw_signature("Сторона 1:", signature_party1_path)
-    draw_signature("Сторона 2:", signature_party2_path)
+    draw_signature("Подпись стороны 1 (кто дает):", issue_signature_party1_path)
+    draw_signature("Подпись стороны 2 (кто берет):", issue_signature_party2_path)
+
+    if act_data.get("return_date") or act_data.get("return_note"):
+        line("")
+        line("Блок возврата:", 12, 20)
+        if act_data.get("return_date"):
+            line(f"Дата возврата: {act_data['return_date']}")
+        if act_data.get("return_note"):
+            line(f"Комментарий возврата: {act_data['return_note']}")
+        draw_signature("Подпись стороны 1 (принимает возврат):", return_signature_party1_path)
+        draw_signature("Подпись стороны 2 (возвращает технику):", return_signature_party2_path)
 
     line("")
     line("Документ сформирован автоматически системой.", 10, 18)
