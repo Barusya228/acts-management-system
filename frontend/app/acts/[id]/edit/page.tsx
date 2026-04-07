@@ -310,15 +310,44 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
             <label htmlFor="item_name" className="block text-sm font-medium text-gray-700 mb-2">
               Наименование техники
             </label>
-            <input
-              type="text"
-              id="item_name"
-              name="item_name"
-              value={formData.item_name}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
+            {selectedTemplate?.schema_json?.max_recipients === 1 ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  id="item_name"
+                  name="item_name"
+                  value={formData.item_name}
+                  onChange={handleChange}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+                <select
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleChange({ target: { name: 'item_name', value: e.target.value } } as any);
+                    }
+                  }}
+                  className="rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  defaultValue=""
+                >
+                  <option value="">Выбрать</option>
+                  <option value="Asus Tuf">Asus Tuf</option>
+                  <option value="Lenovo Legion">Lenovo Legion</option>
+                  <option value="Mac book">Mac book</option>
+                  <option value="Удлинитель Smart">Удлинитель Smart</option>
+                </select>
+              </div>
+            ) : (
+              <input
+                type="text"
+                id="item_name"
+                name="item_name"
+                value={formData.item_name}
+                onChange={handleChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              />
+            )}
           </div>
 
           <div className="mb-4">
@@ -359,13 +388,40 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
               <div className="space-y-3">
                 {equipmentItems.map((item, index) => (
                   <div key={index} className="grid grid-cols-1 gap-3 rounded border border-gray-200 p-3" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
-                    <input
-                      type="text"
-                      value={item.name}
-                      onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Наименование"
-                    />
+                    {selectedTemplate?.schema_json?.max_recipients === 1 ? (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={item.name}
+                          onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
+                          className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="Наименование"
+                        />
+                        <select
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              updateEquipmentItem(index, { name: e.target.value });
+                            }
+                          }}
+                          className="rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          defaultValue=""
+                        >
+                          <option value="">Выбрать</option>
+                          <option value="Asus Tuf">Asus Tuf</option>
+                          <option value="Lenovo Legion">Lenovo Legion</option>
+                          <option value="Mac book">Mac book</option>
+                          <option value="Удлинитель Smart">Удлинитель Smart</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        value={item.name}
+                        onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Наименование"
+                      />
+                    )}
                     <input
                       type="text"
                       value={item.serial}

@@ -64,6 +64,25 @@ export default function RecipientsEditor({ recipients, employees, onChange, maxR
           }}
           helperText="Выбранный сотрудник будет подставлен как сторона 2 во все данные акта."
         />
+        
+        {selectedEmployee && !selectedEmployee.email && (
+          <div className="mt-3">
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              Контактный email *
+            </label>
+            <input
+              type="email"
+              value={recipient.email}
+              onChange={(e) => updateRecipient(0, { email: e.target.value })}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+              placeholder="Введите контактный email для этого сотрудника"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              У выбранного сотрудника нет email в справочнике. Укажите контактный email для отправки уведомлений.
+            </p>
+          </div>
+        )}
       </div>
     );
   }

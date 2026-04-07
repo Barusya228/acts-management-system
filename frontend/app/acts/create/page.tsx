@@ -324,16 +324,46 @@ function ActCreatePageContent() {
             </div>
 
             <div className="mt-2 grid grid-cols-1 gap-2 md:items-center" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
-              <input
-                type="text"
-                id="item_name"
-                name="item_name"
-                value={formData.item_name}
-                onChange={handleChange}
-                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required
-                placeholder="Наименование техники *"
-              />
+              {selectedTemplate?.schema_json?.max_recipients === 1 ? (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    id="item_name"
+                    name="item_name"
+                    value={formData.item_name}
+                    onChange={handleChange}
+                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                    placeholder="Наименование техники *"
+                  />
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleChange({ target: { name: 'item_name', value: e.target.value } } as any);
+                      }
+                    }}
+                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    defaultValue=""
+                  >
+                    <option value="">Выбрать</option>
+                    <option value="Asus Tuf">Asus Tuf</option>
+                    <option value="Lenovo Legion">Lenovo Legion</option>
+                    <option value="Mac book">Mac book</option>
+                    <option value="Удлинитель Smart">Удлинитель Smart</option>
+                  </select>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  id="item_name"
+                  name="item_name"
+                  value={formData.item_name}
+                  onChange={handleChange}
+                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                  placeholder="Наименование техники *"
+                />
+              )}
               <input
                 type="text"
                 id="item_serial"
@@ -361,13 +391,40 @@ function ActCreatePageContent() {
 
             {equipmentItems.map((item, index) => (
               <div key={index} className="mt-2 grid grid-cols-1 gap-2 md:items-center" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
-                <input
-                  type="text"
-                  value={item.name}
-                  onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
-                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Наименование"
-                />
+                {selectedTemplate?.schema_json?.max_recipients === 1 ? (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
+                      className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Наименование"
+                    />
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          updateEquipmentItem(index, { name: e.target.value });
+                        }
+                      }}
+                      className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      defaultValue=""
+                    >
+                      <option value="">Выбрать</option>
+                      <option value="Asus Tuf">Asus Tuf</option>
+                      <option value="Lenovo Legion">Lenovo Legion</option>
+                      <option value="Mac book">Mac book</option>
+                      <option value="Удлинитель Smart">Удлинитель Smart</option>
+                    </select>
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={item.name}
+                    onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
+                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Наименование"
+                  />
+                )}
                 <input
                   type="text"
                   value={item.serial}

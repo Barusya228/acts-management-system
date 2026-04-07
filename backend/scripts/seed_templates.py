@@ -43,6 +43,7 @@ TEMPLATE_DEFINITIONS = [
         },
         "is_active": True,
     },
+
     {
         "code": "GENERIC",
         "name": "Универсальный акт",
