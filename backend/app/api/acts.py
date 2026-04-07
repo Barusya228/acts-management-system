@@ -14,6 +14,7 @@ from app.services.email_service import (
     send_act_completed_email,
     send_act_created_email,
     send_return_completed_email,
+    send_version_pdf_email,
 )
 from app.utils.storage import resolve_storage_path, save_data_url_file
 
@@ -28,6 +29,90 @@ RESERVED_ACT_FIELDS = {
     "item_serial",
     "receiver_email",
 }
+
+EQUIPMENT_LIST_KEY = "equipment_list"
+RECIPIENTS_KEY = "recipients"
+
+
+def _normalize_recipients(recipients: object) -> list[dict]:
+    if recipients is None:
+        return []
+
+    if not isinstance(recipients, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Поле '{RECIPIENTS_KEY}' должно быть массивом"
+        )
+
+    normalized_recipients: list[dict] = []
+    for index, item in enumerate(recipients):
+        if not isinstance(item, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Поле '{RECIPIENTS_KEY}[{index}]' должно быть объектом"
+            )
+
+        full_name = str(item.get("full_name", "")).strip()
+        email = str(item.get("email", "")).strip()
+        participant_id = item.get("participant_id")
+        if participant_id is not None:
+            participant_id = str(participant_id).strip() or None
+
+        if not full_name or not email or "@" not in email:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Получатель #{index + 1} должен содержать ФИО и корректный email"
+            )
+
+        normalized_recipients.append({
+            "participant_id": participant_id,
+            "full_name": full_name,
+            "email": email,
+            "signed_at": item.get("signed_at") if isinstance(item.get("signed_at"), str) else None,
+            "signature_file_path": item.get("signature_file_path") if isinstance(item.get("signature_file_path"), str) else None,
+            "return_signed_at": item.get("return_signed_at") if isinstance(item.get("return_signed_at"), str) else None,
+            "return_signature_file_path": item.get("return_signature_file_path") if isinstance(item.get("return_signature_file_path"), str) else None,
+        })
+
+    return normalized_recipients
+
+
+def _extract_recipients(extra_data: Optional[dict], fallback_name: str, fallback_email: str) -> list[dict]:
+    payload = extra_data or {}
+    recipients = _normalize_recipients(payload.get(RECIPIENTS_KEY))
+    if recipients:
+        return recipients
+
+    fallback_name = (fallback_name or "").strip()
+    fallback_email = (fallback_email or "").strip()
+    if not fallback_name and not fallback_email:
+        return []
+
+    return [{
+        "participant_id": None,
+        "full_name": fallback_name,
+        "email": fallback_email,
+        "signed_at": None,
+        "signature_file_path": None,
+        "return_signed_at": None,
+        "return_signature_file_path": None,
+    }]
+
+
+def _build_party2_summary(recipients: list[dict]) -> str:
+    if not recipients:
+        return ""
+    if len(recipients) == 1:
+        return recipients[0]["full_name"]
+    return f"{recipients[0]['full_name']} и еще {len(recipients) - 1}"
+
+
+def _get_primary_recipient_email(recipients: list[dict]) -> str:
+    for recipient in recipients:
+        email = str(recipient.get("email", "")).strip()
+        if email:
+            return email
+    return ""
 
 
 def _value_matches_type(value, field_type: str) -> bool:
@@ -78,12 +163,40 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
         if field.get("required"):
             required_dynamic.add(name)
 
-    unknown_keys = [key for key in payload.keys() if key not in allowed_dynamic]
+    unknown_keys = [key for key in payload.keys() if key not in allowed_dynamic and key not in {EQUIPMENT_LIST_KEY, RECIPIENTS_KEY}]
     if unknown_keys:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Поля не поддерживаются выбранным шаблоном: {', '.join(unknown_keys)}"
         )
+
+    equipment_list = payload.get(EQUIPMENT_LIST_KEY)
+    if equipment_list is not None:
+        if not isinstance(equipment_list, list):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Поле '{EQUIPMENT_LIST_KEY}' должно быть массивом"
+            )
+
+        normalized_equipment = []
+        for index, item in enumerate(equipment_list):
+            if not isinstance(item, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Поле '{EQUIPMENT_LIST_KEY}[{index}]' должно быть объектом"
+                )
+
+            name = str(item.get("name", "")).strip()
+            serial = str(item.get("serial", "")).strip()
+            if not name and not serial:
+                continue
+            normalized_equipment.append({"name": name, "serial": serial})
+
+        payload[EQUIPMENT_LIST_KEY] = normalized_equipment
+
+    recipients = payload.get(RECIPIENTS_KEY)
+    if recipients is not None:
+        payload[RECIPIENTS_KEY] = _normalize_recipients(recipients)
 
     for field_name in required_dynamic:
         value = payload.get(field_name)
@@ -94,6 +207,8 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
             )
 
     for key, value in payload.items():
+        if key in {EQUIPMENT_LIST_KEY, RECIPIENTS_KEY}:
+            continue
         field_type = allowed_dynamic[key]
         if not _value_matches_type(value, field_type):
             raise HTTPException(
@@ -105,6 +220,10 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
     for key in allowed_dynamic.keys():
         if key in payload:
             normalized[key] = payload[key]
+    if EQUIPMENT_LIST_KEY in payload:
+        normalized[EQUIPMENT_LIST_KEY] = payload[EQUIPMENT_LIST_KEY]
+    if RECIPIENTS_KEY in payload:
+        normalized[RECIPIENTS_KEY] = payload[RECIPIENTS_KEY]
     return normalized
 
 
@@ -115,6 +234,54 @@ def _is_return_flow(status_value: ActStatus) -> bool:
         ActStatus.RETURN_SIGNED_PARTY2,
         ActStatus.RETURNED,
     }
+
+
+def _can_party1_sign_issue(act: Act) -> bool:
+    recipients = _extract_recipients(act.extra_data_json, act.party2_name, act.receiver_email)
+    return bool(recipients) and all(recipient.get("signed_at") for recipient in recipients)
+
+
+def _sign_recipient(act: Act, signature_data: str, return_flow: bool = False) -> tuple[dict, str, int]:
+    extra_data = dict(act.extra_data_json or {})
+    recipients = _extract_recipients(extra_data, act.party2_name, act.receiver_email)
+    if not recipients:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="У акта нет получателей для подписи"
+        )
+
+    target_key = "return_signed_at" if return_flow else "signed_at"
+    signature_path_key = "return_signature_file_path" if return_flow else "signature_file_path"
+    pending_index = next((index for index, recipient in enumerate(recipients) if not recipient.get(target_key)), None)
+    if pending_index is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Все получатели уже подписали этот этап"
+        )
+
+    relative_path, mime_type, size_bytes, sha256 = save_data_url_file(
+        signature_data,
+        relative_dir=f"acts/{act.id}",
+        filename_stem=(
+            f"return_signature_party2_recipient_{pending_index + 1}_v{act.current_version}"
+            if return_flow
+            else f"signature_party2_recipient_{pending_index + 1}_v{act.current_version}"
+        )
+    )
+
+    recipients[pending_index][target_key] = datetime.utcnow().isoformat()
+    recipients[pending_index][signature_path_key] = relative_path
+    extra_data[RECIPIENTS_KEY] = recipients
+    act.extra_data_json = extra_data
+    act.party2_name = _build_party2_summary(recipients)
+    act.receiver_email = _get_primary_recipient_email(recipients)
+
+    return {
+        "relative_path": relative_path,
+        "mime_type": mime_type,
+        "size_bytes": size_bytes,
+        "sha256": sha256,
+    }, recipients[pending_index]["full_name"], pending_index
 
 @router.get("", response_model=ActListResponse)
 async def list_acts(
@@ -163,8 +330,17 @@ async def create_act(
         )
     
     normalized_extra_data = _validate_extra_data(act_data.extra_data_json, template)
+    recipients = _extract_recipients(normalized_extra_data, act_data.party2_name, act_data.receiver_email)
+    if not recipients:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Нужен хотя бы один получатель"
+        )
+    normalized_extra_data[RECIPIENTS_KEY] = recipients
 
     act_payload = act_data.model_dump()
+    act_payload["party2_name"] = _build_party2_summary(recipients)
+    act_payload["receiver_email"] = _get_primary_recipient_email(recipients)
     act_payload["extra_data_json"] = normalized_extra_data
 
     act = Act(
@@ -187,17 +363,15 @@ async def create_act(
     )
     db.add(version)
     db.flush()
-    create_pdf_asset_for_version(db, act, version, template_name=template.name)
+    create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=template.name,
+        template_code=template.code,
+        use_v2=(getattr(template, "pdf_version", 2) == 2),
+    )
     db.commit()
-
-    try:
-        await send_act_created_email(
-            act,
-            download_url=f"{settings.APP_BASE_URL}/api/acts/{act.id}/download/pdf"
-        )
-    except Exception:
-        # Email delivery should not break act creation.
-        pass
     
     return act
 
@@ -246,6 +420,23 @@ async def update_act(
     if "extra_data_json" in update_data:
         update_data["extra_data_json"] = _validate_extra_data(update_data.get("extra_data_json"), template)
 
+    current_party2_name = update_data.get("party2_name", act.party2_name)
+    current_receiver_email = update_data.get("receiver_email", act.receiver_email)
+    current_extra_data = update_data.get("extra_data_json", act.extra_data_json)
+    recipients = _extract_recipients(current_extra_data, current_party2_name, current_receiver_email)
+    if not recipients:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Нужен хотя бы один получатель"
+        )
+
+    if current_extra_data is None:
+        current_extra_data = {}
+    current_extra_data[RECIPIENTS_KEY] = recipients
+    update_data["extra_data_json"] = current_extra_data
+    update_data["party2_name"] = _build_party2_summary(recipients)
+    update_data["receiver_email"] = _get_primary_recipient_email(recipients)
+
     for field, value in update_data.items():
         setattr(act, field, value)
     
@@ -263,7 +454,13 @@ async def update_act(
     )
     db.add(version)
     db.flush()
-    create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
+    create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=act.template.name if act.template else None,
+        use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
+    )
     
     db.commit()
     db.refresh(act)
@@ -304,7 +501,7 @@ async def sign_party1(
             detail="Act not found"
         )
     
-    if act.status == ActStatus.SIGNED_PARTY2:
+    if act.status == ActStatus.SIGNED_PARTY2 and _can_party1_sign_issue(act):
         act.status = ActStatus.COMPLETED
     elif act.status == ActStatus.RETURN_INITIATED:
         act.status = ActStatus.RETURN_SIGNED_PARTY1
@@ -347,7 +544,14 @@ async def sign_party1(
     )
     db.add(version)
     db.flush()
-    pdf_asset = create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
+    pdf_asset = create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=act.template.name if act.template else None,
+        template_code=act.template.code if act.template else None,
+        use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
+    )
     
     db.commit()
     db.refresh(act)
@@ -379,25 +583,21 @@ async def sign_party2(
             detail="Act not found"
         )
     
+    signed_recipient_name = None
+
     if act.status == ActStatus.DRAFT:
-        act.status = ActStatus.SIGNED_PARTY2
+        asset_info, signed_recipient_name, _ = _sign_recipient(act, signature.signature_data, return_flow=False)
+        issue_recipients = _extract_recipients(act.extra_data_json, act.party2_name, act.receiver_email)
+        act.status = ActStatus.SIGNED_PARTY2 if all(recipient.get("signed_at") for recipient in issue_recipients) else ActStatus.DRAFT
     elif act.status == ActStatus.RETURN_SIGNED_PARTY1:
-        act.status = ActStatus.RETURNED
+        asset_info, signed_recipient_name, _ = _sign_recipient(act, signature.signature_data, return_flow=True)
+        return_recipients = _extract_recipients(act.extra_data_json, act.party2_name, act.receiver_email)
+        act.status = ActStatus.RETURNED if all(recipient.get("return_signed_at") for recipient in return_recipients) else ActStatus.RETURN_SIGNED_PARTY1
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Подпись стороны 2 сейчас недоступна по порядку процесса"
         )
-
-    relative_path, mime_type, size_bytes, sha256 = save_data_url_file(
-        signature.signature_data,
-        relative_dir=f"acts/{act.id}",
-        filename_stem=(
-            f"return_signature_party2_v{act.current_version}"
-            if _is_return_flow(act.status)
-            else f"signature_party2_v{act.current_version}"
-        )
-    )
     db.add(FileAsset(
         act_id=act.id,
         kind=(
@@ -405,10 +605,10 @@ async def sign_party2(
             if _is_return_flow(act.status)
             else FileAssetKind.SIGNATURE_PARTY2
         ),
-        storage_path=relative_path,
-        mime_type=mime_type,
-        size_bytes=size_bytes,
-        sha256=sha256,
+        storage_path=asset_info["relative_path"],
+        mime_type=asset_info["mime_type"],
+        size_bytes=asset_info["size_bytes"],
+        sha256=asset_info["sha256"],
     ))
     
     act.current_version += 1
@@ -418,11 +618,23 @@ async def sign_party2(
         act_id=act.id,
         version_number=act.current_version,
         data_json=build_act_snapshot(act),
+        change_note=(
+            f"Подписал получатель: {signed_recipient_name}"
+            if signed_recipient_name
+            else None
+        ),
         created_by=current_user.id
     )
     db.add(version)
     db.flush()
-    pdf_asset = create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
+    pdf_asset = create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=act.template.name if act.template else None,
+        template_code=act.template.code if act.template else None,
+        use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
+    )
     
     db.commit()
     db.refresh(act)
@@ -494,7 +706,14 @@ async def start_return_flow(
     )
     db.add(version)
     db.flush()
-    create_pdf_asset_for_version(db, act, version, template_name=act.template.name if act.template else None)
+    create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=act.template.name if act.template else None,
+        template_code=act.template.code if act.template else None,
+        use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
+    )
 
     db.commit()
     db.refresh(act)
@@ -632,3 +851,123 @@ async def download_act_pdf_by_version(
         filename=f"act_{act.id}_v{version_number}.pdf",
         content_disposition_type="attachment",
     )
+
+
+@router.post("/{act_id}/versions/{version_number}/send-email")
+async def send_act_version_email(
+    act_id: UUID,
+    version_number: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user)
+):
+    act = db.query(Act).filter(Act.id == act_id).first()
+
+    if not act:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Act not found"
+        )
+
+    if version_number not in {3, 6}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Отправка на почту доступна только для завершенных шагов 3 и 6"
+        )
+
+    version = (
+        db.query(ActVersion)
+        .filter(ActVersion.act_id == act_id, ActVersion.version_number == version_number)
+        .first()
+    )
+
+    if not version or not version.pdf_file_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF for this version not found"
+        )
+
+    pdf_asset = db.query(FileAsset).filter(FileAsset.id == version.pdf_file_id).first()
+    if not pdf_asset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF asset not found"
+        )
+
+    file_path = resolve_storage_path(pdf_asset.storage_path)
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Stored PDF file not found"
+        )
+
+    try:
+        await send_version_pdf_email(
+            act,
+            version_number=version_number,
+            pdf_path=file_path,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не удалось отправить письмо с PDF: {str(exc)}"
+        )
+
+    return {"message": "Письмо с PDF отправлено получателю"}
+
+
+@router.post("/{act_id}/send-notification")
+async def send_act_notification(
+    act_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """
+    Отправляет email уведомление получателям о созданном акте.
+    """
+    act = db.query(Act).filter(Act.id == act_id).first()
+    
+    if not act:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Act not found"
+        )
+    
+    try:
+        await send_act_created_email(act)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Не удалось отправить уведомление: {str(exc)}"
+        )
+    
+    return {"message": "Уведомление отправлено получателям"}
+
+
+@router.delete("/{act_id}")
+async def delete_act(
+    act_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """
+    Удаляет акт и все связанные данные (только для администратора).
+    """
+    act = db.query(Act).filter(Act.id == act_id).first()
+    
+    if not act:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Act not found"
+        )
+    
+    # Удаляем связанные версии
+    db.query(ActVersion).filter(ActVersion.act_id == act_id).delete()
+    
+    # Удаляем связанные файлы
+    db.query(FileAsset).filter(FileAsset.act_id == act_id).delete()
+    
+    # Удаляем сам акт
+    db.delete(act)
+    db.commit()
+    
+    return {"message": "Акт успешно удален"}

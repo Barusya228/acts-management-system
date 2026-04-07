@@ -1,7 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
-from app.api.templates import _validate_template_schema
+from app.api.templates import _validate_template_schema, _validate_pdf_version
 
 
 def test_validate_template_schema_success():
@@ -51,3 +51,16 @@ def test_validate_template_schema_rejects_invalid_type():
 
     assert exc_info.value.status_code == 422
     assert "неподдерживаемый type" in str(exc_info.value.detail)
+
+
+def test_validate_pdf_version_success():
+    assert _validate_pdf_version(1) == 1
+    assert _validate_pdf_version(2) == 2
+
+
+def test_validate_pdf_version_rejects_invalid_value():
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_pdf_version(3)
+
+    assert exc_info.value.status_code == 422
+    assert "pdf_version" in str(exc_info.value.detail)

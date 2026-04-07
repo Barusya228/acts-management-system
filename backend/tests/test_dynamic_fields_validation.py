@@ -58,3 +58,33 @@ def test_validate_extra_data_rejects_invalid_type():
 
     assert exc_info.value.status_code == 422
     assert "неверный тип" in str(exc_info.value.detail)
+
+
+def test_validate_extra_data_allows_equipment_list():
+    template = make_template(
+        [{"name": "hostname", "type": "string", "required": False}]
+    )
+
+    payload = {
+        "hostname": "NB-001",
+        "equipment_list": [
+            {"name": "Dock", "serial": "D-10"},
+            {"name": "", "serial": ""},
+        ],
+    }
+    normalized = _validate_extra_data(payload, template)
+
+    assert normalized["hostname"] == "NB-001"
+    assert normalized["equipment_list"] == [{"name": "Dock", "serial": "D-10"}]
+
+
+def test_validate_extra_data_rejects_invalid_equipment_list_type():
+    template = make_template(
+        [{"name": "hostname", "type": "string", "required": False}]
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_extra_data({"equipment_list": "bad"}, template)
+
+    assert exc_info.value.status_code == 422
+    assert "equipment_list" in str(exc_info.value.detail)

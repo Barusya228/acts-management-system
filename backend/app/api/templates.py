@@ -23,6 +23,8 @@ ALLOWED_FIELD_TYPES = {
     "float",
 }
 
+ALLOWED_PDF_VERSIONS = {1, 2}
+
 
 def _validate_template_schema(schema_json: dict) -> dict:
     if not isinstance(schema_json, dict):
@@ -88,6 +90,15 @@ def _validate_template_schema(schema_json: dict) -> dict:
 
     return {"fields": normalized_fields}
 
+
+def _validate_pdf_version(pdf_version: int) -> int:
+    if pdf_version not in ALLOWED_PDF_VERSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"pdf_version должен быть одним из: {', '.join(map(str, sorted(ALLOWED_PDF_VERSIONS)))}"
+        )
+    return pdf_version
+
 @router.get("", response_model=list[TemplateResponse])
 async def list_templates(
     is_active: Optional[bool] = Query(None),
@@ -119,6 +130,7 @@ async def create_template(
     normalized_schema = _validate_template_schema(template_data.schema_json)
     payload = template_data.model_dump()
     payload["schema_json"] = normalized_schema
+    payload["pdf_version"] = _validate_pdf_version(payload.get("pdf_version", 2))
     
     template = Template(**payload)
     db.add(template)
@@ -161,6 +173,8 @@ async def update_template(
     update_data = template_data.model_dump(exclude_unset=True)
     if "schema_json" in update_data:
         update_data["schema_json"] = _validate_template_schema(update_data["schema_json"])
+    if "pdf_version" in update_data:
+        update_data["pdf_version"] = _validate_pdf_version(update_data["pdf_version"])
     for field, value in update_data.items():
         setattr(template, field, value)
     

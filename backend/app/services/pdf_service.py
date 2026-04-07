@@ -1,5 +1,5 @@
 from app.db.models import Act, ActVersion, FileAsset, FileAssetKind
-from app.utils.pdf import build_act_pdf_bytes
+from app.utils.pdf import build_act_pdf_bytes, build_act_pdf_v2
 from app.utils.storage import save_bytes, resolve_storage_path
 
 
@@ -24,7 +24,7 @@ def build_act_snapshot(act: Act) -> dict:
     }
 
 
-def create_pdf_asset_for_version(db, act: Act, version: ActVersion, template_name: str | None = None) -> FileAsset:
+def create_pdf_asset_for_version(db, act: Act, version: ActVersion, template_name: str | None = None, template_code: str | None = None, use_v2: bool = True) -> FileAsset:
     snapshot = build_act_snapshot(act)
 
     issue_party1_asset = (
@@ -73,13 +73,33 @@ def create_pdf_asset_for_version(db, act: Act, version: ActVersion, template_nam
         else None
     )
 
-    pdf_bytes = build_act_pdf_bytes(
+    # Выбираем версию генератора PDF
+    pdf_generator = build_act_pdf_v2 if use_v2 else build_act_pdf_bytes
+
+    recipient_signature_paths: list[str] = []
+    return_recipient_signature_paths: list[str] = []
+    recipients = snapshot.get("extra_data_json", {}).get("recipients", []) if isinstance(snapshot.get("extra_data_json"), dict) else []
+    if isinstance(recipients, list):
+        for recipient in recipients:
+            if not isinstance(recipient, dict):
+                continue
+            issue_path = recipient.get("signature_file_path")
+            if isinstance(issue_path, str) and issue_path:
+                recipient_signature_paths.append(str(resolve_storage_path(issue_path)))
+            return_path = recipient.get("return_signature_file_path")
+            if isinstance(return_path, str) and return_path:
+                return_recipient_signature_paths.append(str(resolve_storage_path(return_path)))
+    
+    pdf_bytes = pdf_generator(
         snapshot,
         template_name=template_name,
+        template_code=template_code,
         issue_signature_party1_path=issue_party1_signature_path,
         issue_signature_party2_path=issue_party2_signature_path,
         return_signature_party1_path=return_party1_signature_path,
         return_signature_party2_path=return_party2_signature_path,
+        issue_recipient_signature_paths=recipient_signature_paths,
+        return_recipient_signature_paths=return_recipient_signature_paths,
     )
     relative_path, size_bytes, sha256 = save_bytes(
         relative_dir=f"acts/{act.id}",

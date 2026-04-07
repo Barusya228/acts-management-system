@@ -1,14 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import api from '@/lib/api';
 import Layout from '@/components/Layout';
 import { useToast } from '@/contexts/ToastContext';
 import PageHeader from '@/components/ui/PageHeader';
 import SurfaceCard from '@/components/ui/SurfaceCard';
 import ParticipantPicker from '@/components/ParticipantPicker';
+import RecipientsEditor, { type EditableRecipient } from '@/components/RecipientsEditor';
+import { buildParty2Summary, getPrimaryRecipientEmail } from '@/lib/actRecipients';
 
 interface ActFormData {
   party1_name: string;
@@ -26,13 +28,16 @@ interface TemplateOption {
   name: string;
   is_active: boolean;
   schema_json?: {
-    fields?: Array<{
-      name: string;
-      type: string;
-      label: string;
-      required: boolean;
-    }>;
+    max_recipients?: number | null;
+    fields?: TemplateField[];
   };
+}
+
+interface TemplateField {
+  name: string;
+  type: string;
+  label: string;
+  required: boolean;
 }
 
 interface ParticipantOption {
@@ -44,6 +49,12 @@ interface ParticipantOption {
   kind: 'IT_MANAGER' | 'EMPLOYEE';
 }
 
+interface EquipmentItem {
+  name: string;
+  serial: string;
+  imei?: string;
+}
+
 const reservedFields = new Set([
   'party1_name',
   'party2_name',
@@ -53,13 +64,14 @@ const reservedFields = new Set([
   'receiver_email',
 ]);
 
-export default function ActCreatePage() {
+function ActCreatePageContent() {
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [participants, setParticipants] = useState<ParticipantOption[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [party1ParticipantId, setParty1ParticipantId] = useState('');
-  const [party2ParticipantId, setParty2ParticipantId] = useState('');
   const [extraData, setExtraData] = useState<Record<string, string>>({});
+  const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
+  const [recipients, setRecipients] = useState<EditableRecipient[]>([{ full_name: '', email: '' }]);
   const [formData, setFormData] = useState<ActFormData>({
     party1_name: '',
     party2_name: '',
@@ -73,19 +85,20 @@ export default function ActCreatePage() {
   const [error, setError] = useState('');
   const { showToast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const preselectedTemplateId = searchParams.get('template_id') || '';
 
   const selectedTemplate = templates.find((template) => template.id === formData.template_id);
   const itManagers = participants.filter((participant) => participant.kind === 'IT_MANAGER');
   const employees = participants.filter((participant) => participant.kind === 'EMPLOYEE');
-  const selectedEmployee = employees.find((participant) => participant.id === party2ParticipantId);
   const dynamicFields = (selectedTemplate?.schema_json?.fields || []).filter(
-    (field) => !reservedFields.has(field.name)
+    (field) => !reservedFields.has(field.name) && field.name !== 'imei'
   );
 
   useEffect(() => {
     fetchTemplates();
     fetchParticipants();
-  }, []);
+  }, [preselectedTemplateId]);
 
   const fetchParticipants = async () => {
     try {
@@ -103,21 +116,31 @@ export default function ActCreatePage() {
       const list = Array.isArray(res.data) ? res.data : [];
       setTemplates(list);
       if (list.length > 0) {
-        const initialTemplateId = list[0].id;
+        const hasPreselectedTemplate = preselectedTemplateId
+          ? list.some((template) => template.id === preselectedTemplateId)
+          : false;
+        const initialTemplateId = hasPreselectedTemplate ? preselectedTemplateId : list[0].id;
+
         setFormData((prev) => ({
           ...prev,
-          template_id: prev.template_id || initialTemplateId,
+          template_id: initialTemplateId,
         }));
 
         const initialTemplate = list.find((item) => item.id === initialTemplateId);
         const initialDynamic = (initialTemplate?.schema_json?.fields || []).filter(
-          (field) => !reservedFields.has(field.name)
+          (field: TemplateField) => !reservedFields.has(field.name) && field.name !== 'imei'
         );
         const initialExtra: Record<string, string> = {};
-        initialDynamic.forEach((field) => {
+        initialDynamic.forEach((field: TemplateField) => {
           initialExtra[field.name] = '';
         });
         setExtraData(initialExtra);
+      } else {
+        setFormData((prev) => ({
+          ...prev,
+          template_id: '',
+        }));
+        setExtraData({});
       }
     } catch (err: any) {
       const msg = err.response?.data?.detail || 'Ошибка загрузки шаблонов';
@@ -134,10 +157,38 @@ export default function ActCreatePage() {
     setError('');
 
     try {
+      const normalizedRecipients = recipients
+        .map((recipient) => ({
+          participant_id: recipient.participant_id,
+          full_name: recipient.full_name.trim(),
+          email: recipient.email.trim(),
+        }))
+        .filter((recipient) => recipient.full_name && recipient.email);
+
+      if (normalizedRecipients.length === 0) {
+        throw new Error('Добавьте хотя бы одного получателя с ФИО и email');
+      }
+
+      const normalizedEquipment = equipmentItems
+        .map((item) => ({
+          name: item.name.trim(),
+          serial: item.serial.trim(),
+          imei: item.imei?.trim() || '',
+        }))
+        .filter((item) => item.name || item.serial);
+
+      const payloadExtraData: Record<string, unknown> = { ...extraData };
+      payloadExtraData.recipients = normalizedRecipients;
+      if (normalizedEquipment.length > 0) {
+        payloadExtraData.equipment_list = normalizedEquipment;
+      }
+
       const res = await api.post('/api/acts', {
         ...formData,
+        party2_name: buildParty2Summary(normalizedRecipients),
+        receiver_email: getPrimaryRecipientEmail(normalizedRecipients),
         issue_date: new Date(formData.issue_date).toISOString(),
-        extra_data_json: extraData,
+        extra_data_json: payloadExtraData,
       });
       showToast('Акт успешно создан', 'success');
       router.push(`/acts/${res.data.id}`);
@@ -150,20 +201,7 @@ export default function ActCreatePage() {
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    if (e.target.name === 'template_id') {
-      const nextTemplateId = e.target.value;
-      const template = templates.find((item) => item.id === nextTemplateId);
-      const nextDynamic = (template?.schema_json?.fields || []).filter(
-        (field) => !reservedFields.has(field.name)
-      );
-      const nextExtra: Record<string, string> = {};
-      nextDynamic.forEach((field) => {
-        nextExtra[field.name] = '';
-      });
-      setExtraData(nextExtra);
-    }
-
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
@@ -177,13 +215,25 @@ export default function ActCreatePage() {
     }));
   };
 
+  const addEquipmentItem = () => {
+    setEquipmentItems((prev) => [...prev, { name: '', serial: '', imei: '' }]);
+  };
+
+  const updateEquipmentItem = (index: number, patch: Partial<EquipmentItem>) => {
+    setEquipmentItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const removeEquipmentItem = (index: number) => {
+    setEquipmentItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
   return (
     <Layout>
       <div className="mx-auto max-w-3xl">
         <PageHeader
           eyebrow="Создание"
           title="Новый акт"
-          description="Заполните основные данные выдачи техники, выберите шаблон и добавьте нужные поля по структуре документа."
+          description="Заполните основные данные выдачи техники. Шаблон выбран заранее на странице списка актов."
         />
 
         {error && (
@@ -194,29 +244,9 @@ export default function ActCreatePage() {
 
         <SurfaceCard className="p-5 md:p-6">
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="mb-4">
-            <label htmlFor="template_id" className="block text-sm font-medium text-gray-700 mb-2">
-              Шаблон акта *
-            </label>
-            <select
-              id="template_id"
-              name="template_id"
-              value={formData.template_id}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              disabled={loadingTemplates || templates.length === 0}
-            >
-              {templates.length === 0 ? (
-                <option value="">Нет доступных шаблонов</option>
-              ) : (
-                templates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name} ({template.code})
-                  </option>
-                ))
-              )}
-            </select>
+          <div className="mb-4 rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+            <span className="font-medium text-gray-900">Шаблон акта:</span>{' '}
+            {selectedTemplate ? `${selectedTemplate.name} (${selectedTemplate.code})` : 'не выбран'}
           </div>
 
           <div className="mb-4">
@@ -236,91 +266,137 @@ export default function ActCreatePage() {
             />
           </div>
 
-          <div className="mb-4">
-            <ParticipantPicker
-              label="Сторона 2 (Получающая)"
-              placeholder="Найдите сотрудника по имени, отделу или email"
-              value={party2ParticipantId}
-              options={employees}
-              onSelect={(participant) => {
-                setParty2ParticipantId(participant.id);
-                setFormData((prev) => ({
-                  ...prev,
-                  party2_name: participant.full_name,
-                  receiver_email: participant.email || '',
-                }));
-              }}
-              helperText="Email получателя заполнится автоматически, если он указан в карточке сотрудника."
-            />
+          <RecipientsEditor 
+            recipients={recipients} 
+            employees={employees} 
+            onChange={setRecipients}
+            maxRecipients={selectedTemplate?.schema_json?.max_recipients}
+          />
+
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label htmlFor="issue_date" className="mb-2 block text-sm font-medium text-gray-700">
+                Дата выдачи *
+              </label>
+              <input
+                type="date"
+                id="issue_date"
+                name="issue_date"
+                value={formData.issue_date}
+                onChange={handleChange}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">Контактный email</label>
+              <input
+                type="email"
+                value={getPrimaryRecipientEmail(recipients)}
+                readOnly
+                className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-600 focus:outline-none"
+                placeholder="Будет взят из первого получателя"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Для совместимости основной email акта берется из первого получателя в списке.
+              </p>
+            </div>
           </div>
 
-          <div className="mb-4">
-            <label htmlFor="issue_date" className="block text-sm font-medium text-gray-700 mb-2">
-              Дата выдачи *
-            </label>
-            <input
-              type="date"
-              id="issue_date"
-              name="issue_date"
-              value={formData.issue_date}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
-          </div>
+          <div className="mb-6 rounded-md border border-gray-200 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-gray-800">Оборудование</h2>
+              <button
+                type="button"
+                onClick={addEquipmentItem}
+                className="rounded bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
+              >
+                Добавить устройство
+              </button>
+            </div>
 
-          <div className="mb-4">
-            <label htmlFor="item_name" className="block text-sm font-medium text-gray-700 mb-2">
-              Наименование техники *
-            </label>
-            <input
-              type="text"
-              id="item_name"
-              name="item_name"
-              value={formData.item_name}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              placeholder="Например: Ноутбук Lenovo ThinkPad"
-            />
-          </div>
+            <div className="hidden grid-cols-[1fr_1fr_auto] gap-2 border-b border-gray-200 pb-1 text-xs font-medium uppercase tracking-wide text-gray-500 md:grid" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
+              <span>Наименование</span>
+              <span>Серийный номер</span>
+              {selectedTemplate?.code === 'IPAD' && <span>IMEI</span>}
+              <span className="text-right">Действие</span>
+            </div>
 
-          <div className="mb-4">
-            <label htmlFor="item_serial" className="block text-sm font-medium text-gray-700 mb-2">
-              Серийный номер *
-            </label>
-            <input
-              type="text"
-              id="item_serial"
-              name="item_serial"
-              value={formData.item_serial}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-              placeholder="Например: SN123456789"
-            />
-          </div>
+            <div className="mt-2 grid grid-cols-1 gap-2 md:items-center" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
+              <input
+                type="text"
+                id="item_name"
+                name="item_name"
+                value={formData.item_name}
+                onChange={handleChange}
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+                placeholder="Наименование техники *"
+              />
+              <input
+                type="text"
+                id="item_serial"
+                name="item_serial"
+                value={formData.item_serial}
+                onChange={handleChange}
+                className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+                placeholder="Серийный номер *"
+              />
+              {selectedTemplate?.code === 'IPAD' && (
+                <input
+                  type="text"
+                  value={extraData['imei'] || ''}
+                  onChange={(e) => handleExtraFieldChange('imei', e.target.value)}
+                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                  placeholder="IMEI *"
+                />
+              )}
+              <span className="inline-flex h-[34px] items-center justify-center rounded bg-slate-100 px-3 text-xs font-medium text-slate-700">
+                Основное
+              </span>
+            </div>
 
-          <div className="mb-6">
-            <label htmlFor="receiver_email" className="block text-sm font-medium text-gray-700 mb-2">
-              Email получателя *
-            </label>
-            <input
-              type="email"
-              id="receiver_email"
-              name="receiver_email"
-              value={formData.receiver_email}
-              onChange={handleChange}
-              readOnly={Boolean(selectedEmployee?.email)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 read-only:bg-gray-100 read-only:text-gray-600"
-              required
-              placeholder={selectedEmployee?.email ? 'Email подставлен автоматически' : 'example@domain.com'}
-            />
-            <p className="mt-2 text-xs text-gray-500">
-              {selectedEmployee?.email
-                ? 'Почта подставлена автоматически из карточки получателя.'
-                : 'Если у сотрудника в справочнике нет email, его можно указать вручную.'}
-            </p>
+            {equipmentItems.map((item, index) => (
+              <div key={index} className="mt-2 grid grid-cols-1 gap-2 md:items-center" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
+                <input
+                  type="text"
+                  value={item.name}
+                  onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
+                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Наименование"
+                />
+                <input
+                  type="text"
+                  value={item.serial}
+                  onChange={(e) => updateEquipmentItem(index, { serial: e.target.value })}
+                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Серийный номер"
+                />
+                {selectedTemplate?.code === 'IPAD' && (
+                  <input
+                    type="text"
+                    value={item.imei || ''}
+                    onChange={(e) => updateEquipmentItem(index, { imei: e.target.value })}
+                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="IMEI"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeEquipmentItem(index)}
+                  className="rounded bg-rose-600 px-3 py-1.5 text-sm text-white hover:bg-rose-700"
+                >
+                  Удалить
+                </button>
+              </div>
+            ))}
+
+            {equipmentItems.length === 0 && (
+              <p className="mt-2 text-xs text-gray-500">Дополнительных позиций пока нет.</p>
+            )}
           </div>
 
           {dynamicFields.length > 0 && (
@@ -367,5 +443,13 @@ export default function ActCreatePage() {
         </SurfaceCard>
       </div>
     </Layout>
+  );
+}
+
+export default function ActCreatePage() {
+  return (
+    <Suspense fallback={<Layout><div className="mx-auto max-w-3xl py-10 text-center">Загрузка...</div></Layout>}>
+      <ActCreatePageContent />
+    </Suspense>
   );
 }

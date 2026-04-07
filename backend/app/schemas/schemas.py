@@ -4,15 +4,19 @@ from datetime import datetime, date
 
 # User schemas
 class UserBase(BaseModel):
-    email: EmailStr
+    username: str
+    email: Optional[EmailStr] = None
     full_name: str
 
 class UserCreate(UserBase):
     password: str
     role: str = "STAFF"
 
-class UserResponse(UserBase):
+class UserResponse(BaseModel):
     id: UUID4
+    username: str
+    email: Optional[str] = None
+    full_name: str
     role: str
     is_active: bool
     created_at: datetime
@@ -29,7 +33,7 @@ class TokenData(BaseModel):
     user_id: Optional[str] = None
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    username: str
     password: str
 
 # Template schemas
@@ -38,6 +42,7 @@ class TemplateBase(BaseModel):
     name: str
     description: Optional[str] = None
     schema_json: dict
+    pdf_version: int = 2
 
 class TemplateCreate(TemplateBase):
     pass
@@ -46,6 +51,7 @@ class TemplateUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     schema_json: Optional[dict] = None
+    pdf_version: Optional[int] = None
     is_active: Optional[bool] = None
 
 class TemplateResponse(TemplateBase):

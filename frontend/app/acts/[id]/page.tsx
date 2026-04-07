@@ -7,11 +7,13 @@ import api from '@/lib/api';
 import Layout from '@/components/Layout';
 import SignaturePad from '@/components/SignaturePad';
 import SignatureUpload from '@/components/SignatureUpload';
+import ConfirmModal from '@/components/ConfirmModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import PageHeader from '@/components/ui/PageHeader';
 import SurfaceCard from '@/components/ui/SurfaceCard';
 import StatusPill from '@/components/ui/StatusPill';
+import { normalizeActRecipients, getSignedRecipientsCount, type ActRecipient } from '@/lib/actRecipients';
 
 interface Act {
   id: string;
@@ -22,7 +24,7 @@ interface Act {
   item_name: string;
   item_serial: string;
   receiver_email: string;
-  extra_data_json?: Record<string, string>;
+  extra_data_json?: Record<string, unknown>;
   return_date?: string | null;
   return_note?: string | null;
   status: string;
@@ -37,6 +39,7 @@ interface ActVersion {
   created_at: string;
   pdf_file_id?: string | null;
   change_note?: string | null;
+  data_json?: Record<string, unknown>;
 }
 
 interface TemplateOption {
@@ -53,17 +56,34 @@ interface TemplateOption {
   };
 }
 
+interface ParticipantOption {
+  id: string;
+  full_name: string;
+  email?: string | null;
+}
+
+interface EquipmentItem {
+  name: string;
+  serial: string;
+  imei?: string;
+}
+
 export default function ActViewPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user } = useAuth();
   const [act, setAct] = useState<Act | null>(null);
   const [template, setTemplate] = useState<TemplateOption | null>(null);
+  const [participants, setParticipants] = useState<ParticipantOption[]>([]);
   const [versions, setVersions] = useState<ActVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState(false);
   const [startingReturn, setStartingReturn] = useState(false);
   const [pdfLoading, setPdfLoading] = useState<'preview' | 'download' | null>(null);
   const [versionPdfLoading, setVersionPdfLoading] = useState<number | null>(null);
+  const [versionEmailLoading, setVersionEmailLoading] = useState<number | null>(null);
+  const [sendingNotification, setSendingNotification] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [signatureMode, setSignatureMode] = useState<'draw' | 'upload'>('draw');
   const [signatureData, setSignatureData] = useState<string>('');
@@ -79,12 +99,14 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
 
   const fetchActAndVersions = async () => {
     try {
-      const [actRes, versionsRes] = await Promise.all([
+      const [actRes, versionsRes, participantsRes] = await Promise.all([
         api.get(`/api/acts/${id}`),
         api.get(`/api/acts/${id}/versions`),
+        api.get('/api/participants?is_active=true'),
       ]);
       setAct(actRes.data);
       setVersions(versionsRes.data || []);
+      setParticipants(Array.isArray(participantsRes.data) ? participantsRes.data : []);
 
       if (actRes.data?.template_id) {
         const templateRes = await api.get(`/api/templates/${actRes.data.template_id}`);
@@ -120,50 +142,105 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   const getSignButtonMeta = (party: 'party1' | 'party2', status: string) => {
     if (party === 'party1') {
       if (status === 'SIGNED_PARTY2') {
-        return { label: 'Выдача: подтверждение стороны 1', highlight: true };
+        return { label: 'Подписать как сторона 1', hint: 'Финальная подпись после всех получателей', highlight: true };
       }
       if (status === 'SIGNED_PARTY1') {
-        return { label: 'Сторона 1 уже подписала', highlight: false };
+        return { label: 'Сторона 1 уже подписала', hint: 'Ожидание подписи стороны 2', highlight: false };
       }
       if (status === 'RETURN_INITIATED') {
-        return { label: 'Возврат: первая подпись стороны 1', highlight: true };
+        return { label: 'Подписать как сторона 1', hint: 'Шаг 5: первая подпись возврата', highlight: true };
       }
       if (status === 'RETURN_SIGNED_PARTY1') {
-        return { label: 'Сторона 1 уже подтвердила возврат', highlight: false };
+        return { label: 'Сторона 1 уже подтвердила', hint: 'Ожидание подписи стороны 2', highlight: false };
       }
       if (status === 'RETURN_SIGNED_PARTY2' || status === 'RETURNED') {
-        return { label: 'Подпись стороны 1 недоступна', highlight: false };
+        return { label: 'Подпись стороны 1 не нужна', hint: 'Этап уже закрыт', highlight: false };
       }
-      return { label: 'Подпись недоступна', highlight: false };
+      return { label: 'Подпись недоступна', hint: 'Проверьте текущий статус акта', highlight: false };
     }
 
     if (status === 'DRAFT') {
-      return { label: 'Выдача: первая подпись стороны 2', highlight: true };
+      return { label: 'Подписать как сторона 2', hint: 'Шаг 2: первая подпись выдачи', highlight: true };
     }
     if (status === 'SIGNED_PARTY1') {
-      return { label: 'Завершить: подпись стороны 2', highlight: true };
+      return { label: 'Подпись недоступна', hint: 'Нарушен порядок шагов выдачи', highlight: false };
     }
     if (status === 'SIGNED_PARTY2') {
-      return { label: 'Сторона 2 уже подписала', highlight: false };
+      return { label: 'Получатели уже подписали', hint: 'Ожидание подписи стороны 1', highlight: false };
     }
     if (status === 'RETURN_SIGNED_PARTY1') {
-      return { label: 'Возврат: подтверждение стороны 2', highlight: true };
+      return { label: 'Подписать как сторона 2', hint: 'Очередная подпись получателя по возврату', highlight: true };
     }
     if (status === 'RETURN_INITIATED') {
-      return { label: 'Ожидается подпись стороны 1', highlight: false };
+      return { label: 'Ожидается подпись стороны 1', hint: 'После этого откроется шаг 6', highlight: false };
     }
     if (status === 'RETURN_SIGNED_PARTY2') {
-      return { label: 'Сторона 2 уже подтвердила возврат', highlight: false };
+      return { label: 'Получатели уже подтвердили', hint: 'Ожидание финализации возврата', highlight: false };
     }
-    return { label: 'Подпись недоступна', highlight: false };
+    return { label: 'Подпись недоступна', hint: 'Проверьте текущий статус акта', highlight: false };
   };
 
-  const getSigningHint = (status: string) => {
+  const getSigningSteps = (status: string, recipients: ActRecipient[]) => {
+    const isReturnFlow =
+      status === 'RETURN_INITIATED' ||
+      status === 'RETURN_SIGNED_PARTY1' ||
+      status === 'RETURN_SIGNED_PARTY2' ||
+      status === 'RETURNED';
+
+    if (isReturnFlow) {
+      return [
+        {
+          step: 5,
+          party: 'party1' as const,
+          title: 'Подпись стороны 1',
+          description: 'Первая подпись в процессе возврата',
+          state:
+            status === 'RETURN_INITIATED'
+              ? 'current'
+              : status === 'RETURN_SIGNED_PARTY1' || status === 'RETURN_SIGNED_PARTY2' || status === 'RETURNED'
+              ? 'done'
+              : 'pending',
+        },
+        ...recipients.map((recipient, index) => ({
+          step: 6 + index,
+          party: 'party2' as const,
+          title: `Подпись получателя ${index + 1}`,
+          description: recipient.full_name,
+          recipientIndex: index,
+          state: recipient.return_signed_at
+            ? 'done'
+            : status === 'RETURN_SIGNED_PARTY1' && recipients.slice(0, index).every((item) => item.return_signed_at)
+            ? 'current'
+            : 'pending',
+        })),
+      ];
+    }
+
+    return [
+      ...recipients.map((recipient, index) => ({
+        step: 2 + index,
+        party: 'party2' as const,
+        title: `Подпись получателя ${index + 1}`,
+        description: recipient.full_name,
+        recipientIndex: index,
+        state: recipient.signed_at ? 'done' : status === 'DRAFT' && recipients.slice(0, index).every((item) => item.signed_at) ? 'current' : 'pending',
+      })),
+      {
+        step: 2 + recipients.length,
+        party: 'party1' as const,
+        title: 'Подпись стороны 1',
+        description: 'Финальное подтверждение выдачи',
+        state: status === 'SIGNED_PARTY2' ? 'current' : status === 'COMPLETED' ? 'done' : 'pending',
+      },
+    ];
+  };
+
+  const getSigningHint = (status: string, recipients: ActRecipient[]) => {
     if (status === 'DRAFT') {
-      return 'Выдача техники: сначала подписывает тот, кто получает технику (сторона 2).';
+      return `Выдача техники: сначала последовательно подписывают получатели (${recipients.length}), затем подтверждает сторона 1.`;
     }
     if (status === 'SIGNED_PARTY2') {
-      return 'Выдача техники: получатель уже подписал, теперь подтверждает передающая сторона (сторона 1).';
+      return 'Все получатели подписали выдачу. Теперь подтверждает передающая сторона (сторона 1).';
     }
     if (status === 'SIGNED_PARTY1') {
       return 'Текущий статус не соответствует целевому порядку подписания выдачи.';
@@ -172,7 +249,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       return 'Возврат техники: сначала подписывает сторона 1, которая принимает возврат.';
     }
     if (status === 'RETURN_SIGNED_PARTY1') {
-      return 'Возврат техники: первая подпись получена, теперь возврат подтверждает сторона 2.';
+      return `Возврат техники: сторона 1 подтвердила возврат. Теперь последовательно подписывают получатели (${recipients.length}).`;
     }
     if (status === 'RETURN_SIGNED_PARTY2') {
       return 'Текущий статус не соответствует целевому порядку подписания возврата.';
@@ -307,6 +384,56 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       versionNumber
     );
 
+  const handleSendVersionPdfEmail = async (versionNumber: number) => {
+    try {
+      setVersionEmailLoading(versionNumber);
+      const res = await api.post(`/api/acts/${id}/versions/${versionNumber}/send-email`);
+      showToast(res.data?.message || 'Письмо отправлено получателю', 'success');
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || 'Не удалось отправить письмо';
+      showToast(msg, 'error');
+    } finally {
+      setVersionEmailLoading(null);
+    }
+  };
+
+  const canSendVersionEmail = (versionNumber: number) => {
+    // For GENERIC_MULTI, IPAD, GENERIC_ONE, and GENERIC templates, exclude step 3 from email sending
+    const excludedTemplates = ['GENERIC_MULTI', 'IPAD', 'GENERIC_ONE', 'GENERIC'];
+    if (excludedTemplates.includes(template?.code || '') && versionNumber === 3) {
+      return false;
+    }
+    return versionNumber === 3 || versionNumber === 6;
+  };
+
+  const handleSendNotification = async () => {
+    try {
+      setSendingNotification(true);
+      const res = await api.post(`/api/acts/${id}/send-notification`);
+      showToast(res.data?.message || 'Уведомление отправлено получателям', 'success');
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || 'Не удалось отправить уведомление';
+      showToast(msg, 'error');
+    } finally {
+      setSendingNotification(false);
+    }
+  };
+
+  const handleDeleteAct = async () => {
+    try {
+      setDeleting(true);
+      await api.delete(`/api/acts/${id}`);
+      showToast('Акт успешно удален', 'success');
+      router.push('/acts');
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || 'Не удалось удалить акт';
+      showToast(msg, 'error');
+    } finally {
+      setDeleting(false);
+      setShowDeleteModal(false);
+    }
+  };
+
   const getStatusLabel = (status: string) => {
     const labels: Record<string, string> = {
       DRAFT: 'Черновик',
@@ -335,7 +462,14 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     return colors[status] || 'bg-gray-200 text-gray-800';
   };
 
-  const getProgressStep = (status: string) => {
+  const getIssueStep = (status: string, recipients: ActRecipient[]) => {
+    const signedCount = getSignedRecipientsCount(recipients);
+    const recipientsCount = recipients.length;
+
+    if (status === 'DRAFT') {
+      return signedCount === 0 ? 1 : Math.min(1 + signedCount, recipientsCount + 1);
+    }
+    if (status === 'SIGNED_PARTY2') return recipientsCount + 1;
     if (
       status === 'COMPLETED' ||
       status === 'RETURN_INITIATED' ||
@@ -343,13 +477,12 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       status === 'RETURN_SIGNED_PARTY2' ||
       status === 'RETURNED'
     ) {
-      return 2;
+      return recipientsCount + 2;
     }
-    if (status === 'SIGNED_PARTY1' || status === 'SIGNED_PARTY2') return 1;
-    return 0;
+    return 1;
   };
 
-  const getProgressText = (status: string) => {
+  const getProgressText = (status: string, recipients: ActRecipient[]) => {
     if (status === 'COMPLETED') {
       return 'Обе стороны подписали акт. Документ завершен.';
     }
@@ -365,12 +498,12 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       return 'Сторона 1 подписала документ. Ожидается вторая подпись.';
     }
     if (status === 'SIGNED_PARTY2') {
-      return 'Сторона 2 подписала документ. Ожидается вторая подпись.';
+      return 'Все получатели подписали документ. Ожидается подпись стороны 1.';
     }
-    return 'Акт создан и ожидает первую подпись.';
+    return `Акт создан и ожидает подписи получателей: ${getSignedRecipientsCount(recipients)} из ${recipients.length}.`;
   };
 
-  const getSignedSides = (status: string) => {
+  const getSignedSides = (status: string, recipients: ActRecipient[]) => {
     if (status === 'SIGNED_PARTY1') {
       return { party1: true, party2: false };
     }
@@ -386,21 +519,17 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     ) {
       return { party1: true, party2: true };
     }
-    return { party1: false, party2: false };
+    return { party1: false, party2: recipients.every((recipient) => Boolean(recipient.signed_at)) };
   };
 
-  const getReturnProgressStep = (status: string) => {
-    if (status === 'RETURNED') return 2;
-    if (status === 'RETURN_SIGNED_PARTY1' || status === 'RETURN_SIGNED_PARTY2') return 1;
-    if (status === 'RETURN_INITIATED') return 0;
+  const getReturnStep = (status: string) => {
+    if (status === 'RETURN_INITIATED') return 4;
+    if (status === 'RETURN_SIGNED_PARTY1' || status === 'RETURN_SIGNED_PARTY2') return 5;
+    if (status === 'RETURNED') return 6;
     return null;
   };
 
-  const getReturnDisplayStep = (status: string) => {
-    const step = getReturnProgressStep(status);
-    if (step === null) return null;
-    return step + 1;
-  };
+  const getGlobalStep = (status: string, recipients: ActRecipient[]) => getReturnStep(status) ?? getIssueStep(status, recipients);
 
   const getReturnProgressText = (status: string) => {
     if (status === 'RETURNED') return 'Возврат завершен и подписан обеими сторонами.';
@@ -447,7 +576,10 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     );
   }
 
-  const progressStep = getProgressStep(act.status);
+  const recipients = normalizeActRecipients(act.extra_data_json, act.party2_name, act.receiver_email);
+  const issueStep = getIssueStep(act.status, recipients);
+  const globalStep = getGlobalStep(act.status, recipients);
+  const returnStep = getReturnStep(act.status);
   const isReturnStatus =
     act.status === 'RETURN_INITIATED' ||
     act.status === 'RETURN_SIGNED_PARTY1' ||
@@ -456,12 +588,43 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   const canStartReturn = act.status === 'COMPLETED';
   const party1Meta = getSignButtonMeta('party1', act.status);
   const party2Meta = getSignButtonMeta('party2', act.status);
-  const signedSides = getSignedSides(act.status);
+  const signingSteps = getSigningSteps(act.status, recipients);
+  const signedSides = getSignedSides(act.status, recipients);
   const progressItems = [
-    { step: 0, title: 'Черновик', subtitle: 'Акт создан' },
-    { step: 1, title: '1 подпись', subtitle: 'Одна сторона подписала' },
-    { step: 2, title: '2 подписи', subtitle: 'Документ завершен' },
+    { step: 1, title: 'Шаг 1', subtitle: 'Черновик' },
+    ...recipients.map((recipient, index) => ({
+      step: 2 + index,
+      title: `Шаг ${2 + index}`,
+      subtitle: `Подпись ${recipient.full_name}`,
+    })),
+    { step: 2 + recipients.length, title: `Шаг ${2 + recipients.length}`, subtitle: 'Финальная подпись стороны 1' },
   ];
+  const equipmentList: EquipmentItem[] = Array.isArray(act.extra_data_json?.equipment_list)
+    ? (act.extra_data_json?.equipment_list as unknown[])
+        .filter((item) => typeof item === 'object' && item !== null)
+        .map((item) => {
+          const typedItem = item as { name?: unknown; serial?: unknown; imei?: unknown };
+          return {
+            name: String(typedItem.name ?? ''),
+            serial: String(typedItem.serial ?? ''),
+            imei: String(typedItem.imei ?? ''),
+          };
+        })
+    : [];
+  const mergedEquipmentList: Array<EquipmentItem & { source: string }> = [
+    {
+      name: String(act.item_name ?? ''),
+      serial: String(act.item_serial ?? ''),
+      source: 'Основное',
+    },
+    ...equipmentList.map((item) => ({
+      ...item,
+      source: 'Доп.',
+    })),
+  ].filter((item) => item.name || item.serial);
+  const extraEntries = Object.entries(act.extra_data_json || {}).filter(([key]) => key !== 'equipment_list' && key !== 'recipients');
+  const party1Email = participants.find((participant) => participant.full_name === act.party1_name)?.email || '—';
+  const party2Email = recipients.map((recipient) => recipient.email).filter(Boolean).join(', ') || act.receiver_email || '—';
 
   return (
     <Layout>
@@ -494,6 +657,15 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
               >
                 Редактировать
               </Link>
+              {user?.role === 'admin' && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteModal(true)}
+                  className="rounded-xl border border-red-300 bg-red-600 px-4 py-3 font-medium text-white transition hover:bg-red-700"
+                >
+                  Удалить
+                </button>
+              )}
             </>
           }
         />
@@ -503,9 +675,9 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             <div className="mb-3 flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium uppercase tracking-wide text-gray-500">Статус подписания</p>
-                <h2 className="mt-1 text-xl font-semibold text-gray-900">Шаг {progressStep} из 2</h2>
+                <h2 className="mt-1 text-xl font-semibold text-gray-900">Шаг {issueStep} из {progressItems.length}</h2>
                 <p className="mt-1 text-sm font-medium text-blue-700">{getCurrentFlowLabel(act.status)}</p>
-                <p className="mt-2 text-sm text-gray-600">{getProgressText(act.status)}</p>
+                <p className="mt-2 text-sm text-gray-600">{getProgressText(act.status, recipients)}</p>
               </div>
               <StatusPill status={act.status} label={getStatusLabel(act.status)} />
             </div>
@@ -513,7 +685,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-gray-200">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-slate-700 via-blue-600 to-emerald-600 transition-all duration-300"
-                style={{ width: `${(progressStep / 2) * 100}%` }}
+                 style={{ width: `${(issueStep / progressItems.length) * 100}%` }}
               />
             </div>
 
@@ -534,14 +706,14 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                 Сторона 2: {signedSides.party2 ? 'подписано' : 'ожидается'}
               </span>
               <span className="rounded bg-blue-50 px-2 py-1 text-blue-700">
-                {getIssuedFlowSideText(act.status)}
+                 {getIssuedFlowSideText(act.status)}
               </span>
             </div>
 
             <div className="grid gap-3 grid-cols-3">
               {progressItems.map((item) => {
-                const isDone = progressStep >= item.step;
-                const isCurrent = progressStep === item.step;
+                const isDone = issueStep >= item.step;
+                const isCurrent = issueStep === item.step;
 
                 return (
                   <div
@@ -562,7 +734,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                             : isDone
                             ? 'bg-emerald-600 text-white'
                             : 'bg-gray-300 text-gray-700'
-                        }`}
+                          }`}
                       >
                         {isDone && !isCurrent ? '✓' : item.step}
                       </div>
@@ -583,7 +755,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                 <div>
                   <p className="text-sm font-medium uppercase tracking-wide text-gray-500">Процесс возврата</p>
                   <h2 className="mt-1 text-xl font-semibold text-gray-900">
-                    {isReturnStatus ? `Этап ${getReturnDisplayStep(act.status)} из 3` : 'Возврат техники'}
+                    {isReturnStatus ? `Шаг ${returnStep} из 6` : 'Возврат техники'}
                   </h2>
                   <p className="mt-2 text-sm text-gray-600">
                     {isReturnStatus
@@ -633,17 +805,17 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                   <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-gray-200">
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-orange-500 via-amber-500 to-emerald-600 transition-all duration-300"
-                      style={{ width: `${((getReturnProgressStep(act.status) || 0) / 2) * 100}%` }}
+                      style={{ width: `${returnStep ? ((returnStep - 3) / 3) * 100 : 0}%` }}
                     />
                   </div>
 
                   <div className="grid gap-3 grid-cols-3">
                     {[
-                      { step: 0, title: 'Инициирован', subtitle: 'Возврат создан' },
-                      { step: 1, title: '1 подпись', subtitle: 'Одна сторона подтвердила возврат' },
-                      { step: 2, title: 'Возвращено', subtitle: 'Возврат завершен' },
+                      { step: 4, title: 'Шаг 4', subtitle: 'Возврат инициирован' },
+                      { step: 5, title: 'Шаг 5', subtitle: '1 подпись возврата' },
+                      { step: 6, title: 'Шаг 6', subtitle: 'Возврат завершен' },
                     ].map((item) => {
-                      const step = getReturnProgressStep(act.status) || 0;
+                      const step = returnStep || 4;
                       const isDone = step >= item.step;
                       const isCurrent = step === item.step;
                       return (
@@ -667,7 +839,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                                   : 'bg-gray-300 text-gray-700'
                               }`}
                             >
-                              {isDone && !isCurrent ? '✓' : item.step + 1}
+                              {isDone && !isCurrent ? '✓' : item.step}
                             </div>
                             <div>
                               <p className="text-xs font-semibold text-gray-900">{item.title}</p>
@@ -695,7 +867,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             <StatusPill status={act.status} label={getStatusLabel(act.status)} />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
             {template && (
               <div>
                 <h3 className="text-sm font-medium text-gray-500 mb-1">Шаблон</h3>
@@ -714,50 +886,107 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             </div>
 
             <div>
+              <h3 className="text-sm font-medium text-gray-500 mb-1">Дата возврата</h3>
+              <p className="text-lg">{act.return_date ? new Date(act.return_date).toLocaleDateString('ru-RU') : '—'}</p>
+            </div>
+
+            <div>
               <h3 className="text-sm font-medium text-gray-500 mb-1">Сторона 1 (Передающая)</h3>
               <p className="text-lg">{act.party1_name}</p>
             </div>
 
             <div>
               <h3 className="text-sm font-medium text-gray-500 mb-1">Сторона 2 (Получающая)</h3>
-              <p className="text-lg">{act.party2_name}</p>
+               <div className="space-y-2">
+                 {recipients.map((recipient, index) => (
+                   <div key={`${recipient.full_name}-${recipient.email}-${index}`} className="rounded border border-gray-200 px-3 py-2 text-sm">
+                     <p className="font-medium text-gray-900">{recipient.full_name}</p>
+                     <p className="text-gray-600">{recipient.email || '—'}</p>
+                     <p className="text-xs text-gray-500 mt-1">
+                       Выдача: {recipient.signed_at ? 'подписано' : 'ожидается'}
+                       {' | '}
+                       Возврат: {recipient.return_signed_at ? 'подписано' : 'ожидается'}
+                     </p>
+                   </div>
+                 ))}
+               </div>
             </div>
 
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Наименование техники</h3>
-              <p className="text-lg">{act.item_name}</p>
+              <h3 className="text-sm font-medium text-gray-500 mb-1">Email стороны 1</h3>
+              <p className="text-lg">{party1Email}</p>
             </div>
 
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Серийный номер</h3>
-              <p className="text-lg">{act.item_serial}</p>
+              <h3 className="text-sm font-medium text-gray-500 mb-1">Email стороны 2</h3>
+              <p className="text-lg">{party2Email}</p>
             </div>
 
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Email получателя</h3>
-              <p className="text-lg">{act.receiver_email}</p>
-            </div>
+              <h3 className="text-sm font-medium text-gray-500 mb-1">Шаг</h3>
+              <p className="text-lg">{globalStep}</p>
 
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Версия</h3>
-              <p className="text-lg">{act.current_version}</p>
+              <div className="mt-4">
+                <h3 className="text-sm font-medium text-gray-500 mb-1">Статус</h3>
+                <p className="text-lg">{getStatusLabel(act.status)}</p>
+              </div>
             </div>
 
             <div>
               <h3 className="text-sm font-medium text-gray-500 mb-1">Создан</h3>
               <p className="text-lg">{new Date(act.created_at).toLocaleString('ru-RU')}</p>
+
+              <div className="mt-4">
+                <h3 className="text-sm font-medium text-gray-500 mb-1">Обновлен</h3>
+                <p className="text-lg">{new Date(act.updated_at).toLocaleString('ru-RU')}</p>
+              </div>
             </div>
 
-            <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Обновлен</h3>
-              <p className="text-lg">{new Date(act.updated_at).toLocaleString('ru-RU')}</p>
-            </div>
+            {mergedEquipmentList.length > 0 && (
+              <div className="md:col-span-2">
+                <h3 className="text-sm font-medium text-gray-500 mb-2">Оборудование</h3>
+                <div className="overflow-hidden rounded border border-gray-200">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="w-16 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">№</th>
+                        <th className="w-24 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">Тип</th>
+                        <th className="border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
+                          Наименование
+                        </th>
+                        <th className="w-56 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
+                          Серийный номер
+                        </th>
+                        {template?.code === 'IPAD' && (
+                          <th className="w-48 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
+                            IMEI
+                          </th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mergedEquipmentList.map((item, index) => (
+                        <tr key={`${item.name}-${item.serial}-${item.source}-${index}`}>
+                          <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{index + 1}</td>
+                          <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.source}</td>
+                          <td className="border-b border-gray-100 px-3 py-2 text-gray-900">{item.name || '—'}</td>
+                          <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.serial || '—'}</td>
+                          {template?.code === 'IPAD' && (
+                            <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.imei || '—'}</td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
-            {act.extra_data_json && Object.keys(act.extra_data_json).length > 0 && (
+            {extraEntries.length > 0 && (
               <div className="md:col-span-2">
                 <h3 className="text-sm font-medium text-gray-500 mb-2">Дополнительные поля</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {Object.entries(act.extra_data_json).map(([key, value]) => {
+                  {extraEntries.map(([key, value]) => {
                     const fieldLabel =
                       template?.schema_json?.fields?.find((field) => field.name === key)?.label || key;
                     return (
@@ -843,31 +1072,64 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                 <SignatureUpload onUpload={handleUploadedSignature} />
               )}
 
-              <div className="mt-4 flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  disabled={!canSignParty1 || signing || !signatureData}
-                  onClick={() => signAct('party1')}
-                  className={`rounded px-4 py-2 text-white disabled:bg-gray-400 ${
-                    party1Meta.highlight ? 'bg-amber-700 hover:bg-amber-800' : 'bg-amber-600 hover:bg-amber-700'
-                  }`}
-                >
-                  {signing ? 'Подписание...' : party1Meta.label}
-                </button>
+              <div className="mt-4 space-y-3">
+                {signingSteps.map((step) => {
+                  const isParty1 = step.party === 'party1';
+                  const canSign = isParty1 ? canSignParty1 : canSignParty2;
+                  const meta = isParty1 ? party1Meta : party2Meta;
+                  const buttonClass = isParty1
+                    ? meta.highlight
+                      ? 'bg-amber-700 hover:bg-amber-800'
+                      : 'bg-amber-600 hover:bg-amber-700'
+                    : meta.highlight
+                    ? 'bg-emerald-700 hover:bg-emerald-800'
+                    : 'bg-emerald-600 hover:bg-emerald-700';
 
-                <button
-                  type="button"
-                  disabled={!canSignParty2 || signing || !signatureData}
-                  onClick={() => signAct('party2')}
-                  className={`rounded px-4 py-2 text-white disabled:bg-gray-400 ${
-                    party2Meta.highlight ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-emerald-600 hover:bg-emerald-700'
-                  }`}
-                >
-                  {signing ? 'Подписание...' : party2Meta.label}
-                </button>
+                  return (
+                    <div
+                      key={`${step.party}-${step.step}`}
+                      className={`rounded-lg border p-3 ${
+                        step.state === 'done'
+                          ? 'border-emerald-200 bg-emerald-50'
+                          : step.state === 'current'
+                          ? 'border-blue-200 bg-blue-50'
+                          : 'border-gray-200 bg-gray-50'
+                      }`}
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Шаг {step.step}</p>
+                          <p className="text-sm font-semibold text-gray-900">{step.title}</p>
+                          <p className="text-xs text-gray-600">{step.description}</p>
+                        </div>
+                        <span
+                          className={`rounded px-2 py-1 text-xs font-medium ${
+                            step.state === 'done'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : step.state === 'current'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-gray-200 text-gray-700'
+                          }`}
+                        >
+                          {step.state === 'done' ? 'Выполнен' : step.state === 'current' ? 'Текущий' : 'Ожидает'}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                       disabled={!canSign || signing || !signatureData || step.state !== 'current'}
+                        onClick={() => signAct(step.party)}
+                        className={`w-full rounded px-4 py-2 text-sm text-white disabled:bg-gray-400 ${buttonClass}`}
+                      >
+                        {signing ? 'Подписание...' : meta.label}
+                      </button>
+                      <p className="mt-1 text-xs text-gray-600">{meta.hint}</p>
+                    </div>
+                  );
+                })}
               </div>
 
-              <p className="mt-3 text-sm text-gray-600">{getSigningHint(act.status)}</p>
+               <p className="mt-3 text-sm text-gray-600">{getSigningHint(act.status, recipients)}</p>
 
               <p className="mt-2 text-sm text-gray-600">
                 Текущий пользователь: {user?.full_name || user?.email || '—'}
@@ -876,16 +1138,28 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
           )}
 
           <div className="rounded bg-white p-6 shadow">
-            <h2 className="mb-4 text-lg font-semibold">История версий</h2>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">История шагов</h2>
+              {user?.role === 'admin' && (
+                <button
+                  type="button"
+                  onClick={handleSendNotification}
+                  disabled={sendingNotification}
+                  className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:bg-gray-400"
+                >
+                  {sendingNotification ? 'Отправка...' : 'Отправить уведомление'}
+                </button>
+              )}
+            </div>
 
             {versions.length === 0 ? (
-              <p className="text-gray-600">Версии пока отсутствуют</p>
+              <p className="text-gray-600">Шаги пока отсутствуют</p>
             ) : (
               <div className="space-y-3">
                 {versions.map((version) => (
                   <div key={version.id} className="rounded border border-gray-200 p-3">
                     <div className="flex items-center justify-between">
-                      <span className="font-medium">Версия {version.version_number}</span>
+                      <span className="font-medium">Шаг {version.version_number}</span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-gray-500">
                           {new Date(version.created_at).toLocaleString('ru-RU')}
@@ -900,6 +1174,16 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                             {versionPdfLoading === version.version_number ? '...' : 'PDF'}
                           </button>
                         )}
+                        {version.pdf_file_id && canSendVersionEmail(version.version_number) && (
+                          <button
+                            type="button"
+                            onClick={() => handleSendVersionPdfEmail(version.version_number)}
+                            disabled={versionEmailLoading === version.version_number}
+                            className="rounded bg-emerald-600 px-2 py-1 text-xs text-white hover:bg-emerald-700 disabled:bg-gray-400"
+                          >
+                            {versionEmailLoading === version.version_number ? '...' : 'Отправить на почту'}
+                          </button>
+                        )}
                       </div>
                     </div>
                     {version.change_note && (
@@ -912,6 +1196,17 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={showDeleteModal}
+        title="Удалить акт?"
+        message="Вы уверены, что хотите удалить этот акт? Это действие нельзя отменить."
+        confirmText="Удалить"
+        cancelText="Отмена"
+        onConfirm={handleDeleteAct}
+        onCancel={() => setShowDeleteModal(false)}
+        isLoading={deleting}
+      />
     </Layout>
   );
 }

@@ -74,6 +74,21 @@ async def update_participant(
     return participant
 
 
+@router.delete("/{participant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_participant(
+    participant_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    participant = db.query(Participant).filter(Participant.id == participant_id).first()
+    if not participant:
+        raise HTTPException(status_code=404, detail="Участник не найден")
+
+    db.delete(participant)
+    db.commit()
+    return None
+
+
 @router.post("/bulk", status_code=status.HTTP_201_CREATED)
 async def bulk_create_participants(
     participants: List[BulkParticipantCreate],

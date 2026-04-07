@@ -310,177 +310,188 @@ export default function TemplatesPage() {
           </SurfaceCard>
 
           <SurfaceCard className="p-5 md:p-6 xl:self-start">
-            <h2 className="mb-4 text-lg font-semibold">
-              {editingId ? 'Редактирование шаблона' : 'Создание шаблона'}
-            </h2>
+            {editingId ? (
+              <>
+                <h2 className="mb-4 text-lg font-semibold">Редактирование шаблона</h2>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label htmlFor="code" className="mb-2 block text-sm font-medium text-gray-700">
-                  Код шаблона
-                </label>
-                <input
-                  id="code"
-                  name="code"
-                  value={form.code}
-                  onChange={handleChange}
-                  disabled={Boolean(editingId)}
-                  className="w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100"
-                  placeholder="GENERIC"
-                  required
-                />
-              </div>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div>
+                    <label htmlFor="code" className="mb-2 block text-sm font-medium text-gray-700">
+                      Код шаблона
+                    </label>
+                    <input
+                      id="code"
+                      name="code"
+                      value={form.code}
+                      onChange={handleChange}
+                      disabled={Boolean(editingId)}
+                      className="w-full rounded border border-gray-300 px-3 py-2 disabled:bg-gray-100"
+                      placeholder="GENERIC"
+                      required
+                    />
+                  </div>
 
-              <div>
-                <label htmlFor="name" className="mb-2 block text-sm font-medium text-gray-700">
-                  Название
-                </label>
-                <input
-                  id="name"
-                  name="name"
-                  value={form.name}
-                  onChange={handleChange}
-                  className="w-full rounded border border-gray-300 px-3 py-2"
-                  placeholder="Общий акт приема-передачи"
-                  required
-                />
-              </div>
+                  <div>
+                    <label htmlFor="name" className="mb-2 block text-sm font-medium text-gray-700">
+                      Название
+                    </label>
+                    <input
+                      id="name"
+                      name="name"
+                      value={form.name}
+                      onChange={handleChange}
+                      className="w-full rounded border border-gray-300 px-3 py-2"
+                      placeholder="Общий акт приема-передачи"
+                      required
+                    />
+                  </div>
 
-              <div>
-                <label htmlFor="description" className="mb-2 block text-sm font-medium text-gray-700">
-                  Описание
-                </label>
-                <textarea
-                  id="description"
-                  name="description"
-                  value={form.description}
-                  onChange={handleChange}
-                  rows={3}
-                  className="w-full rounded border border-gray-300 px-3 py-2"
-                  placeholder="Для каких сценариев используется этот шаблон"
-                />
-              </div>
+                  <div>
+                    <label htmlFor="description" className="mb-2 block text-sm font-medium text-gray-700">
+                      Описание
+                    </label>
+                    <textarea
+                      id="description"
+                      name="description"
+                      value={form.description}
+                      onChange={handleChange}
+                      rows={3}
+                      className="w-full rounded border border-gray-300 px-3 py-2"
+                      placeholder="Для каких сценариев используется этот шаблон"
+                    />
+                  </div>
 
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <label className="block text-sm font-medium text-gray-700">Поля шаблона</label>
-                  <button
-                    type="button"
-                    onClick={addField}
-                    className="rounded bg-blue-100 px-3 py-1 text-sm text-blue-700 hover:bg-blue-200"
-                  >
-                    + Добавить поле
-                  </button>
-                </div>
-
-                <div className="mb-3 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                  Предпросмотр формы: так поля будут отображаться при создании/редактировании акта.
-                </div>
-
-                <div className="mb-4 grid grid-cols-1 gap-2 rounded border border-gray-200 bg-gray-50 p-3">
-                  {form.fields.map((field, idx) => (
-                    <div key={`${field.name}-preview-${idx}`} className="text-xs text-gray-700">
-                      • {field.label || '(без label)'}
-                      <span className="ml-2 rounded bg-white px-2 py-0.5 text-[11px] text-gray-600">
-                        {field.type}
-                      </span>
-                      {field.required && (
-                        <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
-                          required
-                        </span>
-                      )}
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="block text-sm font-medium text-gray-700">Поля шаблона</label>
+                      <button
+                        type="button"
+                        onClick={addField}
+                        className="rounded bg-blue-100 px-3 py-1 text-sm text-blue-700 hover:bg-blue-200"
+                      >
+                        + Добавить поле
+                      </button>
                     </div>
-                  ))}
-                </div>
 
-                <div className="space-y-3">
-                  {form.fields.map((field, index) => (
-                    <div key={`${field.name}-${index}`} className="rounded border border-gray-200 p-3">
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <input
-                          value={field.name}
-                          onChange={(e) => updateField(index, { name: e.target.value })}
-                          className={`w-full rounded border px-3 py-2 ${
-                            fieldErrors[index]?.name ? 'border-red-400 bg-red-50' : 'border-gray-300'
-                          }`}
-                          placeholder="name (например imei)"
-                          required
-                        />
+                    <div className="mb-3 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                      Предпросмотр формы: так поля будут отображаться при создании/редактировании акта.
+                    </div>
 
-                        {fieldErrors[index]?.name && (
-                          <p className="mt-1 text-xs text-red-600 md:col-span-2">{fieldErrors[index]?.name}</p>
-                        )}
-
-                        <input
-                          value={field.label}
-                          onChange={(e) => updateField(index, { label: e.target.value })}
-                          className={`w-full rounded border px-3 py-2 ${
-                            fieldErrors[index]?.label ? 'border-red-400 bg-red-50' : 'border-gray-300'
-                          }`}
-                          placeholder="label (например IMEI)"
-                          required
-                        />
-
-                        {fieldErrors[index]?.label && (
-                          <p className="mt-1 text-xs text-red-600 md:col-span-2">{fieldErrors[index]?.label}</p>
-                        )}
-
-                        <select
-                          value={field.type}
-                          onChange={(e) => updateField(index, { type: e.target.value })}
-                          className="w-full rounded border border-gray-300 px-3 py-2"
-                        >
-                          {fieldTypeOptions.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-
-                        <div className="flex items-center justify-between rounded border border-gray-300 px-3 py-2">
-                          <label className="text-sm text-gray-700">Обязательное поле</label>
-                          <input
-                            type="checkbox"
-                            checked={field.required}
-                            onChange={(e) => updateField(index, { required: e.target.checked })}
-                          />
+                    <div className="mb-4 grid grid-cols-1 gap-2 rounded border border-gray-200 bg-gray-50 p-3">
+                      {form.fields.map((field, idx) => (
+                        <div key={`${field.name}-preview-${idx}`} className="text-xs text-gray-700">
+                          • {field.label || '(без label)'}
+                          <span className="ml-2 rounded bg-white px-2 py-0.5 text-[11px] text-gray-600">
+                            {field.type}
+                          </span>
+                          {field.required && (
+                            <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
+                              required
+                            </span>
+                          )}
                         </div>
-                      </div>
-
-                      <div className="mt-3 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => removeField(index)}
-                          className="rounded bg-red-100 px-3 py-1 text-sm text-red-700 hover:bg-red-200"
-                        >
-                          Удалить
-                        </button>
-                      </div>
+                      ))}
                     </div>
-                  ))}
+
+                    <div className="space-y-3">
+                      {form.fields.map((field, index) => (
+                        <div key={`${field.name}-${index}`} className="rounded border border-gray-200 p-3">
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <input
+                              value={field.name}
+                              onChange={(e) => updateField(index, { name: e.target.value })}
+                              className={`w-full rounded border px-3 py-2 ${
+                                fieldErrors[index]?.name ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                              }`}
+                              placeholder="name (например imei)"
+                              required
+                            />
+
+                            {fieldErrors[index]?.name && (
+                              <p className="mt-1 text-xs text-red-600 md:col-span-2">{fieldErrors[index]?.name}</p>
+                            )}
+
+                            <input
+                              value={field.label}
+                              onChange={(e) => updateField(index, { label: e.target.value })}
+                              className={`w-full rounded border px-3 py-2 ${
+                                fieldErrors[index]?.label ? 'border-red-400 bg-red-50' : 'border-gray-300'
+                              }`}
+                              placeholder="label (например IMEI)"
+                              required
+                            />
+
+                            {fieldErrors[index]?.label && (
+                              <p className="mt-1 text-xs text-red-600 md:col-span-2">{fieldErrors[index]?.label}</p>
+                            )}
+
+                            <select
+                              value={field.type}
+                              onChange={(e) => updateField(index, { type: e.target.value })}
+                              className="w-full rounded border border-gray-300 px-3 py-2"
+                            >
+                              {fieldTypeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+
+                            <div className="flex items-center justify-between rounded border border-gray-300 px-3 py-2">
+                              <label className="text-sm text-gray-700">Обязательное поле</label>
+                              <input
+                                type="checkbox"
+                                checked={field.required}
+                                onChange={(e) => updateField(index, { required: e.target.checked })}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => removeField(index)}
+                              className="rounded bg-red-100 px-3 py-1 text-sm text-red-700 hover:bg-red-200"
+                            >
+                              Удалить
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-gray-400"
+                    >
+                      {saving ? 'Сохранение...' : 'Сохранить изменения'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={resetForm}
+                      className="rounded bg-gray-200 px-4 py-2 text-gray-800 hover:bg-gray-300"
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </form>
+              </>
+            ) : (
+              <div className="text-center py-12">
+                <div className="mb-4 text-6xl">🛠️</div>
+                <h2 className="mb-2 text-xl font-semibold text-gray-800">Создание шаблонов</h2>
+                <p className="text-gray-600 mb-4">
+                  Для создания нового шаблона обратитесь к Руслану
+                </p>
+                <div className="inline-block rounded-lg bg-blue-50 px-4 py-2 text-sm text-blue-700">
+                  Шаблоны настраиваются через backend скрипты
                 </div>
               </div>
-
-              <div className="flex gap-3">
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-gray-400"
-                >
-                  {saving ? 'Сохранение...' : editingId ? 'Сохранить изменения' : 'Создать шаблон'}
-                </button>
-
-                {editingId && (
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="rounded bg-gray-200 px-4 py-2 text-gray-800 hover:bg-gray-300"
-                  >
-                    Отмена
-                  </button>
-                )}
-              </div>
-            </form>
+            )}
           </SurfaceCard>
         </div>
       </div>

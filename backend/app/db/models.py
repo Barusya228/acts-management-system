@@ -36,7 +36,8 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String, unique=True, nullable=False, index=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    email = Column(String, unique=True, nullable=True, index=True)
     full_name = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(SQLEnum(UserRole), nullable=False, default=UserRole.GUEST)
@@ -70,6 +71,7 @@ class Template(Base):
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     schema_json = Column(JSON, nullable=False)
+    pdf_version = Column(Integer, nullable=False, default=2)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     

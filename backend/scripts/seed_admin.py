@@ -11,16 +11,23 @@ def seed_admin():
     
     try:
         # Check if admin already exists
-        existing_admin = db.query(User).filter(User.email == "admin@example.com").first()
+        existing_admin = db.query(User).filter(User.email == "admin").first()
         
         if existing_admin:
             print("Admin user already exists")
+            # Update password to qwerty
+            existing_admin.password_hash = get_password_hash("qwerty")
+            existing_admin.full_name = "Администратор"
+            existing_admin.role = UserRole.ADMIN
+            existing_admin.is_active = True
+            db.commit()
+            print("Admin password updated to 'qwerty'")
         else:
-            # Create admin user
+            # Create admin user with static credentials
             admin = User(
-                email="admin@example.com",
-                full_name="Admin User",
-                password_hash=get_password_hash("admin123"),
+                email="admin",
+                full_name="Администратор",
+                password_hash=get_password_hash("qwerty"),
                 role=UserRole.ADMIN,
                 is_active=True
             )
@@ -29,8 +36,8 @@ def seed_admin():
             db.commit()
             
             print("Admin user created successfully")
-            print("Email: admin@example.com")
-            print("Password: admin123")
+            print("Login: admin")
+            print("Password: qwerty")
 
         # Create guest user if not exists
         existing_guest = db.query(User).filter(User.email == "guest@example.com").first()

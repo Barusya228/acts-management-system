@@ -1,9 +1,8 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15-alpine
     container_name: acts_db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: acts_user
       POSTGRES_PASSWORD: acts_password
@@ -20,10 +19,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: acts_backend
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://acts_user:acts_password@db:5432/acts_db
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
       CORS_ORIGINS: '["http://localhost:3000"]'
+      CORS_ORIGIN_REGEX: '^https?://.+(:\d+)?$'
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8000}
     ports:
       - "8000:8000"
     volumes:
@@ -40,8 +42,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: acts_frontend
+    restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
     ports:
       - "3000:3000"
     volumes:

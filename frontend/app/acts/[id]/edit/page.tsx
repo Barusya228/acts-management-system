@@ -8,6 +8,8 @@ import { useToast } from '@/contexts/ToastContext';
 import PageHeader from '@/components/ui/PageHeader';
 import SurfaceCard from '@/components/ui/SurfaceCard';
 import ParticipantPicker from '@/components/ParticipantPicker';
+import RecipientsEditor, { type EditableRecipient } from '@/components/RecipientsEditor';
+import { buildParty2Summary, getPrimaryRecipientEmail, normalizeActRecipients } from '@/lib/actRecipients';
 
 interface ActFormData {
   party1_name: string;
@@ -32,6 +34,7 @@ interface TemplateOption {
   code: string;
   name: string;
   schema_json?: {
+    max_recipients?: number | null;
     fields?: TemplateField[];
   };
 }
@@ -43,6 +46,12 @@ interface ParticipantOption {
   department?: string | null;
   title?: string | null;
   kind: 'IT_MANAGER' | 'EMPLOYEE';
+}
+
+interface EquipmentItem {
+  name: string;
+  serial: string;
+  imei?: string;
 }
 
 const reservedFields = new Set([
@@ -59,8 +68,9 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
   const [templates, setTemplates] = useState<TemplateOption[]>([]);
   const [participants, setParticipants] = useState<ParticipantOption[]>([]);
   const [party1ParticipantId, setParty1ParticipantId] = useState('');
-  const [party2ParticipantId, setParty2ParticipantId] = useState('');
   const [extraData, setExtraData] = useState<Record<string, string>>({});
+  const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
+  const [recipients, setRecipients] = useState<EditableRecipient[]>([{ full_name: '', email: '' }]);
   const [formData, setFormData] = useState<ActFormData>({
     party1_name: '',
     party2_name: '',
@@ -80,9 +90,8 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
   const selectedTemplate = templates.find((template) => template.id === formData.template_id);
   const itManagers = participants.filter((participant) => participant.kind === 'IT_MANAGER');
   const employees = participants.filter((participant) => participant.kind === 'EMPLOYEE');
-  const selectedEmployee = employees.find((participant) => participant.id === party2ParticipantId);
   const dynamicFields = (selectedTemplate?.schema_json?.fields || []).filter(
-    (field) => !reservedFields.has(field.name)
+    (field) => !reservedFields.has(field.name) && field.name !== 'imei'
   );
 
   useEffect(() => {
@@ -104,9 +113,7 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
       setParticipants(participantsList);
 
       const matchedParty1 = participantsList.find((item) => item.kind === 'IT_MANAGER' && item.full_name === act.party1_name);
-      const matchedParty2 = participantsList.find((item) => item.kind === 'EMPLOYEE' && item.full_name === act.party2_name);
       setParty1ParticipantId(matchedParty1?.id || '');
-      setParty2ParticipantId(matchedParty2?.id || '');
 
       setFormData({
         party1_name: act.party1_name,
@@ -119,15 +126,37 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
         change_note: '',
       });
 
+      setRecipients(
+        normalizeActRecipients(act.extra_data_json, act.party2_name, act.receiver_email).map((recipient) => ({
+          participant_id: recipient.participant_id,
+          full_name: recipient.full_name,
+          email: recipient.email,
+        }))
+      );
+
       const template = templateList.find((item) => item.id === act.template_id);
       const dynamicTemplateFields = (template?.schema_json?.fields || []).filter(
-        (field) => !reservedFields.has(field.name)
+        (field: TemplateField) => !reservedFields.has(field.name) && field.name !== 'imei'
       );
       const initialExtra: Record<string, string> = {};
-      dynamicTemplateFields.forEach((field) => {
+      dynamicTemplateFields.forEach((field: TemplateField) => {
         initialExtra[field.name] = String(act.extra_data_json?.[field.name] ?? '');
       });
       setExtraData(initialExtra);
+
+      const equipmentListRaw = act.extra_data_json?.equipment_list;
+      if (Array.isArray(equipmentListRaw)) {
+        const parsed = equipmentListRaw
+          .filter((item) => typeof item === 'object' && item !== null)
+          .map((item) => ({
+            name: String((item as { name?: unknown }).name ?? ''),
+            serial: String((item as { serial?: unknown }).serial ?? ''),
+            imei: String((item as { imei?: unknown }).imei ?? ''),
+          }));
+        setEquipmentItems(parsed);
+      } else {
+        setEquipmentItems([]);
+      }
     } catch (err: any) {
       const msg = err.response?.data?.detail || 'Ошибка загрузки акта';
       setError(msg);
@@ -143,10 +172,38 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
     setError('');
 
     try {
+      const normalizedRecipients = recipients
+        .map((recipient) => ({
+          participant_id: recipient.participant_id,
+          full_name: recipient.full_name.trim(),
+          email: recipient.email.trim(),
+        }))
+        .filter((recipient) => recipient.full_name && recipient.email);
+
+      if (normalizedRecipients.length === 0) {
+        throw new Error('Добавьте хотя бы одного получателя с ФИО и email');
+      }
+
+      const normalizedEquipment = equipmentItems
+        .map((item) => ({
+          name: item.name.trim(),
+          serial: item.serial.trim(),
+          imei: item.imei?.trim() || '',
+        }))
+        .filter((item) => item.name || item.serial);
+
+      const payloadExtraData: Record<string, unknown> = { ...extraData };
+      payloadExtraData.recipients = normalizedRecipients;
+      if (normalizedEquipment.length > 0) {
+        payloadExtraData.equipment_list = normalizedEquipment;
+      }
+
       await api.patch(`/api/acts/${id}`, {
         ...formData,
+        party2_name: buildParty2Summary(normalizedRecipients),
+        receiver_email: getPrimaryRecipientEmail(normalizedRecipients),
         issue_date: new Date(formData.issue_date).toISOString(),
-        extra_data_json: extraData,
+        extra_data_json: payloadExtraData,
       });
       showToast('Изменения сохранены, версия обновлена', 'success');
       router.push(`/acts/${id}`);
@@ -171,6 +228,18 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
       ...prev,
       [name]: value,
     }));
+  };
+
+  const addEquipmentItem = () => {
+    setEquipmentItems((prev) => [...prev, { name: '', serial: '', imei: '' }]);
+  };
+
+  const updateEquipmentItem = (index: number, patch: Partial<EquipmentItem>) => {
+    setEquipmentItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const removeEquipmentItem = (index: number) => {
+    setEquipmentItems((prev) => prev.filter((_, i) => i !== index));
   };
 
   if (loading) {
@@ -215,23 +284,12 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
             />
           </div>
 
-          <div className="mb-4">
-            <ParticipantPicker
-              label="Сторона 2 (Получающая)"
-              placeholder="Найдите сотрудника по имени, отделу или email"
-              value={party2ParticipantId}
-              options={employees}
-              onSelect={(participant) => {
-                setParty2ParticipantId(participant.id);
-                setFormData((prev) => ({
-                  ...prev,
-                  party2_name: participant.full_name,
-                  receiver_email: participant.email || '',
-                }));
-              }}
-              helperText="Email получателя обновится автоматически из карточки выбранного сотрудника."
-            />
-          </div>
+          <RecipientsEditor 
+            recipients={recipients} 
+            employees={employees} 
+            onChange={setRecipients}
+            maxRecipients={selectedTemplate?.schema_json?.max_recipients}
+          />
 
           <div className="mb-4">
             <label htmlFor="issue_date" className="block text-sm font-medium text-gray-700 mb-2">
@@ -278,24 +336,75 @@ export default function ActEditPage({ params }: { params: Promise<{ id: string }
             />
           </div>
 
+          <div className="mb-6 rounded-md border border-gray-200 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-gray-800">Оборудование (доп. позиции)</h2>
+                <p className="text-xs text-gray-500">
+                  Основная позиция берется из полей выше. Здесь можно добавить еще несколько позиций для PDF v2.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={addEquipmentItem}
+                className="rounded bg-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800"
+              >
+                Добавить позицию
+              </button>
+            </div>
+
+            {equipmentItems.length === 0 ? (
+              <p className="text-sm text-gray-500">Дополнительных позиций пока нет.</p>
+            ) : (
+              <div className="space-y-3">
+                {equipmentItems.map((item, index) => (
+                  <div key={index} className="grid grid-cols-1 gap-3 rounded border border-gray-200 p-3" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Наименование"
+                    />
+                    <input
+                      type="text"
+                      value={item.serial}
+                      onChange={(e) => updateEquipmentItem(index, { serial: e.target.value })}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Серийный номер"
+                    />
+                    {selectedTemplate?.code === 'IPAD' && (
+                      <input
+                        type="text"
+                        value={item.imei || ''}
+                        onChange={(e) => updateEquipmentItem(index, { imei: e.target.value })}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="IMEI"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeEquipmentItem(index)}
+                      className="rounded bg-rose-600 px-3 py-2 text-sm text-white hover:bg-rose-700"
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="mb-6">
-            <label htmlFor="receiver_email" className="block text-sm font-medium text-gray-700 mb-2">
-              Email получателя
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Контактный email</label>
             <input
               type="email"
-              id="receiver_email"
-              name="receiver_email"
-              value={formData.receiver_email}
-              onChange={handleChange}
-              readOnly={Boolean(selectedEmployee?.email)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 read-only:bg-gray-100 read-only:text-gray-600"
-              required
+              value={getPrimaryRecipientEmail(recipients)}
+              readOnly
+              className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-600 focus:outline-none"
             />
             <p className="mt-2 text-xs text-gray-500">
-              {selectedEmployee?.email
-                ? 'Почта подставлена автоматически из карточки выбранного сотрудника.'
-                : 'Если у сотрудника нет email в справочнике, его можно изменить вручную.'}
+              Основной email акта автоматически берется из первого получателя в списке.
             </p>
           </div>
 

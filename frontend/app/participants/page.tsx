@@ -35,8 +35,10 @@ export default function ParticipantsPage() {
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkText, setBulkText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showEditEmojiPicker, setShowEditEmojiPicker] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Participant | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
   const [form, setForm] = useState({
     full_name: '',
     email: '',
@@ -72,6 +74,14 @@ export default function ParticipantsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Проверка на английские буквы
+    const englishNameRegex = /^[A-Za-z\s\-'.]+$/;
+    if (!englishNameRegex.test(form.full_name)) {
+      showToast('ФИО должно быть на английском языке (только латинские буквы)', 'error');
+      return;
+    }
+    
     setSaving(true);
     try {
       await api.post('/api/participants', {
@@ -125,6 +135,7 @@ export default function ParticipantsPage() {
   const handleCancelEdit = () => {
     setEditingId(null);
     setEditForm(null);
+    setShowEditEmojiPicker(false);
   };
 
   const handleSaveEdit = async () => {
@@ -148,6 +159,30 @@ export default function ParticipantsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleDeleteClick = (participant: Participant) => {
+    setDeleteConfirm({ id: participant.id, name: participant.full_name });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm) return;
+
+    setSaving(true);
+    try {
+      await api.delete(`/api/participants/${deleteConfirm.id}`);
+      await fetchParticipants();
+      showToast('Участник удален', 'success');
+      setDeleteConfirm(null);
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Ошибка удаления участника', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirm(null);
   };
 
   if (!user || user.role !== 'ADMIN') return null;
@@ -175,13 +210,15 @@ export default function ParticipantsPage() {
       {showBulkImport && (
         <SurfaceCard className="p-6 mb-6">
           <h2 className="mb-4 text-lg font-semibold">Массовая загрузка сотрудников</h2>
-          <p className="mb-3 text-sm text-gray-600">Введите список ФИО (каждое имя с новой строки). Все будут добавлены как сотрудники.</p>
+          <p className="mb-3 text-sm text-gray-600">
+            Введите список ФИО на английском языке (каждое имя с новой строки). Все будут добавлены как сотрудники.
+          </p>
           <textarea
             value={bulkText}
             onChange={(e) => setBulkText(e.target.value)}
             className="w-full rounded border border-gray-300 px-3 py-2 mb-3"
             rows={10}
-            placeholder="Иванов Иван Иванович&#10;Петров Петр Петрович&#10;..."
+            placeholder="John Smith&#10;Mary Johnson&#10;Robert Brown&#10;..."
           />
           <div className="flex gap-2">
             <button
@@ -205,13 +242,23 @@ export default function ParticipantsPage() {
         <SurfaceCard className="p-6">
           <h2 className="mb-4 text-lg font-semibold">Добавить участника</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <input
-              value={form.full_name}
-              onChange={(e) => setForm((prev) => ({ ...prev, full_name: e.target.value }))}
-              className="w-full rounded border border-gray-300 px-3 py-2"
-              placeholder="ФИО"
-              required
-            />
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                ФИО (только английские буквы) *
+              </label>
+              <input
+                value={form.full_name}
+                onChange={(e) => setForm((prev) => ({ ...prev, full_name: e.target.value }))}
+                className="w-full rounded border border-gray-300 px-3 py-2"
+                placeholder="John Doe"
+                required
+                pattern="[A-Za-z\s\-'.]+"
+                title="Используйте только английские буквы, пробелы, дефисы и точки"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Пример: John Smith, Mary-Jane O&apos;Connor
+              </p>
+            </div>
             <input
               value={form.email}
               onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
@@ -324,6 +371,45 @@ export default function ParticipantsPage() {
                           className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
                           placeholder="Должность"
                         />
+                        <div>
+                          <p className="mb-2 text-sm font-medium text-gray-700">Стикер участника</p>
+                          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-2xl shadow-sm ring-1 ring-gray-200">
+                                  {editForm?.sticker_emoji || '👤'}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-medium text-gray-900">Текущий стикер</p>
+                                  <p className="text-xs text-gray-500">Выберите emoji</p>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => setShowEditEmojiPicker((prev) => !prev)}
+                                className="rounded-xl bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+                              >
+                                {showEditEmojiPicker ? 'Скрыть' : 'Выбрать emoji'}
+                              </button>
+                            </div>
+
+                            {showEditEmojiPicker && (
+                              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                                <EmojiPicker
+                                  width="100%"
+                                  height={420}
+                                  searchDisabled={false}
+                                  skinTonesDisabled
+                                  previewConfig={{ showPreview: false }}
+                                  onEmojiClick={(emojiData) => {
+                                    setEditForm(prev => prev ? { ...prev, sticker_emoji: emojiData.emoji } : null);
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
                         <div className="flex gap-2 mt-2">
                           <button
                             onClick={handleSaveEdit}
@@ -348,12 +434,20 @@ export default function ParticipantsPage() {
                             <p className="text-sm text-gray-500">{item.title || 'Без должности'} {item.department ? `• ${item.department}` : ''}</p>
                             {item.email && <p className="text-sm text-gray-600">{item.email}</p>}
                           </div>
-                          <button
-                            onClick={() => handleEdit(item)}
-                            className="ml-2 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
-                          >
-                            ✏️ Редактировать
-                          </button>
+                          <div className="ml-2 flex gap-2">
+                            <button
+                              onClick={() => handleEdit(item)}
+                              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
+                            >
+                              ✏️ Редактировать
+                            </button>
+                            <button
+                              onClick={() => handleDeleteClick(item)}
+                              className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200"
+                            >
+                              🗑️ Удалить
+                            </button>
+                          </div>
                         </div>
                       </>
                     )}
@@ -399,6 +493,45 @@ export default function ParticipantsPage() {
                           className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
                           placeholder="Должность"
                         />
+                        <div>
+                          <p className="mb-2 text-sm font-medium text-gray-700">Стикер участника</p>
+                          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-2xl shadow-sm ring-1 ring-gray-200">
+                                  {editForm?.sticker_emoji || '👤'}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-medium text-gray-900">Текущий стикер</p>
+                                  <p className="text-xs text-gray-500">Выберите emoji</p>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => setShowEditEmojiPicker((prev) => !prev)}
+                                className="rounded-xl bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
+                              >
+                                {showEditEmojiPicker ? 'Скрыть' : 'Выбрать emoji'}
+                              </button>
+                            </div>
+
+                            {showEditEmojiPicker && (
+                              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                                <EmojiPicker
+                                  width="100%"
+                                  height={420}
+                                  searchDisabled={false}
+                                  skinTonesDisabled
+                                  previewConfig={{ showPreview: false }}
+                                  onEmojiClick={(emojiData) => {
+                                    setEditForm(prev => prev ? { ...prev, sticker_emoji: emojiData.emoji } : null);
+                                  }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
                         <div className="flex gap-2 mt-2">
                           <button
                             onClick={handleSaveEdit}
@@ -423,12 +556,20 @@ export default function ParticipantsPage() {
                             <p className="text-sm text-gray-500">{item.title || 'Без должности'} {item.department ? `• ${item.department}` : ''}</p>
                             {item.email && <p className="text-sm text-gray-600">{item.email}</p>}
                           </div>
-                          <button
-                            onClick={() => handleEdit(item)}
-                            className="ml-2 rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
-                          >
-                            ✏️ Редактировать
-                          </button>
+                          <div className="ml-2 flex gap-2">
+                            <button
+                              onClick={() => handleEdit(item)}
+                              className="rounded bg-gray-100 px-2 py-1 text-xs text-gray-700 hover:bg-gray-200"
+                            >
+                              ✏️ Редактировать
+                            </button>
+                            <button
+                              onClick={() => handleDeleteClick(item)}
+                              className="rounded bg-red-100 px-2 py-1 text-xs text-red-700 hover:bg-red-200"
+                            >
+                              🗑️ Удалить
+                            </button>
+                          </div>
                         </div>
                       </>
                     )}
@@ -439,6 +580,33 @@ export default function ParticipantsPage() {
           </SurfaceCard>
         </div>
       </div>
+
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="mb-4 text-lg font-semibold text-gray-900">Подтверждение удаления</h3>
+            <p className="mb-6 text-gray-700">
+              Вы уверены, что хотите удалить участника <strong>{deleteConfirm.name}</strong>?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={handleDeleteCancel}
+                disabled={saving}
+                className="rounded bg-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-400 disabled:bg-gray-200"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={saving}
+                className="rounded bg-red-600 px-4 py-2 text-white hover:bg-red-700 disabled:bg-gray-400"
+              >
+                {saving ? 'Удаление...' : 'Удалить'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
