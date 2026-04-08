@@ -547,35 +547,76 @@ def build_act_pdf_v2(
     
     # Блок подписей (только если один получатель, иначе подписи уже в первой таблице)
     if len(normalized_recipients) == 1:
-        estimated_signature_height = 140 + 80
+        estimated_signature_height = 100
         if y < estimated_signature_height:
             start_new_page()
         
-        pdf.setFont(bold_font_name, 12)
-        sig_title = "ПОДПИСИ СТОРОН:"
-        sig_title_width = pdf.stringWidth(sig_title, bold_font_name, 12)
-        pdf.drawString((width - sig_title_width) / 2, y, sig_title)
-        y -= 30
+        # Простой блок подписей в две колонки
+        y -= 20
         
-        signature_rows = [
-            ('Сторона 1', act_data.get('party1_name', ''), '', issue_signature_party1_path),
-            ('Сторона 2', normalized_recipients[0].get('full_name', ''), normalized_recipients[0].get('email', ''), 
-             issue_recipient_signature_paths[0] if issue_recipient_signature_paths and len(issue_recipient_signature_paths) > 0 else None),
-        ]
-
-        signature_table_height_estimate = 24 + (52 * len(signature_rows))
-        if y - signature_table_height_estimate < 80:
-            start_new_page()
-
-        signature_table_height = _draw_signature_table(
-            pdf,
-            margin_left,
-            y,
-            font_name,
-            bold_font_name,
-            signature_rows,
-        )
-        y -= (signature_table_height + 25)
+        # Левая колонка - Сторона 1
+        left_x = margin_left
+        pdf.setFont(bold_font_name, 11)
+        pdf.drawString(left_x, y, "Сторона 1:")
+        
+        # Правая колонка - Сторона 2
+        right_x = width / 2 + 20
+        pdf.drawString(right_x, y, "Сторона 2:")
+        y -= 25
+        
+        # Подписи
+        pdf.setFont(font_name, 10)
+        
+        # Сторона 1 - подпись
+        if issue_signature_party1_path and os.path.exists(issue_signature_party1_path):
+            try:
+                from reportlab.lib.utils import ImageReader
+                image = ImageReader(issue_signature_party1_path)
+                pdf.drawImage(
+                    image,
+                    left_x,
+                    y - 30,
+                    width=100,
+                    height=30,
+                    preserveAspectRatio=True,
+                    mask="auto",
+                )
+            except Exception:
+                pdf.drawString(left_x, y, "_" * 20)
+        else:
+            pdf.drawString(left_x, y, "_" * 20)
+        
+        # Сторона 2 - подпись
+        recipient_sig_path = issue_recipient_signature_paths[0] if issue_recipient_signature_paths and len(issue_recipient_signature_paths) > 0 else None
+        if recipient_sig_path and os.path.exists(recipient_sig_path):
+            try:
+                from reportlab.lib.utils import ImageReader
+                image = ImageReader(recipient_sig_path)
+                pdf.drawImage(
+                    image,
+                    right_x,
+                    y - 30,
+                    width=100,
+                    height=30,
+                    preserveAspectRatio=True,
+                    mask="auto",
+                )
+            except Exception:
+                pdf.drawString(right_x, y, "_" * 20)
+        else:
+            pdf.drawString(right_x, y, "_" * 20)
+        
+        y -= 35
+        
+        # ФИО под подписями
+        pdf.setFont(font_name, 9)
+        party1_name = act_data.get('party1_name', '')
+        pdf.drawString(left_x, y, party1_name[:30])
+        
+        party2_name = normalized_recipients[0].get('full_name', '')
+        pdf.drawString(right_x, y, party2_name[:30])
+        
+        y -= 25
     else:
         # Для нескольких получателей подписи уже в первой таблице, просто отступ
         y -= 20
@@ -637,25 +678,76 @@ def build_act_pdf_v2(
         
         # Подписи возврата: только если один получатель, иначе подписи уже в первой таблице
         if len(normalized_recipients) == 1:
-            return_rows = [
-                ('Сторона 1', act_data.get('party1_name', ''), '', return_signature_party1_path),
-                ('Сторона 2', normalized_recipients[0].get('full_name', ''), normalized_recipients[0].get('email', ''),
-                 return_recipient_signature_paths[0] if return_recipient_signature_paths and len(return_recipient_signature_paths) > 0 else None),
-            ]
-
-            return_signature_table_height_estimate = 24 + (52 * len(return_rows))
-            if y - return_signature_table_height_estimate < 60:
+            estimated_return_signature_height = 100
+            if y < estimated_return_signature_height:
                 start_new_page()
-
-            return_signature_table_height = _draw_signature_table(
-                pdf,
-                margin_left,
-                y,
-                font_name,
-                bold_font_name,
-                return_rows,
-            )
-            y -= (return_signature_table_height + 20)
+            
+            # Простой блок подписей в две колонки для возврата
+            y -= 20
+            
+            # Левая колонка - Сторона 1
+            left_x = margin_left
+            pdf.setFont(bold_font_name, 11)
+            pdf.drawString(left_x, y, "Сторона 1:")
+            
+            # Правая колонка - Сторона 2
+            right_x = width / 2 + 20
+            pdf.drawString(right_x, y, "Сторона 2:")
+            y -= 25
+            
+            # Подписи
+            pdf.setFont(font_name, 10)
+            
+            # Сторона 1 - подпись возврата
+            if return_signature_party1_path and os.path.exists(return_signature_party1_path):
+                try:
+                    from reportlab.lib.utils import ImageReader
+                    image = ImageReader(return_signature_party1_path)
+                    pdf.drawImage(
+                        image,
+                        left_x,
+                        y - 30,
+                        width=100,
+                        height=30,
+                        preserveAspectRatio=True,
+                        mask="auto",
+                    )
+                except Exception:
+                    pdf.drawString(left_x, y, "_" * 20)
+            else:
+                pdf.drawString(left_x, y, "_" * 20)
+            
+            # Сторона 2 - подпись возврата
+            return_recipient_sig_path = return_recipient_signature_paths[0] if return_recipient_signature_paths and len(return_recipient_signature_paths) > 0 else None
+            if return_recipient_sig_path and os.path.exists(return_recipient_sig_path):
+                try:
+                    from reportlab.lib.utils import ImageReader
+                    image = ImageReader(return_recipient_sig_path)
+                    pdf.drawImage(
+                        image,
+                        right_x,
+                        y - 30,
+                        width=100,
+                        height=30,
+                        preserveAspectRatio=True,
+                        mask="auto",
+                    )
+                except Exception:
+                    pdf.drawString(right_x, y, "_" * 20)
+            else:
+                pdf.drawString(right_x, y, "_" * 20)
+            
+            y -= 35
+            
+            # ФИО под подписями
+            pdf.setFont(font_name, 9)
+            party1_name = act_data.get('party1_name', '')
+            pdf.drawString(left_x, y, party1_name[:30])
+            
+            party2_name = normalized_recipients[0].get('full_name', '')
+            pdf.drawString(right_x, y, party2_name[:30])
+            
+            y -= 25
         else:
             # Для нескольких получателей подписи возврата тоже в первой таблице
             pdf.setFont(font_name, 10)
