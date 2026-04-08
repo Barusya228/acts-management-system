@@ -65,34 +65,45 @@ def _register_font() -> str:
     candidates = [
         ("DejaVuSans", "C:/Windows/Fonts/DejaVuSans.ttf"),
         ("Arial", "C:/Windows/Fonts/arial.ttf"),
+        ("Arial", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+        ("Arial", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     ]
 
     for font_name, font_path in candidates:
-        try:
-            pdfmetrics.registerFont(TTFont(font_name, font_path))
-            return font_name
-        except Exception:
-            continue
+        if os.path.exists(font_path):
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, font_path))
+                return font_name
+            except Exception:
+                continue
 
-    return "Helvetica"
+    # Fallback - должен работать с кириллицей
+    raise RuntimeError("No suitable font found for Cyrillic text. Please install Arial or DejaVu fonts.")
 
 
 def _resolve_bold_font_name(base_font_name: str) -> str:
     candidates = {
-        "DejaVuSans": ("DejaVuSans-Bold", "C:/Windows/Fonts/DejaVuSans-Bold.ttf"),
-        "Arial": ("Arial-Bold", "C:/Windows/Fonts/arialbd.ttf"),
+        "DejaVuSans": [
+            ("DejaVuSans-Bold", "C:/Windows/Fonts/DejaVuSans-Bold.ttf"),
+            ("DejaVuSans-Bold", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        ],
+        "Arial": [
+            ("Arial-Bold", "C:/Windows/Fonts/arialbd.ttf"),
+            ("Arial-Bold", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+        ],
     }
 
-    candidate = candidates.get(base_font_name)
-    if not candidate:
-        return "Helvetica-Bold"
+    candidate_list = candidates.get(base_font_name, [])
+    for bold_name, bold_path in candidate_list:
+        if os.path.exists(bold_path):
+            try:
+                pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+                return bold_name
+            except Exception:
+                continue
 
-    bold_name, bold_path = candidate
-    try:
-        pdfmetrics.registerFont(TTFont(bold_name, bold_path))
-        return bold_name
-    except Exception:
-        return "Helvetica-Bold"
+    # Если не нашли жирный шрифт, возвращаем обычный
+    return base_font_name
 
 
 def _draw_signature_table(
