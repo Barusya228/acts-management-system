@@ -637,17 +637,9 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             <>
               <button
                 type="button"
-                onClick={handlePreviewCurrentPdf}
-                disabled={pdfLoading !== null}
-                className="rounded-xl bg-white px-4 py-3 font-medium text-slate-900 transition hover:bg-slate-100"
-              >
-                {pdfLoading === 'preview' ? 'Открываем PDF...' : 'Предпросмотр PDF'}
-              </button>
-              <button
-                type="button"
                 onClick={handleDownloadCurrentPdf}
                 disabled={pdfLoading !== null}
-                className="rounded-xl border border-white/20 bg-white/10 px-4 py-3 font-medium text-white transition hover:bg-white/20"
+                className="rounded-xl bg-white px-4 py-3 font-medium text-slate-900 transition hover:bg-slate-100"
               >
                 {pdfLoading === 'download' ? 'Скачивание...' : 'Скачать PDF'}
               </button>
@@ -1002,10 +994,19 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
           </div>
         </SurfaceCard>
 
-        {pdfPreviewUrl && (
-          <div className="mb-6 rounded bg-white shadow">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <h2 className="text-lg font-semibold">Предпросмотр PDF</h2>
+        <div className="mb-6 rounded bg-white shadow">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <h2 className="text-lg font-semibold">Предпросмотр PDF</h2>
+            {!pdfPreviewUrl ? (
+              <button
+                type="button"
+                onClick={handlePreviewCurrentPdf}
+                disabled={pdfLoading !== null}
+                className="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {pdfLoading === 'preview' ? 'Загрузка...' : 'Открыть предпросмотр'}
+              </button>
+            ) : (
               <button
                 type="button"
                 onClick={() => {
@@ -1018,14 +1019,16 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
               >
                 Закрыть предпросмотр
               </button>
-            </div>
+            )}
+          </div>
+          {pdfPreviewUrl && (
             <iframe
               src={pdfPreviewUrl}
               title="PDF preview"
               className="h-[720px] w-full rounded-b"
             />
-          </div>
-        )}
+          )}
+        </div>
 
         <div className="mt-6 grid gap-6 xl:grid-cols-2">
           {shouldShowSigningBlock && (
