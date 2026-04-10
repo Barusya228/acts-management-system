@@ -61,7 +61,7 @@ export default function ParticipantPicker({
         />
 
         {selectedOption && (
-            <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
             Выбрано: <span className="mr-1">{getParticipantEmoji(selectedOption.kind, selectedOption.sticker_emoji)}</span>
             <span className="font-medium">{selectedOption.full_name}</span>
             {selectedOption.title ? ` • ${selectedOption.title}` : ''}

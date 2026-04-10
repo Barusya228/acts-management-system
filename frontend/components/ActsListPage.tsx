@@ -29,7 +29,7 @@ interface ParticipantOption {
   department?: string | null;
   title?: string | null;
   sticker_emoji?: string | null;
-  kind: 'IT_MANAGER' | 'EMPLOYEE';
+  kind: 'IT_MANAGER' | 'EMPLOYEE' | 'BOTH';
 }
 
 interface TemplateOption {
@@ -256,7 +256,13 @@ export default function ActsListPage() {
   ];
 
   const findParticipantByName = (fullName: string, kind: 'IT_MANAGER' | 'EMPLOYEE') => {
-    return participants.find((participant) => participant.kind === kind && participant.full_name === fullName) || null;
+    return participants.find((participant) => {
+      if (participant.full_name !== fullName) {
+        return false;
+      }
+
+      return participant.kind === kind || participant.kind === 'BOTH';
+    }) || null;
   };
 
   const canCreateAct = Boolean(selectedTemplateId);
@@ -494,9 +500,6 @@ export default function ActsListPage() {
                   <Link href={`/acts/${act.id}`} className="text-blue-600 hover:underline">
                     Просмотр
                   </Link>
-                  <Link href={`/acts/${act.id}/edit`} className="text-green-600 hover:underline">
-                    Редактировать
-                  </Link>
                   {user?.role === 'admin' && (
                     <button
                       type="button"
@@ -575,9 +578,6 @@ export default function ActsListPage() {
                     <td className="px-4 py-2 space-x-2 text-xs font-medium">
                       <Link href={`/acts/${act.id}`} className="text-blue-600 hover:underline">
                         Просмотр
-                      </Link>
-                      <Link href={`/acts/${act.id}/edit`} className="text-green-600 hover:underline">
-                        Редактировать
                       </Link>
                       {user?.role === 'admin' && (
                         <button

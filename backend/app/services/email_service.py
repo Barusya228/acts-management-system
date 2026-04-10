@@ -66,14 +66,14 @@ def _attach_pdf_if_exists(message: EmailMessage, pdf_path: Path | None, filename
     )
 
 
-async def _send_message(message: EmailMessage, act: Act) -> None:
+async def _send_message(message: EmailMessage, act: Act) -> bool:
     if not _smtp_is_configured():
         logger.info(
             "SMTP is not configured. Email skipped for act %s to %s",
             act.id,
             act.receiver_email,
         )
-        return
+        return False
 
     await aiosmtplib.send(
         message,
@@ -83,6 +83,7 @@ async def _send_message(message: EmailMessage, act: Act) -> None:
         password=settings.SMTP_PASSWORD or None,
         start_tls=settings.SMTP_TLS,
     )
+    return True
 
 
 async def send_act_created_email(
@@ -141,7 +142,7 @@ async def send_act_created_email(
 async def send_act_completed_email(
     act: Act,
     pdf_path: Path | None = None,
-) -> None:
+) -> bool:
     """
     Отправляет персональное письмо каждому получателю о завершении акта.
     """
@@ -149,12 +150,17 @@ async def send_act_completed_email(
     base_url = settings.APP_BASE_URL or "http://localhost:3000"
     act_url = f"{base_url}/acts/{act.id}"
 
-    for index, recipient in enumerate(recipients):
+    attempted = 0
+    delivered = 0
+
+    for recipient in recipients:
         recipient_name = str(recipient.get("full_name", "")).strip()
         recipient_email = str(recipient.get("email", "")).strip()
         
         if not recipient_email:
             continue
+
+        attempted += 1
 
         subject = f"Акт передачи техники завершен: {act.item_name}"
         body = "\n".join(
@@ -177,16 +183,22 @@ async def send_act_completed_email(
         _attach_pdf_if_exists(message, pdf_path, f"act_{act.id}_completed.pdf")
         
         try:
-            await _send_message(message, act)
-            logger.info(f"Completion email sent to {recipient_name} ({recipient_email}) for act {act.id}")
+            was_delivered = await _send_message(message, act)
+            if was_delivered:
+                delivered += 1
+                logger.info(f"Completion email sent to {recipient_name} ({recipient_email}) for act {act.id}")
+            else:
+                logger.info(f"Completion email skipped for {recipient_name} ({recipient_email}) for act {act.id}")
         except Exception as e:
             logger.error(f"Failed to send completion email to {recipient_email} for act {act.id}: {e}")
+
+    return attempted > 0 and delivered == attempted
 
 
 async def send_return_completed_email(
     act: Act,
     pdf_path: Path | None = None,
-) -> None:
+) -> bool:
     """
     Отправляет персональное письмо каждому получателю о завершении возврата.
     """
@@ -194,12 +206,17 @@ async def send_return_completed_email(
     base_url = settings.APP_BASE_URL or "http://localhost:3000"
     act_url = f"{base_url}/acts/{act.id}"
 
-    for index, recipient in enumerate(recipients):
+    attempted = 0
+    delivered = 0
+
+    for recipient in recipients:
         recipient_name = str(recipient.get("full_name", "")).strip()
         recipient_email = str(recipient.get("email", "")).strip()
         
         if not recipient_email:
             continue
+
+        attempted += 1
 
         subject = f"Акт возврата техники завершен: {act.item_name}"
         body = "\n".join(
@@ -222,60 +239,14 @@ async def send_return_completed_email(
         _attach_pdf_if_exists(message, pdf_path, f"act_{act.id}_returned.pdf")
         
         try:
-            await _send_message(message, act)
-            logger.info(f"Return completion email sent to {recipient_name} ({recipient_email}) for act {act.id}")
+            was_delivered = await _send_message(message, act)
+            if was_delivered:
+                delivered += 1
+                logger.info(f"Return completion email sent to {recipient_name} ({recipient_email}) for act {act.id}")
+            else:
+                logger.info(f"Return completion email skipped for {recipient_name} ({recipient_email}) for act {act.id}")
         except Exception as e:
             logger.error(f"Failed to send return completion email to {recipient_email} for act {act.id}: {e}")
 
+    return attempted > 0 and delivered == attempted
 
-async def send_version_pdf_email(
-    act: Act,
-    version_number: int,
-    pdf_path: Path | None = None,
-) -> None:
-    """
-    Отправляет персональное письмо каждому получателю с PDF конкретной версии.
-    """
-    recipients = _recipient_list(act)
-    base_url = settings.APP_BASE_URL or "http://localhost:3000"
-    act_url = f"{base_url}/acts/{act.id}"
-    is_return_version = version_number >= 6
-
-    for index, recipient in enumerate(recipients):
-        recipient_name = str(recipient.get("full_name", "")).strip()
-        recipient_email = str(recipient.get("email", "")).strip()
-        
-        if not recipient_email:
-            continue
-
-        subject = (
-            f"PDF акта возврата: {act.item_name}"
-            if is_return_version
-            else f"PDF акта передачи: {act.item_name}"
-        )
-        body = "\n".join(
-            [
-                f"Здравствуйте, {recipient_name}!",
-                "",
-                "Направляю вам PDF-документ по вашему акту.",
-                (
-                    "Во вложении финальная версия акта возврата техники."
-                    if is_return_version
-                    else "Во вложении финальная версия акта передачи техники."
-                ),
-                "",
-                f"Техника: {act.item_name}",
-                f"Версия шага: {version_number}",
-                "",
-                f"Просмотреть акт: {act_url}",
-            ]
-        )
-
-        message = _build_message(recipient_email, subject, body)
-        _attach_pdf_if_exists(message, pdf_path, f"act_{act.id}_v{version_number}.pdf")
-        
-        try:
-            await _send_message(message, act)
-            logger.info(f"Version PDF email sent to {recipient_name} ({recipient_email}) for act {act.id} v{version_number}")
-        except Exception as e:
-            logger.error(f"Failed to send version PDF email to {recipient_email} for act {act.id}: {e}")

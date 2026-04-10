@@ -14,6 +14,7 @@ class UserRole(str, enum.Enum):
 class ParticipantKind(str, enum.Enum):
     IT_MANAGER = "IT_MANAGER"
     EMPLOYEE = "EMPLOYEE"
+    BOTH = "BOTH"
 
 class ActStatus(str, enum.Enum):
     DRAFT = "DRAFT"
@@ -93,6 +94,8 @@ class Act(Base):
     return_date = Column(Date, nullable=True)
     return_note = Column(Text, nullable=True)
     status = Column(SQLEnum(ActStatus), nullable=False, default=ActStatus.DRAFT)
+    issue_completion_email_sent = Column(Boolean, nullable=False, default=False)
+    return_completion_email_sent = Column(Boolean, nullable=False, default=False)
     current_version = Column(Integer, nullable=False, default=1)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

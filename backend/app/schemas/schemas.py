@@ -82,6 +82,7 @@ class ParticipantUpdate(BaseModel):
     department: Optional[str] = None
     title: Optional[str] = None
     sticker_emoji: Optional[str] = None
+    kind: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -109,21 +110,11 @@ class ActBase(BaseModel):
 class ActCreate(ActBase):
     pass
 
-class ActUpdate(BaseModel):
-    party1_name: Optional[str] = None
-    party2_name: Optional[str] = None
-    issue_date: Optional[date] = None
-    item_name: Optional[str] = None
-    item_serial: Optional[str] = None
-    receiver_email: Optional[EmailStr] = None
-    extra_data_json: Optional[dict] = None
-    return_date: Optional[date] = None
-    return_note: Optional[str] = None
-    change_note: Optional[str] = None
-
 class ActResponse(ActBase):
     id: UUID4
     status: str
+    issue_completion_email_sent: bool
+    return_completion_email_sent: bool
     current_version: int
     created_by: UUID4
     created_at: datetime

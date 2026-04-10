@@ -46,7 +46,7 @@ interface ParticipantOption {
   email?: string | null;
   department?: string | null;
   title?: string | null;
-  kind: 'IT_MANAGER' | 'EMPLOYEE';
+  kind: 'IT_MANAGER' | 'EMPLOYEE' | 'BOTH';
 }
 
 interface EquipmentItem {
@@ -89,8 +89,8 @@ function ActCreatePageContent() {
   const preselectedTemplateId = searchParams.get('template_id') || '';
 
   const selectedTemplate = templates.find((template) => template.id === formData.template_id);
-  const itManagers = participants.filter((participant) => participant.kind === 'IT_MANAGER');
-  const employees = participants.filter((participant) => participant.kind === 'EMPLOYEE');
+  const itManagers = participants.filter((participant) => participant.kind === 'IT_MANAGER' || participant.kind === 'BOTH');
+  const employees = participants.filter((participant) => participant.kind === 'EMPLOYEE' || participant.kind === 'BOTH');
   const dynamicFields = (selectedTemplate?.schema_json?.fields || []).filter(
     (field) => !reservedFields.has(field.name) && field.name !== 'imei'
   );

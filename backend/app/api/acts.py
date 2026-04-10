@@ -8,13 +8,12 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_admin_user, get_current_guest_or_admin_user
 from app.core.config import settings
 from app.db.models import Act, ActVersion, Template, User, ActStatus, FileAsset, FileAssetKind
-from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
+from app.schemas.schemas import ActCreate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
 from app.services.email_service import (
     send_act_completed_email,
     send_act_created_email,
     send_return_completed_email,
-    send_version_pdf_email,
 )
 from app.utils.storage import resolve_storage_path, save_data_url_file
 
@@ -391,82 +390,6 @@ async def get_act(
     
     return act
 
-@router.patch("/{act_id}", response_model=ActResponse)
-async def update_act(
-    act_id: UUID,
-    act_data: ActUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_guest_or_admin_user)
-):
-    act = db.query(Act).filter(Act.id == act_id).first()
-    
-    if not act:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Act not found"
-        )
-    
-    template = act.template
-    if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Template not found for act"
-        )
-
-    # Update act fields
-    update_data = act_data.model_dump(exclude_unset=True)
-    change_note = update_data.pop("change_note", None)
-
-    if "extra_data_json" in update_data:
-        update_data["extra_data_json"] = _validate_extra_data(update_data.get("extra_data_json"), template)
-
-    current_party2_name = update_data.get("party2_name", act.party2_name)
-    current_receiver_email = update_data.get("receiver_email", act.receiver_email)
-    current_extra_data = update_data.get("extra_data_json", act.extra_data_json)
-    recipients = _extract_recipients(current_extra_data, current_party2_name, current_receiver_email)
-    if not recipients:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Нужен хотя бы один получатель"
-        )
-
-    if current_extra_data is None:
-        current_extra_data = {}
-    current_extra_data[RECIPIENTS_KEY] = recipients
-    update_data["extra_data_json"] = current_extra_data
-    update_data["party2_name"] = _build_party2_summary(recipients)
-    update_data["receiver_email"] = _get_primary_recipient_email(recipients)
-
-    for field, value in update_data.items():
-        setattr(act, field, value)
-    
-    # Increment version
-    act.current_version += 1
-    act.updated_at = datetime.utcnow()
-    
-    # Create new version
-    version = ActVersion(
-        act_id=act.id,
-        version_number=act.current_version,
-        data_json=build_act_snapshot(act),
-        change_note=change_note,
-        created_by=current_user.id
-    )
-    db.add(version)
-    db.flush()
-    create_pdf_asset_for_version(
-        db,
-        act,
-        version,
-        template_name=act.template.name if act.template else None,
-        use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
-    )
-    
-    db.commit()
-    db.refresh(act)
-
-    return act
-
 @router.delete("/{act_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_act(
     act_id: UUID,
@@ -540,6 +463,11 @@ async def sign_party1(
         act_id=act.id,
         version_number=act.current_version,
         data_json=build_act_snapshot(act),
+        change_note=(
+            "Подписал передающий: сторона 1"
+            if act.status == ActStatus.COMPLETED
+            else "Подписал возвращающий: сторона 1"
+        ),
         created_by=current_user.id
     )
     db.add(version)
@@ -556,12 +484,20 @@ async def sign_party1(
     db.commit()
     db.refresh(act)
 
-    if pdf_asset.storage_path and act.status == ActStatus.COMPLETED:
+    if (
+        act.status == ActStatus.COMPLETED
+        and not act.issue_completion_email_sent
+        and pdf_asset.storage_path
+    ):
         try:
-            await send_act_completed_email(
+            email_sent = await send_act_completed_email(
                 act,
                 pdf_path=resolve_storage_path(pdf_asset.storage_path),
             )
+            if email_sent:
+                act.issue_completion_email_sent = True
+                db.commit()
+                db.refresh(act)
         except Exception:
             # Email delivery should not break signing flow.
             pass
@@ -639,12 +575,20 @@ async def sign_party2(
     db.commit()
     db.refresh(act)
 
-    if pdf_asset.storage_path and act.status == ActStatus.RETURNED:
+    if (
+        act.status == ActStatus.RETURNED
+        and not act.return_completion_email_sent
+        and pdf_asset.storage_path
+    ):
         try:
-            await send_return_completed_email(
+            email_sent = await send_return_completed_email(
                 act,
                 pdf_path=resolve_storage_path(pdf_asset.storage_path),
             )
+            if email_sent:
+                act.return_completion_email_sent = True
+                db.commit()
+                db.refresh(act)
         except Exception:
             # Email delivery should not break signing flow.
             pass
@@ -853,68 +797,6 @@ async def download_act_pdf_by_version(
     )
 
 
-@router.post("/{act_id}/versions/{version_number}/send-email")
-async def send_act_version_email(
-    act_id: UUID,
-    version_number: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_guest_or_admin_user)
-):
-    act = db.query(Act).filter(Act.id == act_id).first()
-
-    if not act:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Act not found"
-        )
-
-    if version_number not in {3, 6}:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Отправка на почту доступна только для завершенных шагов 3 и 6"
-        )
-
-    version = (
-        db.query(ActVersion)
-        .filter(ActVersion.act_id == act_id, ActVersion.version_number == version_number)
-        .first()
-    )
-
-    if not version or not version.pdf_file_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="PDF for this version not found"
-        )
-
-    pdf_asset = db.query(FileAsset).filter(FileAsset.id == version.pdf_file_id).first()
-    if not pdf_asset:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="PDF asset not found"
-        )
-
-    file_path = resolve_storage_path(pdf_asset.storage_path)
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Stored PDF file not found"
-        )
-
-    try:
-        await send_version_pdf_email(
-            act,
-            version_number=version_number,
-            pdf_path=file_path,
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Не удалось отправить письмо с PDF: {str(exc)}"
-        )
-
-    return {"message": "Письмо с PDF отправлено получателю"}
-
-
 @router.post("/{act_id}/send-notification")
 async def send_act_notification(
     act_id: UUID,
@@ -941,33 +823,3 @@ async def send_act_notification(
         )
     
     return {"message": "Уведомление отправлено получателям"}
-
-
-@router.delete("/{act_id}")
-async def delete_act(
-    act_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
-):
-    """
-    Удаляет акт и все связанные данные (только для администратора).
-    """
-    act = db.query(Act).filter(Act.id == act_id).first()
-    
-    if not act:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Act not found"
-        )
-    
-    # Удаляем связанные версии
-    db.query(ActVersion).filter(ActVersion.act_id == act_id).delete()
-    
-    # Удаляем связанные файлы
-    db.query(FileAsset).filter(FileAsset.act_id == act_id).delete()
-    
-    # Удаляем сам акт
-    db.delete(act)
-    db.commit()
-    
-    return {"message": "Акт успешно удален"}

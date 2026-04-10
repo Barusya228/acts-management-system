@@ -28,6 +28,8 @@ interface Act {
   return_date?: string | null;
   return_note?: string | null;
   status: string;
+  issue_completion_email_sent: boolean;
+  return_completion_email_sent: boolean;
   current_version: number;
   created_at: string;
   updated_at: string;
@@ -68,6 +70,48 @@ interface EquipmentItem {
   imei?: string;
 }
 
+function getVersionTitle(templateCode: string | undefined, versionNumber: number): string {
+  if (templateCode !== 'GENERIC_ONE') {
+    return `Шаг ${versionNumber}`;
+  }
+
+  const genericOneTitles: Record<number, string> = {
+    1: 'Создание акта',
+    2: 'Подпись получателя',
+    3: 'Финальная подпись менеджера',
+    4: 'Инициирован возврат техники',
+    5: 'Подпись менеджера при возврате',
+    6: 'Подпись получателя при возврате',
+  };
+
+  return genericOneTitles[versionNumber] || `Шаг ${versionNumber}`;
+}
+
+function getHumanVersionTitle(versionNumber: number, changeNote?: string | null): string {
+  const note = changeNote || '';
+
+  if (versionNumber === 1) return 'Акт создан';
+  if (note.includes('Инициирован возврат')) return 'Возврат инициирован';
+  if (note.includes('Подписал получатель')) {
+    return note.toLowerCase().includes('возврат')
+      ? 'Получатель подтвердил возврат'
+      : 'Получатель подписал акт';
+  }
+  if (note.includes('Подписал передающий')) return 'Менеджер подтвердил выдачу';
+  if (note.includes('Подписал возвращающий')) return 'Менеджер подтвердил возврат';
+  if (versionNumber >= 4) return 'Действие по возврату';
+  return `Действие ${versionNumber}`;
+}
+
+function normalizeChangeNote(note?: string | null): string | null {
+  if (!note) return null;
+
+  return note
+    .replace('Подписал передающий: сторона 1', 'Менеджер подтвердил выдачу')
+    .replace('Подписал возвращающий: сторона 1', 'Менеджер подтвердил возврат')
+    .replace('Подписал получатель:', 'Получатель подписал:');
+}
+
 export default function ActViewPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { user } = useAuth();
@@ -80,7 +124,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   const [startingReturn, setStartingReturn] = useState(false);
   const [pdfLoading, setPdfLoading] = useState<'preview' | 'download' | null>(null);
   const [versionPdfLoading, setVersionPdfLoading] = useState<number | null>(null);
-  const [versionEmailLoading, setVersionEmailLoading] = useState<number | null>(null);
   const [sendingNotification, setSendingNotification] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -131,6 +174,8 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
 
   const canSignParty1 = act?.status === 'SIGNED_PARTY2' || act?.status === 'RETURN_INITIATED';
   const canSignParty2 = act?.status === 'DRAFT' || act?.status === 'RETURN_SIGNED_PARTY1';
+  const issueEmailReady = act?.status === 'COMPLETED';
+  const returnEmailReady = act?.status === 'RETURNED';
   const shouldShowSigningBlock =
     act?.status === 'DRAFT' ||
     act?.status === 'SIGNED_PARTY1' ||
@@ -142,42 +187,42 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   const getSignButtonMeta = (party: 'party1' | 'party2', status: string) => {
     if (party === 'party1') {
       if (status === 'SIGNED_PARTY2') {
-        return { label: 'Подписать как сторона 1', hint: 'Финальная подпись после всех получателей', highlight: true };
+        return { label: 'Подтвердить выдачу как менеджер', hint: 'Финальное подтверждение после всех подписей получателей', highlight: true };
       }
       if (status === 'SIGNED_PARTY1') {
-        return { label: 'Сторона 1 уже подписала', hint: 'Ожидание подписи стороны 2', highlight: false };
+        return { label: 'Менеджер уже подтвердил', hint: 'Ожидается подпись получателя', highlight: false };
       }
       if (status === 'RETURN_INITIATED') {
-        return { label: 'Подписать как сторона 1', hint: 'Шаг 5: первая подпись возврата', highlight: true };
+        return { label: 'Подтвердить возврат как менеджер', hint: 'Сначала возврат подтверждает менеджер', highlight: true };
       }
       if (status === 'RETURN_SIGNED_PARTY1') {
-        return { label: 'Сторона 1 уже подтвердила', hint: 'Ожидание подписи стороны 2', highlight: false };
+        return { label: 'Менеджер уже подтвердил возврат', hint: 'Теперь ожидается подпись получателя', highlight: false };
       }
       if (status === 'RETURN_SIGNED_PARTY2' || status === 'RETURNED') {
-        return { label: 'Подпись стороны 1 не нужна', hint: 'Этап уже закрыт', highlight: false };
+        return { label: 'Подпись менеджера не нужна', hint: 'Этап уже завершен', highlight: false };
       }
-      return { label: 'Подпись недоступна', hint: 'Проверьте текущий статус акта', highlight: false };
+      return { label: 'Подпись недоступна', hint: 'Сейчас действует другой этап процесса', highlight: false };
     }
 
     if (status === 'DRAFT') {
-      return { label: 'Подписать как сторона 2', hint: 'Шаг 2: первая подпись выдачи', highlight: true };
+      return { label: 'Подписать как получатель', hint: 'Сейчас нужна подпись получателя', highlight: true };
     }
     if (status === 'SIGNED_PARTY1') {
-      return { label: 'Подпись недоступна', hint: 'Нарушен порядок шагов выдачи', highlight: false };
+      return { label: 'Подпись недоступна', hint: 'Нарушен порядок подписания выдачи', highlight: false };
     }
     if (status === 'SIGNED_PARTY2') {
-      return { label: 'Получатели уже подписали', hint: 'Ожидание подписи стороны 1', highlight: false };
+      return { label: 'Получатель уже подписал', hint: 'Теперь ожидается подтверждение менеджера', highlight: false };
     }
     if (status === 'RETURN_SIGNED_PARTY1') {
-      return { label: 'Подписать как сторона 2', hint: 'Очередная подпись получателя по возврату', highlight: true };
+      return { label: 'Подписать возврат как получатель', hint: 'После менеджера возврат подтверждает получатель', highlight: true };
     }
     if (status === 'RETURN_INITIATED') {
-      return { label: 'Ожидается подпись стороны 1', hint: 'После этого откроется шаг 6', highlight: false };
+      return { label: 'Ожидается менеджер', hint: 'После менеджера откроется подтверждение получателя', highlight: false };
     }
     if (status === 'RETURN_SIGNED_PARTY2') {
-      return { label: 'Получатели уже подтвердили', hint: 'Ожидание финализации возврата', highlight: false };
+      return { label: 'Получатель уже подтвердил возврат', hint: 'Возврат почти завершен', highlight: false };
     }
-    return { label: 'Подпись недоступна', hint: 'Проверьте текущий статус акта', highlight: false };
+    return { label: 'Подпись недоступна', hint: 'Сейчас действие для подписи не требуется', highlight: false };
   };
 
   const getSigningSteps = (status: string, recipients: ActRecipient[]) => {
@@ -192,8 +237,8 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
         {
           step: 5,
           party: 'party1' as const,
-          title: 'Подпись стороны 1',
-          description: 'Первая подпись в процессе возврата',
+          title: 'Подтверждение менеджера',
+          description: 'Менеджер подтверждает возврат техники',
           state:
             status === 'RETURN_INITIATED'
               ? 'current'
@@ -226,30 +271,30 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
         state: recipient.signed_at ? 'done' : status === 'DRAFT' && recipients.slice(0, index).every((item) => item.signed_at) ? 'current' : 'pending',
       })),
       {
-        step: 2 + recipients.length,
-        party: 'party1' as const,
-        title: 'Подпись стороны 1',
-        description: 'Финальное подтверждение выдачи',
-        state: status === 'SIGNED_PARTY2' ? 'current' : status === 'COMPLETED' ? 'done' : 'pending',
-      },
-    ];
+          step: 2 + recipients.length,
+          party: 'party1' as const,
+          title: 'Подтверждение менеджера',
+          description: 'Менеджер завершает выдачу после подписей получателей',
+          state: status === 'SIGNED_PARTY2' ? 'current' : status === 'COMPLETED' ? 'done' : 'pending',
+        },
+      ];
   };
 
   const getSigningHint = (status: string, recipients: ActRecipient[]) => {
     if (status === 'DRAFT') {
-      return `Выдача техники: сначала последовательно подписывают получатели (${recipients.length}), затем подтверждает сторона 1.`;
+      return `Сначала последовательно подписывают получатели (${recipients.length}), затем выдачу подтверждает менеджер.`;
     }
     if (status === 'SIGNED_PARTY2') {
-      return 'Все получатели подписали выдачу. Теперь подтверждает передающая сторона (сторона 1).';
+      return 'Все получатели подписали выдачу. Теперь осталось подтверждение менеджера.';
     }
     if (status === 'SIGNED_PARTY1') {
       return 'Текущий статус не соответствует целевому порядку подписания выдачи.';
     }
     if (status === 'RETURN_INITIATED') {
-      return 'Возврат техники: сначала подписывает сторона 1, которая принимает возврат.';
+      return 'Возврат уже инициирован. Сначала его подтверждает менеджер.';
     }
     if (status === 'RETURN_SIGNED_PARTY1') {
-      return `Возврат техники: сторона 1 подтвердила возврат. Теперь последовательно подписывают получатели (${recipients.length}).`;
+      return `Менеджер уже подтвердил возврат. Теперь последовательно подписывают получатели (${recipients.length}).`;
     }
     if (status === 'RETURN_SIGNED_PARTY2') {
       return 'Текущий статус не соответствует целевому порядку подписания возврата.';
@@ -277,13 +322,13 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
 
   const getIssuedFlowSideText = (status: string) => {
     if (status === 'DRAFT') {
-      return 'Сторона 1: ожидается | Сторона 2: первая подпись';
+      return 'Менеджер: ожидается | Получатель: текущий шаг';
     }
     if (status === 'SIGNED_PARTY1') {
-      return 'Сторона 1: подписано | Сторона 2: ожидается';
+      return 'Менеджер: подтверждено | Получатель: ожидается';
     }
     if (status === 'SIGNED_PARTY2') {
-      return 'Сторона 1: финальная подпись | Сторона 2: подписано';
+      return 'Менеджер: текущее действие | Получатель: подтверждено';
     }
     if (
       status === 'COMPLETED' ||
@@ -292,9 +337,9 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       status === 'RETURN_SIGNED_PARTY2' ||
       status === 'RETURNED'
     ) {
-      return 'Сторона 1: подписано | Сторона 2: подписано';
+      return 'Менеджер: подтверждено | Получатель: подтверждено';
     }
-    return 'Сторона 1: ожидается | Сторона 2: ожидается';
+    return 'Менеджер: ожидается | Получатель: ожидается';
   };
 
   const signAct = async (party: 'party1' | 'party2') => {
@@ -314,7 +359,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       });
       setSignatureData('');
       await fetchActAndVersions();
-      showToast(party === 'party1' ? 'Акт подписан стороной 1' : 'Акт подписан стороной 2', 'success');
+      showToast(party === 'party1' ? 'Менеджер подтвердил документ' : 'Получатель подписал документ', 'success');
     } catch (err: any) {
       const msg = err.response?.data?.detail || 'Ошибка подписания акта';
       setError(msg);
@@ -384,28 +429,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       versionNumber
     );
 
-  const handleSendVersionPdfEmail = async (versionNumber: number) => {
-    try {
-      setVersionEmailLoading(versionNumber);
-      const res = await api.post(`/api/acts/${id}/versions/${versionNumber}/send-email`);
-      showToast(res.data?.message || 'Письмо отправлено получателю', 'success');
-    } catch (err: any) {
-      const msg = err.response?.data?.detail || 'Не удалось отправить письмо';
-      showToast(msg, 'error');
-    } finally {
-      setVersionEmailLoading(null);
-    }
-  };
-
-  const canSendVersionEmail = (versionNumber: number) => {
-    // For GENERIC_MULTI, IPAD, GENERIC_ONE, and GENERIC templates, exclude step 3 from email sending
-    const excludedTemplates = ['GENERIC_MULTI', 'IPAD', 'GENERIC_ONE', 'GENERIC'];
-    if (excludedTemplates.includes(template?.code || '') && versionNumber === 3) {
-      return false;
-    }
-    return versionNumber === 3 || versionNumber === 6;
-  };
-
   const handleSendNotification = async () => {
     try {
       setSendingNotification(true);
@@ -441,8 +464,8 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       SIGNED_PARTY2: 'Подтверждено получателем',
       COMPLETED: 'Передача завершена',
       RETURN_INITIATED: 'Возврат инициирован',
-      RETURN_SIGNED_PARTY1: 'Возврат подтвержден стороной 1',
-      RETURN_SIGNED_PARTY2: 'Возврат подтвержден стороной 2',
+      RETURN_SIGNED_PARTY1: 'Возврат подтвержден менеджером',
+      RETURN_SIGNED_PARTY2: 'Возврат подтвержден получателем',
       RETURNED: 'Возврат завершен',
     };
     return labels[status] || status;
@@ -495,10 +518,10 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       return 'Выдача завершена. Сейчас идет процесс возврата по этому акту.';
     }
     if (status === 'SIGNED_PARTY1') {
-      return 'Сторона 1 подписала документ. Ожидается вторая подпись.';
+      return 'Менеджер подтвердил документ. Ожидается подпись получателя.';
     }
     if (status === 'SIGNED_PARTY2') {
-      return 'Все получатели подписали документ. Ожидается подпись стороны 1.';
+      return 'Все получатели подписали документ. Ожидается подтверждение менеджера.';
     }
     return `Акт создан и ожидает подписи получателей: ${getSignedRecipientsCount(recipients)} из ${recipients.length}.`;
   };
@@ -625,6 +648,62 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   const extraEntries = Object.entries(act.extra_data_json || {}).filter(([key]) => key !== 'equipment_list' && key !== 'recipients');
   const party1Email = participants.find((participant) => participant.full_name === act.party1_name)?.email || '—';
   const party2Email = recipients.map((recipient) => recipient.email).filter(Boolean).join(', ') || act.receiver_email || '—';
+  const currentSigningStep = signingSteps.find((step) => step.state === 'current') || null;
+  const currentSigningMeta = currentSigningStep
+    ? currentSigningStep.party === 'party1'
+      ? party1Meta
+      : party2Meta
+    : null;
+  const currentActionTitle = currentSigningStep
+    ? currentSigningStep.party === 'party1'
+      ? isReturnStatus
+        ? 'Сейчас ожидается подтверждение менеджера по возврату'
+        : 'Сейчас ожидается подтверждение менеджера'
+      : isReturnStatus
+      ? 'Сейчас ожидается подтверждение получателя по возврату'
+      : 'Сейчас ожидается подпись получателя'
+    : null;
+  const currentActionDescription = currentSigningStep
+    ? currentSigningStep.party === 'party1'
+      ? isReturnStatus
+        ? 'Получатели смогут завершить возврат после подтверждения менеджера.'
+        : 'После подписей получателей менеджер завершает процесс выдачи.'
+      : isReturnStatus
+      ? 'После подтверждения получателя возврат будет завершен.'
+      : 'Получатель подтверждает получение техники перед финальным подтверждением менеджера.'
+    : getSigningHint(act.status, recipients);
+  const progressList = isReturnStatus
+    ? [
+        { step: 4, title: 'Возврат инициирован', state: 'done' as const },
+        {
+          step: 5,
+          title: 'Подтверждение менеджера',
+          state:
+            act.status === 'RETURN_INITIATED'
+              ? 'current'
+              : act.status === 'RETURN_SIGNED_PARTY1' || act.status === 'RETURNED'
+              ? 'done'
+              : 'pending',
+        },
+        {
+          step: 6,
+          title: recipients.length > 1 ? 'Подтверждения получателей' : 'Подтверждение получателя',
+          state: act.status === 'RETURNED' ? 'done' : act.status === 'RETURN_SIGNED_PARTY1' ? 'current' : 'pending',
+        },
+      ]
+    : [
+        { step: 1, title: 'Акт создан', state: 'done' as const },
+        {
+          step: 2,
+          title: recipients.length > 1 ? 'Подписи получателей' : 'Подпись получателя',
+          state: act.status === 'DRAFT' ? 'current' : recipients.every((recipient) => recipient.signed_at) ? 'done' : 'current',
+        },
+        {
+          step: 3,
+          title: 'Подтверждение менеджера',
+          state: act.status === 'COMPLETED' ? 'done' : act.status === 'SIGNED_PARTY2' ? 'current' : 'pending',
+        },
+      ];
 
   return (
     <Layout>
@@ -643,12 +722,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
               >
                 {pdfLoading === 'download' ? 'Скачивание...' : 'Скачать PDF'}
               </button>
-              <Link
-                href={`/acts/${act.id}/edit`}
-                className="rounded-xl border border-white/20 bg-white/10 px-4 py-3 font-medium text-white transition hover:bg-white/20"
-              >
-                Редактировать
-              </Link>
               {user?.role === 'admin' && (
                 <button
                   type="button"
@@ -662,12 +735,12 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
           }
         />
 
-        <div className="grid gap-6 lg:grid-cols-2 mb-6">
+        <div className="mb-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <SurfaceCard className="p-6">
             <div className="mb-3 flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm font-medium uppercase tracking-wide text-gray-500">Статус подписания</p>
-                <h2 className="mt-1 text-xl font-semibold text-gray-900">Шаг {issueStep} из {progressItems.length}</h2>
+                <p className="text-sm font-medium uppercase tracking-wide text-gray-500">Текущий статус</p>
+                <h2 className="mt-1 text-xl font-semibold text-gray-900">{getCurrentFlowLabel(act.status)}</h2>
                 <p className="mt-1 text-sm font-medium text-blue-700">{getCurrentFlowLabel(act.status)}</p>
                 <p className="mt-2 text-sm text-gray-600">{getProgressText(act.status, recipients)}</p>
               </div>
@@ -682,30 +755,30 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             </div>
 
             <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-medium text-gray-600">Подписи сторон:</span>
+              <span className="font-medium text-gray-600">Подтверждения:</span>
               <span
                 className={`rounded px-2 py-1 ${
                   signedSides.party1 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'
                 }`}
               >
-                Сторона 1: {signedSides.party1 ? 'подписано' : 'ожидается'}
+                Менеджер: {signedSides.party1 ? 'подтверждено' : 'ожидается'}
               </span>
               <span
                 className={`rounded px-2 py-1 ${
                   signedSides.party2 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'
                 }`}
               >
-                Сторона 2: {signedSides.party2 ? 'подписано' : 'ожидается'}
+                Получатель: {signedSides.party2 ? 'подтверждено' : 'ожидается'}
               </span>
               <span className="rounded bg-blue-50 px-2 py-1 text-blue-700">
                  {getIssuedFlowSideText(act.status)}
               </span>
             </div>
 
-            <div className="grid gap-3 grid-cols-3">
-              {progressItems.map((item) => {
-                const isDone = issueStep >= item.step;
-                const isCurrent = issueStep === item.step;
+            <div className="grid gap-3 md:grid-cols-3">
+              {progressList.map((item) => {
+                const isDone = item.state === 'done';
+                const isCurrent = item.state === 'current';
 
                 return (
                   <div
@@ -732,7 +805,9 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                       </div>
                       <div>
                         <p className="text-xs font-semibold text-gray-900">{item.title}</p>
-                        <p className="text-xs text-gray-500">{item.subtitle}</p>
+                        <p className="text-xs text-gray-500">
+                          {isDone ? 'Завершено' : isCurrent ? 'Текущий этап' : 'Ожидается'}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -747,7 +822,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                 <div>
                   <p className="text-sm font-medium uppercase tracking-wide text-gray-500">Процесс возврата</p>
                   <h2 className="mt-1 text-xl font-semibold text-gray-900">
-                    {isReturnStatus ? `Шаг ${returnStep} из 6` : 'Возврат техники'}
+                    {isReturnStatus ? 'Возврат в процессе' : 'Возврат техники'}
                   </h2>
                   <p className="mt-2 text-sm text-gray-600">
                     {isReturnStatus
@@ -801,11 +876,11 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                     />
                   </div>
 
-                  <div className="grid gap-3 grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-3">
                     {[
-                      { step: 4, title: 'Шаг 4', subtitle: 'Возврат инициирован' },
-                      { step: 5, title: 'Шаг 5', subtitle: '1 подпись возврата' },
-                      { step: 6, title: 'Шаг 6', subtitle: 'Возврат завершен' },
+                      { step: 4, title: 'Возврат инициирован', subtitle: 'Запуск процесса возврата' },
+                      { step: 5, title: 'Подтверждение менеджера', subtitle: 'Менеджер принимает возврат' },
+                      { step: 6, title: 'Подтверждение получателя', subtitle: 'Получатель завершает возврат' },
                     ].map((item) => {
                       const step = returnStep || 4;
                       const isDone = step >= item.step;
@@ -883,12 +958,12 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             </div>
 
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Сторона 1 (Передающая)</h3>
+              <h3 className="text-sm font-medium text-gray-500 mb-1">Менеджер</h3>
               <p className="text-lg">{act.party1_name}</p>
             </div>
 
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Сторона 2 (Получающая)</h3>
+              <h3 className="text-sm font-medium text-gray-500 mb-1">Получатели</h3>
                <div className="space-y-2">
                  {recipients.map((recipient, index) => (
                    <div key={`${recipient.full_name}-${recipient.email}-${index}`} className="rounded border border-gray-200 px-3 py-2 text-sm">
@@ -905,12 +980,12 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             </div>
 
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Email стороны 1</h3>
+              <h3 className="text-sm font-medium text-gray-500 mb-1">Email менеджера</h3>
               <p className="text-lg">{party1Email}</p>
             </div>
 
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-1">Email стороны 2</h3>
+              <h3 className="text-sm font-medium text-gray-500 mb-1">Email получателей</h3>
               <p className="text-lg">{party2Email}</p>
             </div>
 
@@ -1030,10 +1105,10 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
           )}
         </div>
 
-        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_1.1fr]">
           {shouldShowSigningBlock && (
             <div className="rounded bg-white p-6 shadow">
-              <h2 className="mb-4 text-lg font-semibold">Подписание акта</h2>
+              <h2 className="mb-4 text-lg font-semibold">Текущее действие</h2>
 
               {error && (
                 <div className="mb-4 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -1041,7 +1116,16 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                 </div>
               )}
 
-              <div className="mb-4 flex gap-2">
+              <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-blue-700">Что нужно сделать сейчас</p>
+                <h3 className="mt-1 text-lg font-semibold text-slate-900">{currentActionTitle || 'Подписания сейчас не требуются'}</h3>
+                {currentSigningStep && (
+                  <p className="mt-1 text-sm text-slate-700">{currentSigningStep.description}</p>
+                )}
+                <p className="mt-2 text-sm text-slate-600">{currentActionDescription}</p>
+              </div>
+
+              <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => setSignatureMode('draw')}
@@ -1075,64 +1159,41 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                 <SignatureUpload onUpload={handleUploadedSignature} />
               )}
 
-              <div className="mt-4 space-y-3">
-                {signingSteps.map((step) => {
-                  const isParty1 = step.party === 'party1';
-                  const canSign = isParty1 ? canSignParty1 : canSignParty2;
-                  const meta = isParty1 ? party1Meta : party2Meta;
-                  const buttonClass = isParty1
-                    ? meta.highlight
-                      ? 'bg-amber-700 hover:bg-amber-800'
-                      : 'bg-amber-600 hover:bg-amber-700'
-                    : meta.highlight
-                    ? 'bg-emerald-700 hover:bg-emerald-800'
-                    : 'bg-emerald-600 hover:bg-emerald-700';
-
-                  return (
-                    <div
-                      key={`${step.party}-${step.step}`}
-                      className={`rounded-lg border p-3 ${
-                        step.state === 'done'
-                          ? 'border-emerald-200 bg-emerald-50'
-                          : step.state === 'current'
-                          ? 'border-blue-200 bg-blue-50'
-                          : 'border-gray-200 bg-gray-50'
-                      }`}
-                    >
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Шаг {step.step}</p>
-                          <p className="text-sm font-semibold text-gray-900">{step.title}</p>
-                          <p className="text-xs text-gray-600">{step.description}</p>
-                        </div>
-                        <span
-                          className={`rounded px-2 py-1 text-xs font-medium ${
-                            step.state === 'done'
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : step.state === 'current'
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'bg-gray-200 text-gray-700'
-                          }`}
-                        >
-                          {step.state === 'done' ? 'Выполнен' : step.state === 'current' ? 'Текущий' : 'Ожидает'}
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                       disabled={!canSign || signing || !signatureData || step.state !== 'current'}
-                        onClick={() => signAct(step.party)}
-                        className={`w-full rounded px-4 py-2 text-sm text-white disabled:bg-gray-400 ${buttonClass}`}
-                      >
-                        {signing ? 'Подписание...' : meta.label}
-                      </button>
-                      <p className="mt-1 text-xs text-gray-600">{meta.hint}</p>
+              {currentSigningStep && currentSigningMeta ? (
+                <div className="mt-4 rounded-xl border border-slate-200 p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Активный этап</p>
+                      <p className="text-sm font-semibold text-gray-900">{currentSigningStep.title}</p>
                     </div>
-                  );
-                })}
-              </div>
+                    <span className="rounded bg-blue-100 px-2 py-1 text-xs font-medium text-blue-700">Текущий шаг</span>
+                  </div>
 
-               <p className="mt-3 text-sm text-gray-600">{getSigningHint(act.status, recipients)}</p>
+                  <button
+                    type="button"
+                    disabled={signing || !signatureData}
+                    onClick={() => signAct(currentSigningStep.party)}
+                    className={`w-full rounded px-4 py-2 text-sm text-white disabled:bg-gray-400 ${
+                      currentSigningStep.party === 'party1'
+                        ? currentSigningMeta.highlight
+                          ? 'bg-amber-700 hover:bg-amber-800'
+                          : 'bg-amber-600 hover:bg-amber-700'
+                        : currentSigningMeta.highlight
+                        ? 'bg-emerald-700 hover:bg-emerald-800'
+                        : 'bg-emerald-600 hover:bg-emerald-700'
+                    }`}
+                  >
+                    {signing ? 'Подписание...' : currentSigningMeta.label}
+                  </button>
+                  <p className="mt-2 text-xs text-gray-600">{currentSigningMeta.hint}</p>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  Все необходимые подписи на текущем этапе уже собраны.
+                </div>
+              )}
+
+              <p className="mt-4 text-sm text-gray-600">{getSigningHint(act.status, recipients)}</p>
 
               <p className="mt-2 text-sm text-gray-600">
                 Текущий пользователь: {user?.full_name || user?.email || '—'}
@@ -1142,7 +1203,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
 
           <div className="rounded bg-white p-6 shadow">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold">История шагов</h2>
+              <h2 className="text-lg font-semibold">История действий</h2>
               {user?.role === 'admin' && (
                 <button
                   type="button"
@@ -1156,16 +1217,21 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             </div>
 
             {versions.length === 0 ? (
-              <p className="text-gray-600">Шаги пока отсутствуют</p>
+              <p className="text-gray-600">История действий пока пуста</p>
             ) : (
               <div className="space-y-3">
                 {versions.map((version) => (
                   <div key={version.id} className="rounded border border-gray-200 p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">Шаг {version.version_number}</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-500">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <span className="font-medium text-slate-900">{getHumanVersionTitle(version.version_number, version.change_note)}</span>
+                        <p className="mt-1 text-xs text-gray-500">
                           {new Date(version.created_at).toLocaleString('ru-RU')}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 self-start md:self-auto">
+                        <span className="text-xs text-gray-500">
+                          Версия {version.version_number}
                         </span>
                         {version.pdf_file_id && (
                           <button
@@ -1177,23 +1243,29 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                             {versionPdfLoading === version.version_number ? '...' : 'PDF'}
                           </button>
                         )}
-                        {version.pdf_file_id && canSendVersionEmail(version.version_number) && (
-                          <button
-                            type="button"
-                            onClick={() => handleSendVersionPdfEmail(version.version_number)}
-                            disabled={versionEmailLoading === version.version_number}
-                            className="rounded bg-emerald-600 px-2 py-1 text-xs text-white hover:bg-emerald-700 disabled:bg-gray-400"
-                          >
-                            {versionEmailLoading === version.version_number ? '...' : 'Отправить на почту'}
-                          </button>
-                        )}
                       </div>
                     </div>
-                    {version.change_note && (
-                      <p className="mt-1 text-sm text-gray-700">{version.change_note}</p>
+                    {normalizeChangeNote(version.change_note) && (
+                      <p className="mt-2 text-sm text-gray-700">{normalizeChangeNote(version.change_note)}</p>
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {(issueEmailReady || returnEmailReady) && (
+              <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 text-sm">
+                <p className="font-medium text-slate-800">Статус автоматической отправки PDF</p>
+                {issueEmailReady && (
+                  <p className="mt-1 text-slate-700">
+                    Выдача: {act.issue_completion_email_sent ? 'отправлено автоматически' : 'ожидает/ошибка отправки'}
+                  </p>
+                )}
+                {returnEmailReady && (
+                  <p className="mt-1 text-slate-700">
+                    Возврат: {act.return_completion_email_sent ? 'отправлено автоматически' : 'ожидает/ошибка отправки'}
+                  </p>
+                )}
               </div>
             )}
           </div>

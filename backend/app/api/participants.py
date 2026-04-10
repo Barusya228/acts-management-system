@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import Optional, List
 from uuid import UUID
 from pydantic import BaseModel
@@ -11,6 +12,12 @@ from app.schemas.schemas import ParticipantCreate, ParticipantUpdate, Participan
 
 
 router = APIRouter()
+
+
+def _merge_participant_kind(left: ParticipantKind, right: ParticipantKind) -> ParticipantKind:
+    if left == right:
+        return left
+    return ParticipantKind.BOTH
 
 
 class BulkParticipantCreate(BaseModel):
@@ -28,7 +35,17 @@ async def list_participants(
     query = db.query(Participant)
 
     if kind:
-        query = query.filter(Participant.kind == kind)
+        try:
+            requested_kind = ParticipantKind(kind)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Некорректный тип участника")
+
+        if requested_kind == ParticipantKind.IT_MANAGER:
+            query = query.filter(Participant.kind.in_([ParticipantKind.IT_MANAGER, ParticipantKind.BOTH]))
+        elif requested_kind == ParticipantKind.EMPLOYEE:
+            query = query.filter(Participant.kind.in_([ParticipantKind.EMPLOYEE, ParticipantKind.BOTH]))
+        else:
+            query = query.filter(Participant.kind == requested_kind)
     if is_active is not None:
         query = query.filter(Participant.is_active == is_active)
 
@@ -46,8 +63,30 @@ async def create_participant(
     except ValueError:
         raise HTTPException(status_code=422, detail="Некорректный тип участника")
 
+    existing = None
+    normalized_email = payload.email.lower() if payload.email else None
+    if normalized_email:
+        existing = db.query(Participant).filter(
+            or_(Participant.email == normalized_email, Participant.full_name == payload.full_name)
+        ).first()
+    if not existing:
+        existing = db.query(Participant).filter(Participant.full_name == payload.full_name).first()
+
+    if existing:
+        existing.full_name = payload.full_name
+        existing.email = normalized_email or existing.email
+        existing.department = payload.department or existing.department
+        existing.title = payload.title or existing.title
+        existing.sticker_emoji = payload.sticker_emoji or existing.sticker_emoji
+        existing.kind = _merge_participant_kind(existing.kind, kind)
+        existing.is_active = True
+        db.commit()
+        db.refresh(existing)
+        return existing
+
     participant_data = payload.model_dump()
     participant_data["kind"] = kind
+    participant_data["email"] = normalized_email
     participant = Participant(**participant_data)
     db.add(participant)
     db.commit()
@@ -66,7 +105,16 @@ async def update_participant(
     if not participant:
         raise HTTPException(status_code=404, detail="Участник не найден")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    if "kind" in updates:
+        try:
+            updates["kind"] = ParticipantKind(updates["kind"])
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Некорректный тип участника")
+    if "email" in updates and updates["email"]:
+        updates["email"] = updates["email"].lower()
+
+    for field, value in updates.items():
         setattr(participant, field, value)
 
     db.commit()
@@ -105,13 +153,11 @@ async def bulk_create_participants(
             skipped_count += 1
             continue
         
-        # Check if participant already exists
-        existing = db.query(Participant).filter(
-            Participant.full_name == item.full_name,
-            Participant.kind == kind
-        ).first()
+        existing = db.query(Participant).filter(Participant.full_name == item.full_name).first()
         
         if existing:
+            existing.kind = _merge_participant_kind(existing.kind, kind)
+            existing.is_active = True
             skipped_count += 1
             continue
         

@@ -190,11 +190,13 @@ def seed_employees():
         for full_name in employees:
             # Check if already exists
             existing = db.query(Participant).filter(
-                Participant.full_name == full_name,
-                Participant.kind == ParticipantKind.EMPLOYEE
+                Participant.full_name == full_name
             ).first()
             
             if existing:
+                if existing.kind == ParticipantKind.IT_MANAGER:
+                    existing.kind = ParticipantKind.BOTH
+                existing.is_active = True
                 skipped_count += 1
                 continue
             

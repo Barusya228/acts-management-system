@@ -9,7 +9,7 @@ interface ParticipantOption {
   department?: string | null;
   title?: string | null;
   sticker_emoji?: string | null;
-  kind: 'IT_MANAGER' | 'EMPLOYEE';
+  kind: 'IT_MANAGER' | 'EMPLOYEE' | 'BOTH';
 }
 
 export interface EditableRecipient {

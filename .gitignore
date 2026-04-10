@@ -191,15 +191,30 @@ cython_debug/
 
 # IDEs
 .idea/
+.ai/
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # Frontend build artifacts
-frontend/node_modules/
-frontend/.next/
-frontend/.turbo/
-frontend/.env.local
+node_modules/
+.next/
+.turbo/
+out/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.pem
+.env*.local
 
 # Backend local storage
 backend/storage/
+*.db
+*.sqlite3
 
 # Ruff stuff:
 .ruff_cache/
