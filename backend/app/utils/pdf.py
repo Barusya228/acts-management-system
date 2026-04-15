@@ -173,9 +173,12 @@ def _draw_party_table(
 ):
     table_data = [['Сторона', 'ФИО / Наименование', 'Подпись']]
     table_data.extend([[side, name or '—', ''] for side, name, _ in rows])
+    side_column_width = 140
+    name_column_width = 230
+    signature_column_width = 122
     table = Table(
         table_data,
-        colWidths=[120, 250, 122],
+        colWidths=[side_column_width, name_column_width, signature_column_width],
         rowHeights=[24] + [52] * len(rows),
     )
     table.setStyle(TableStyle([
@@ -193,7 +196,7 @@ def _draw_party_table(
     _, table_height = table.wrap(0, 0)
     table.drawOn(pdf, margin_left, top_y - table_height)
 
-    signature_col_x = margin_left + 120 + 250
+    signature_col_x = margin_left + side_column_width + name_column_width
     current_row_top = top_y - 24
     for _, _, signature_path in rows:
         row_height = 52
@@ -218,6 +221,82 @@ def _draw_party_table(
         current_row_top -= row_height
 
     return table_height
+
+
+def _build_ipad_rows(act_data: dict, extra_data: dict) -> list[list[str]]:
+    rows = [[
+        str(act_data.get('item_name', '') or ''),
+        str(act_data.get('item_serial', '') or '—'),
+        str(extra_data.get('imei', '') or '—'),
+    ]]
+
+    equipment_list = extra_data.get("equipment_list", [])
+    if equipment_list and isinstance(equipment_list, list):
+        for item in equipment_list:
+            if isinstance(item, dict):
+                rows.append([
+                    str(item.get('name', '') or ''),
+                    str(item.get('serial', '') or '—'),
+                    str(item.get('imei', '') or '—'),
+                ])
+
+    return rows
+
+
+def _draw_ipad_tables(
+    pdf: canvas.Canvas,
+    margin_left: float,
+    top_y: float,
+    margin_right: float,
+    font_name: str,
+    bold_font_name: str,
+    ipad_rows: list[list[str]],
+) -> float:
+    header = ['№', 'Student name', 'iPad Tag', 'IMEI']
+    split_into_two = len(ipad_rows) >= 4
+    left_count = (len(ipad_rows) + 1) // 2 if split_into_two else len(ipad_rows)
+    row_sets = [ipad_rows[:left_count]]
+    if split_into_two:
+        row_sets.append(ipad_rows[left_count:])
+
+    gap = 16
+    available_width = margin_right - margin_left
+    table_width = (available_width - gap) / 2 if len(row_sets) == 2 else available_width
+    col_widths = [32, table_width - 182, 75, 75]
+    x_positions = [margin_left]
+    if len(row_sets) == 2:
+        x_positions.append(margin_left + table_width + gap)
+
+    tables: list[tuple[Table, float, float]] = []
+    max_height = 0.0
+
+    for table_index, row_set in enumerate(row_sets):
+        table_data = [header]
+        start_number = 1 if table_index == 0 else left_count + 1
+        for index, row in enumerate(row_set):
+            table_data.append([str(start_number + index), *row])
+
+        table = Table(table_data, colWidths=col_widths)
+        table.setStyle(TableStyle([
+            ('FONT', (0, 0), (-1, -1), font_name, 9),
+            ('FONT', (0, 0), (-1, 0), bold_font_name, 9),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+        ]))
+        _, table_height = table.wrap(0, 0)
+        tables.append((table, x_positions[table_index], table_height))
+        max_height = max(max_height, table_height)
+
+    for table, x_position, table_height in tables:
+        table.drawOn(pdf, x_position, top_y - table_height)
+
+    return max_height
 
 
 def build_act_pdf_bytes(
@@ -453,6 +532,8 @@ def build_act_pdf_v2(
     )
     y -= (parties_table_height + 25)
     
+    is_ipad_template = template_code == 'IPAD'
+
     # Пункт 1
     pdf.setFont(font_name, 11)
     clause1 = "1. Настоящий Акт приема-передачи оборудования удостоверяет, что Сторона 1 передала,"
@@ -462,59 +543,73 @@ def build_act_pdf_v2(
     y -= 15
     pdf.drawString(margin_left + 10, y, "(далее - ОС):")
     y -= 20
+
+    if is_ipad_template:
+        pdf.setFont(bold_font_name, 11)
+        pdf.drawString(margin_left + 10, y, "Поля для эдвайзери: ______________________________")
+        y -= 20
+        advisory_note = str(extra_data.get('advisory_note', '') or '').strip()
+        if advisory_note:
+            pdf.setFont(font_name, 11)
+            pdf.drawString(margin_left + 125, y + 20, advisory_note[:60])
     
     # Таблица оборудования
-    is_ipad_template = template_code == 'IPAD'
-    
     if is_ipad_template:
-        table_data = [
-            ['№', 'Наименование ОС', 'IMEI'],
-            ['1', act_data.get('item_name', '') + (f" (S/N: {act_data.get('item_serial', '')})" if act_data.get('item_serial') else ''), 
-             extra_data.get('imei', '—')]
-        ]
+        ipad_rows = _build_ipad_rows(act_data, extra_data)
     else:
         table_data = [
-            ['№', 'Наименование ОС'],
-            ['1', act_data.get('item_name', '') + (f" (S/N: {act_data.get('item_serial', '')})" if act_data.get('item_serial') else '')]
+            ['№', 'Наименование ОС', 'Серийный номер'],
+            ['1', act_data.get('item_name', ''), act_data.get('item_serial', '') or '—']
         ]
     
     # Добавляем дополнительное оборудование из extra_data_json если есть
     equipment_list = extra_data.get("equipment_list", [])
-    if equipment_list and isinstance(equipment_list, list):
+    if not is_ipad_template and equipment_list and isinstance(equipment_list, list):
         for idx, item in enumerate(equipment_list, start=2):
             if isinstance(item, dict):
                 item_name = item.get('name', '')
                 item_serial = item.get('serial', '')
-                row_text = item_name + (f" (S/N: {item_serial})" if item_serial else '')
-                if is_ipad_template:
-                    item_imei = item.get('imei', '—')
-                    table_data.append([str(idx), row_text, item_imei])
-                else:
-                    table_data.append([str(idx), row_text])
-    
+                table_data.append([str(idx), item_name, item_serial or '—'])
+
     if is_ipad_template:
-        table = Table(table_data, colWidths=[40, margin_right - margin_left - 140, 100])
+        ipad_split_into_two = len(ipad_rows) >= 4
+        ipad_left_count = (len(ipad_rows) + 1) // 2 if ipad_split_into_two else len(ipad_rows)
+        ipad_max_rows = max(ipad_left_count, len(ipad_rows) - ipad_left_count)
+        ipad_table_height_estimate = 24 + (ipad_max_rows * 30)
+        if y - ipad_table_height_estimate < 100:
+            start_new_page()
+
+        table_height = _draw_ipad_tables(
+            pdf,
+            margin_left,
+            y,
+            margin_right,
+            font_name,
+            bold_font_name,
+            ipad_rows,
+        )
+        y -= (table_height + 20)
     else:
-        table = Table(table_data, colWidths=[40, margin_right - margin_left - 40])
-    table.setStyle(TableStyle([
-        ('FONT', (0, 0), (-1, -1), font_name, 10),
-        ('FONT', (0, 0), (-1, 0), bold_font_name, 10),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('ALIGN', (0, 0), (0, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-    ]))
-    
-    table_width, table_height = table.wrap(0, 0)
-    if y - table_height < 100:
-        start_new_page()
-    
-    table.drawOn(pdf, margin_left, y - table_height)
-    y -= (table_height + 20)
+        table = Table(table_data, colWidths=[40, margin_right - margin_left - 180, 140])
+        table.setStyle(TableStyle([
+            ('FONT', (0, 0), (-1, -1), font_name, 10),
+            ('FONT', (0, 0), (-1, 0), bold_font_name, 10),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ]))
+
+        table_width, table_height = table.wrap(0, 0)
+        if y - table_height < 100:
+            start_new_page()
+
+        table.drawOn(pdf, margin_left, y - table_height)
+        y -= (table_height + 20)
     
     # Пункт 2
     pdf.setFont(font_name, 11)
@@ -562,11 +657,21 @@ def build_act_pdf_v2(
         # Правая колонка - Сторона 2
         right_x = width / 2 + 20
         pdf.drawString(right_x, y, "Сторона 2:")
-        y -= 25
-        
+
+        signature_width = 100
+        signature_height = 30
+        signature_gap = 4
+        name_gap = 12
+
+        side1_label_width = pdf.stringWidth("Сторона 1:", bold_font_name, 11)
+        side2_label_width = pdf.stringWidth("Сторона 2:", bold_font_name, 11)
+        side1_signature_x = left_x + side1_label_width + signature_gap
+        side2_signature_x = right_x + side2_label_width + signature_gap
+        signature_y = y - (signature_height / 2)
+
         # Подписи
         pdf.setFont(font_name, 10)
-        
+
         # Сторона 1 - подпись
         if issue_signature_party1_path and os.path.exists(issue_signature_party1_path):
             try:
@@ -574,17 +679,17 @@ def build_act_pdf_v2(
                 image = ImageReader(issue_signature_party1_path)
                 pdf.drawImage(
                     image,
-                    left_x,
-                    y - 30,
-                    width=100,
-                    height=30,
+                    side1_signature_x,
+                    signature_y,
+                    width=signature_width,
+                    height=signature_height,
                     preserveAspectRatio=True,
                     mask="auto",
                 )
             except Exception:
-                pdf.drawString(left_x, y, "_" * 20)
+                pdf.drawString(side1_signature_x, y, "_" * 20)
         else:
-            pdf.drawString(left_x, y, "_" * 20)
+            pdf.drawString(side1_signature_x, y, "_" * 20)
         
         # Сторона 2 - подпись
         recipient_sig_path = issue_recipient_signature_paths[0] if issue_recipient_signature_paths and len(issue_recipient_signature_paths) > 0 else None
@@ -594,29 +699,29 @@ def build_act_pdf_v2(
                 image = ImageReader(recipient_sig_path)
                 pdf.drawImage(
                     image,
-                    right_x,
-                    y - 30,
-                    width=100,
-                    height=30,
+                    side2_signature_x,
+                    signature_y,
+                    width=signature_width,
+                    height=signature_height,
                     preserveAspectRatio=True,
                     mask="auto",
                 )
             except Exception:
-                pdf.drawString(right_x, y, "_" * 20)
+                pdf.drawString(side2_signature_x, y, "_" * 20)
         else:
-            pdf.drawString(right_x, y, "_" * 20)
-        
-        y -= 35
+            pdf.drawString(side2_signature_x, y, "_" * 20)
+
+        name_y = signature_y - name_gap
         
         # ФИО под подписями
         pdf.setFont(font_name, 9)
         party1_name = act_data.get('party1_name', '')
-        pdf.drawString(left_x, y, party1_name[:30])
+        pdf.drawString(side1_signature_x, name_y, party1_name[:30])
         
         party2_name = normalized_recipients[0].get('full_name', '')
-        pdf.drawString(right_x, y, party2_name[:30])
+        pdf.drawString(side2_signature_x, name_y, party2_name[:30])
         
-        y -= 25
+        y = name_y - 25
     else:
         # Для нескольких получателей подписи уже в первой таблице, просто отступ
         y -= 20
@@ -693,11 +798,21 @@ def build_act_pdf_v2(
             # Правая колонка - Сторона 2
             right_x = width / 2 + 20
             pdf.drawString(right_x, y, "Сторона 2:")
-            y -= 25
-            
+
+            return_signature_width = 100
+            return_signature_height = 30
+            return_signature_gap = 4
+            return_name_gap = 12
+
+            return_side1_label_width = pdf.stringWidth("Сторона 1:", bold_font_name, 11)
+            return_side2_label_width = pdf.stringWidth("Сторона 2:", bold_font_name, 11)
+            return_side1_signature_x = left_x + return_side1_label_width + return_signature_gap
+            return_side2_signature_x = right_x + return_side2_label_width + return_signature_gap
+            return_signature_y = y - (return_signature_height / 2)
+
             # Подписи
             pdf.setFont(font_name, 10)
-            
+
             # Сторона 1 - подпись возврата
             if return_signature_party1_path and os.path.exists(return_signature_party1_path):
                 try:
@@ -705,17 +820,17 @@ def build_act_pdf_v2(
                     image = ImageReader(return_signature_party1_path)
                     pdf.drawImage(
                         image,
-                        left_x,
-                        y - 30,
-                        width=100,
-                        height=30,
+                        return_side1_signature_x,
+                        return_signature_y,
+                        width=return_signature_width,
+                        height=return_signature_height,
                         preserveAspectRatio=True,
                         mask="auto",
                     )
                 except Exception:
-                    pdf.drawString(left_x, y, "_" * 20)
+                    pdf.drawString(return_side1_signature_x, y, "_" * 20)
             else:
-                pdf.drawString(left_x, y, "_" * 20)
+                pdf.drawString(return_side1_signature_x, y, "_" * 20)
             
             # Сторона 2 - подпись возврата
             return_recipient_sig_path = return_recipient_signature_paths[0] if return_recipient_signature_paths and len(return_recipient_signature_paths) > 0 else None
@@ -725,29 +840,29 @@ def build_act_pdf_v2(
                     image = ImageReader(return_recipient_sig_path)
                     pdf.drawImage(
                         image,
-                        right_x,
-                        y - 30,
-                        width=100,
-                        height=30,
+                        return_side2_signature_x,
+                        return_signature_y,
+                        width=return_signature_width,
+                        height=return_signature_height,
                         preserveAspectRatio=True,
                         mask="auto",
                     )
                 except Exception:
-                    pdf.drawString(right_x, y, "_" * 20)
+                    pdf.drawString(return_side2_signature_x, y, "_" * 20)
             else:
-                pdf.drawString(right_x, y, "_" * 20)
-            
-            y -= 35
+                pdf.drawString(return_side2_signature_x, y, "_" * 20)
+
+            return_name_y = return_signature_y - return_name_gap
             
             # ФИО под подписями
             pdf.setFont(font_name, 9)
             party1_name = act_data.get('party1_name', '')
-            pdf.drawString(left_x, y, party1_name[:30])
+            pdf.drawString(return_side1_signature_x, return_name_y, party1_name[:30])
             
             party2_name = normalized_recipients[0].get('full_name', '')
-            pdf.drawString(right_x, y, party2_name[:30])
+            pdf.drawString(return_side2_signature_x, return_name_y, party2_name[:30])
             
-            y -= 25
+            y = return_name_y - 25
         else:
             # Для нескольких получателей подписи возврата тоже в первой таблице
             pdf.setFont(font_name, 10)

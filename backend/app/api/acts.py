@@ -6,9 +6,8 @@ from uuid import UUID
 from datetime import datetime
 from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_admin_user, get_current_guest_or_admin_user
-from app.core.config import settings
 from app.db.models import Act, ActVersion, Template, User, ActStatus, FileAsset, FileAssetKind
-from app.schemas.schemas import ActCreate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
+from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
 from app.services.email_service import (
     send_act_completed_email,
@@ -31,6 +30,7 @@ RESERVED_ACT_FIELDS = {
 
 EQUIPMENT_LIST_KEY = "equipment_list"
 RECIPIENTS_KEY = "recipients"
+IPAD_ADVISORY_KEY = "advisory_note"
 
 
 def _normalize_recipients(recipients: object) -> list[dict]:
@@ -162,6 +162,10 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
         if field.get("required"):
             required_dynamic.add(name)
 
+    if getattr(template, "code", None) == "IPAD" and IPAD_ADVISORY_KEY not in allowed_dynamic:
+        allowed_dynamic[IPAD_ADVISORY_KEY] = "string"
+        required_dynamic.add(IPAD_ADVISORY_KEY)
+
     unknown_keys = [key for key in payload.keys() if key not in allowed_dynamic and key not in {EQUIPMENT_LIST_KEY, RECIPIENTS_KEY}]
     if unknown_keys:
         raise HTTPException(
@@ -187,9 +191,10 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
 
             name = str(item.get("name", "")).strip()
             serial = str(item.get("serial", "")).strip()
-            if not name and not serial:
+            imei = str(item.get("imei", "")).strip()
+            if not name and not serial and not imei:
                 continue
-            normalized_equipment.append({"name": name, "serial": serial})
+            normalized_equipment.append({"name": name, "serial": serial, "imei": imei})
 
         payload[EQUIPMENT_LIST_KEY] = normalized_equipment
 
@@ -388,6 +393,87 @@ async def get_act(
             detail="Act not found"
         )
     
+    return act
+
+
+@router.patch("/{act_id}", response_model=ActResponse)
+async def update_act(
+    act_id: UUID,
+    payload: ActUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user)
+):
+    act = db.query(Act).filter(Act.id == act_id).first()
+
+    if not act:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Act not found"
+        )
+
+    if not act.template or act.template.code != "IPAD":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Редактирование доступно только для IPAD актов"
+        )
+
+    if act.status != ActStatus.DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Редактирование доступно только для актов в статусе DRAFT"
+        )
+
+    incoming_extra = payload.extra_data_json or {}
+    if not isinstance(incoming_extra, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Дополнительные поля должны быть объектом (JSON)"
+        )
+
+    existing_extra = dict(act.extra_data_json or {})
+    if IPAD_ADVISORY_KEY in existing_extra:
+        incoming_extra[IPAD_ADVISORY_KEY] = existing_extra.get(IPAD_ADVISORY_KEY)
+
+    normalized_extra_data = _validate_extra_data(incoming_extra, act.template)
+    recipients = _extract_recipients(normalized_extra_data, act.party2_name, act.receiver_email)
+    if not recipients:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Нужен хотя бы один получатель"
+        )
+    normalized_extra_data[RECIPIENTS_KEY] = recipients
+
+    if payload.item_name is not None:
+        act.item_name = payload.item_name
+    if payload.item_serial is not None:
+        act.item_serial = payload.item_serial
+
+    act.party2_name = _build_party2_summary(recipients)
+    act.receiver_email = _get_primary_recipient_email(recipients)
+    act.extra_data_json = normalized_extra_data
+    act.current_version += 1
+    act.updated_at = datetime.utcnow()
+
+    version = ActVersion(
+        act_id=act.id,
+        version_number=act.current_version,
+        data_json=build_act_snapshot(act),
+        change_note="Обновлены получатели и список iPad",
+        created_by=current_user.id,
+    )
+    db.add(version)
+    db.flush()
+    create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=act.template.name if act.template else None,
+        template_code=act.template.code if act.template else None,
+        use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
+    )
+
+    db.commit()
+    db.refresh(act)
     return act
 
 @router.delete("/{act_id}", status_code=status.HTTP_204_NO_CONTENT)

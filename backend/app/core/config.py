@@ -1,7 +1,9 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True)
+
     # Database
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/acts_db"
     
@@ -28,8 +30,4 @@ class Settings(BaseSettings):
     # Public URLs
     APP_BASE_URL: str = "http://localhost:8000"
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-
 settings = Settings()

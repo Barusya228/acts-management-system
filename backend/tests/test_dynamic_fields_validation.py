@@ -68,14 +68,37 @@ def test_validate_extra_data_allows_equipment_list():
     payload = {
         "hostname": "NB-001",
         "equipment_list": [
-            {"name": "Dock", "serial": "D-10"},
+            {"name": "Dock", "serial": "D-10", "imei": "IMEI-001"},
             {"name": "", "serial": ""},
         ],
     }
     normalized = _validate_extra_data(payload, template)
 
     assert normalized["hostname"] == "NB-001"
-    assert normalized["equipment_list"] == [{"name": "Dock", "serial": "D-10"}]
+    assert normalized["equipment_list"] == [{"name": "Dock", "serial": "D-10", "imei": "IMEI-001"}]
+
+
+def test_validate_extra_data_keeps_imei_only_equipment_item():
+    template = make_template(
+        [{"name": "hostname", "type": "string", "required": False}]
+    )
+
+    payload = {
+        "equipment_list": [
+            {"name": "", "serial": "", "imei": "IMEI-ONLY"},
+        ],
+    }
+    normalized = _validate_extra_data(payload, template)
+
+    assert normalized["equipment_list"] == [{"name": "", "serial": "", "imei": "IMEI-ONLY"}]
+
+
+def test_validate_extra_data_accepts_ipad_advisory_note_without_schema_field():
+    template = SimpleNamespace(code="IPAD", schema_json={"fields": []})
+
+    normalized = _validate_extra_data({"advisory_note": "Advisory A"}, template)
+
+    assert normalized["advisory_note"] == "Advisory A"
 
 
 def test_validate_extra_data_rejects_invalid_equipment_list_type():
