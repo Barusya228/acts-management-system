@@ -1,7 +1,10 @@
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api import auth, acts, templates, participants, reminders, analytics
+
+FRONTEND_URL = "http://127.0.0.1:3000"
 
 app = FastAPI(
     title="Acts Digitalization API",
@@ -27,10 +30,31 @@ app.include_router(participants.router, prefix="/api/participants", tags=["parti
 app.include_router(reminders.router, prefix="/api/reminders", tags=["reminders"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 
-@app.get("/")
-async def root():
-    return {"message": "Acts Digitalization API", "version": "1.0.0"}
-
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
+async def frontend_proxy(path: str, request: Request):
+    target_url = httpx.URL(f"{FRONTEND_URL}/{path}").copy_with(query=request.url.query.encode("utf-8"))
+    headers = {key: value for key, value in request.headers.items() if key.lower() != "host"}
+
+    async with httpx.AsyncClient(follow_redirects=False) as client:
+        frontend_response = await client.request(
+            request.method,
+            target_url,
+            headers=headers,
+            content=await request.body(),
+        )
+
+    response_headers = {
+        key: value
+        for key, value in frontend_response.headers.items()
+        if key.lower() not in {"content-encoding", "content-length", "transfer-encoding", "connection"}
+    }
+    return Response(
+        content=frontend_response.content,
+        status_code=frontend_response.status_code,
+        headers=response_headers,
+    )

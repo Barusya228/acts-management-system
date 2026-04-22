@@ -1,0 +1,12 @@
+.git
+.idea
+.venv
+backend/.env
+backend/.pytest_cache
+backend/secrets
+backend/storage
+frontend/.env.local
+frontend/.next
+frontend/node_modules
+**/__pycache__
+**/*.pyc
