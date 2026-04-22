@@ -256,33 +256,6 @@ export default function ParticipantsPage() {
     both: items.filter((item) => item.kind === 'BOTH').length,
   };
 
-  const filterTabs = [
-    {
-      key: 'ALL' as const,
-      label: 'Всего карточек',
-      count: stats.total,
-      subtitle: 'Все участники',
-    },
-    {
-      key: 'IT_MANAGER' as const,
-      label: 'Доступны как IT',
-      count: stats.managers,
-      subtitle: 'Сторона 1',
-    },
-    {
-      key: 'EMPLOYEE' as const,
-      label: 'Доступны как получатели',
-      count: stats.employees,
-      subtitle: 'Сторона 2',
-    },
-    {
-      key: 'BOTH' as const,
-      label: 'Обе роли',
-      count: stats.both,
-      subtitle: 'Универсальные',
-    },
-  ];
-
   return (
     <Layout>
       <PageHeader
@@ -291,27 +264,23 @@ export default function ParticipantsPage() {
         description="Один человек хранится одной карточкой. Роль определяет, где он доступен: как IT-менеджер, как получатель или сразу в обеих ролях."
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {filterTabs.map((tab) => {
-          const active = kindFilter === tab.key;
-
-          return (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setKindFilter(tab.key)}
-              className={`rounded-2xl border px-4 py-4 text-left transition ${
-                active
-                  ? 'border-slate-900 bg-slate-900 text-white shadow-md'
-                  : 'border-gray-200 bg-white text-gray-700 shadow-sm hover:border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              <div className="text-xs font-medium uppercase tracking-wide text-inherit/70">{tab.label}</div>
-              <div className="mt-2 text-2xl font-semibold">{tab.count}</div>
-              <div className="mt-1 text-xs text-inherit/70">{tab.subtitle}</div>
-            </button>
-          );
-        })}
+      <div className="mb-6 grid gap-3 md:grid-cols-4">
+        <SurfaceCard className="p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Всего карточек</p>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">{stats.total}</p>
+        </SurfaceCard>
+        <SurfaceCard className="p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Доступны как IT</p>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">{stats.managers}</p>
+        </SurfaceCard>
+        <SurfaceCard className="p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Доступны как получатели</p>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">{stats.employees}</p>
+        </SurfaceCard>
+        <SurfaceCard className="p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Обе роли</p>
+          <p className="mt-2 text-2xl font-semibold text-gray-900">{stats.both}</p>
+        </SurfaceCard>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">

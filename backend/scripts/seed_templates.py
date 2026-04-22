@@ -73,7 +73,6 @@ TEMPLATE_DEFINITIONS = [
                 {"name": "party1_name", "type": "string", "label": "Передающая сторона", "required": True},
                 {"name": "party2_name", "type": "string", "label": "Получающая сторона", "required": True},
                 {"name": "issue_date", "type": "date", "label": "Дата выдачи", "required": True},
-                {"name": "advisory_note", "type": "string", "label": "Поля для эдвайзери", "required": True},
                 {"name": "item_name", "type": "string", "label": "Модель iPad", "required": True},
                 {"name": "item_serial", "type": "string", "label": "Серийный номер", "required": True},
                 {"name": "imei", "type": "string", "label": "IMEI", "required": True},

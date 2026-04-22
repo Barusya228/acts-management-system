@@ -8,7 +8,6 @@ import Layout from '@/components/Layout';
 import SignaturePad from '@/components/SignaturePad';
 import SignatureUpload from '@/components/SignatureUpload';
 import ConfirmModal from '@/components/ConfirmModal';
-import RecipientsEditor, { type EditableRecipient } from '@/components/RecipientsEditor';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import PageHeader from '@/components/ui/PageHeader';
@@ -50,7 +49,6 @@ interface TemplateOption {
   code: string;
   name: string;
   schema_json?: {
-    max_recipients?: number | null;
     fields?: Array<{
       name: string;
       type: string;
@@ -64,10 +62,6 @@ interface ParticipantOption {
   id: string;
   full_name: string;
   email?: string | null;
-  department?: string | null;
-  title?: string | null;
-  sticker_emoji?: string | null;
-  kind: 'IT_MANAGER' | 'EMPLOYEE' | 'BOTH';
 }
 
 interface EquipmentItem {
@@ -136,11 +130,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [signatureMode, setSignatureMode] = useState<'draw' | 'upload'>('draw');
   const [signatureData, setSignatureData] = useState<string>('');
-  const [editing, setEditing] = useState(false);
-  const [savingEdit, setSavingEdit] = useState(false);
-  const [editRecipients, setEditRecipients] = useState<EditableRecipient[]>([]);
-  const [editMainEquipment, setEditMainEquipment] = useState<EquipmentItem>({ name: '', serial: '', imei: '' });
-  const [editEquipmentItems, setEditEquipmentItems] = useState<EquipmentItem[]>([]);
   const [returnDate, setReturnDate] = useState('');
   const [returnNote, setReturnNote] = useState('');
   const [error, setError] = useState('');
@@ -187,14 +176,13 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   const canSignParty2 = act?.status === 'DRAFT' || act?.status === 'RETURN_SIGNED_PARTY1';
   const issueEmailReady = act?.status === 'COMPLETED';
   const returnEmailReady = act?.status === 'RETURNED';
-  const shouldShowSigningBlock = !editing && (
+  const shouldShowSigningBlock =
     act?.status === 'DRAFT' ||
     act?.status === 'SIGNED_PARTY1' ||
     act?.status === 'SIGNED_PARTY2' ||
     act?.status === 'RETURN_INITIATED' ||
     act?.status === 'RETURN_SIGNED_PARTY1' ||
-    act?.status === 'RETURN_SIGNED_PARTY2'
-  );
+    act?.status === 'RETURN_SIGNED_PARTY2';
 
   const getSignButtonMeta = (party: 'party1' | 'party2', status: string) => {
     if (party === 'party1') {
@@ -595,117 +583,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     }
   };
 
-  const startEdit = () => {
-    if (!act) return;
-    const currentRecipients = normalizeActRecipients(act.extra_data_json, act.party2_name, act.receiver_email);
-    setEditRecipients(
-      currentRecipients.map((recipient) => ({
-        participant_id: recipient.participant_id,
-        full_name: recipient.full_name,
-        email: recipient.email,
-      }))
-    );
-
-    setEditMainEquipment({
-      name: String(act.item_name ?? ''),
-      serial: String(act.item_serial ?? ''),
-      imei: String(act.extra_data_json?.imei ?? ''),
-    });
-
-    const extraEquipment = Array.isArray(act.extra_data_json?.equipment_list)
-      ? (act.extra_data_json?.equipment_list as unknown[])
-          .filter((item) => typeof item === 'object' && item !== null)
-          .map((item) => {
-            const typedItem = item as { name?: unknown; serial?: unknown; imei?: unknown };
-            return {
-              name: String(typedItem.name ?? ''),
-              serial: String(typedItem.serial ?? ''),
-              imei: String(typedItem.imei ?? ''),
-            };
-          })
-      : [];
-    setEditEquipmentItems(extraEquipment);
-    setEditing(true);
-  };
-
-  const cancelEdit = () => {
-    setEditing(false);
-    setEditRecipients([]);
-    setEditMainEquipment({ name: '', serial: '', imei: '' });
-    setEditEquipmentItems([]);
-  };
-
-  const addEditEquipmentItem = () => {
-    setEditEquipmentItems((prev) => [...prev, { name: '', serial: '', imei: '' }]);
-  };
-
-  const updateEditEquipmentItem = (index: number, patch: Partial<EquipmentItem>) => {
-    setEditEquipmentItems((prev) => prev.map((item, idx) => (idx === index ? { ...item, ...patch } : item)));
-  };
-
-  const removeEditEquipmentItem = (index: number) => {
-    setEditEquipmentItems((prev) => prev.filter((_, idx) => idx !== index));
-  };
-
-  const saveEdit = async () => {
-    if (!act) return;
-
-    const normalizedRecipients = editRecipients
-      .map((recipient) => ({
-        participant_id: recipient.participant_id,
-        full_name: recipient.full_name.trim(),
-        email: recipient.email.trim(),
-      }))
-      .filter((recipient) => recipient.full_name && recipient.email);
-
-    if (normalizedRecipients.length === 0) {
-      showToast('Добавьте хотя бы одного получателя с ФИО и email', 'error');
-      return;
-    }
-
-    if (!editMainEquipment.name.trim() || !editMainEquipment.serial.trim() || !(editMainEquipment.imei || '').trim()) {
-      showToast('Для основного iPad заполните Student name, iPad Tag и IMEI', 'error');
-      return;
-    }
-
-    const normalizedEquipment = editEquipmentItems
-      .map((item) => ({
-        name: item.name.trim(),
-        serial: item.serial.trim(),
-        imei: item.imei?.trim() || '',
-      }))
-      .filter((item) => item.name || item.serial || item.imei);
-
-    const existingExtra = (act.extra_data_json || {}) as Record<string, unknown>;
-    const payloadExtraData: Record<string, unknown> = {};
-    Object.entries(existingExtra).forEach(([key, value]) => {
-      if (key !== 'recipients' && key !== 'equipment_list' && key !== 'imei') {
-        payloadExtraData[key] = value;
-      }
-    });
-    payloadExtraData.recipients = normalizedRecipients;
-    payloadExtraData.imei = (editMainEquipment.imei || '').trim();
-    if (normalizedEquipment.length > 0) {
-      payloadExtraData.equipment_list = normalizedEquipment;
-    }
-
-    try {
-      setSavingEdit(true);
-      await api.patch(`/api/acts/${act.id}`, {
-        item_name: editMainEquipment.name.trim(),
-        item_serial: editMainEquipment.serial.trim(),
-        extra_data_json: payloadExtraData,
-      });
-      await fetchActAndVersions();
-      setEditing(false);
-      showToast('iPad акт обновлен', 'success');
-    } catch (err: any) {
-      showToast(err.response?.data?.detail || 'Не удалось обновить акт', 'error');
-    } finally {
-      setSavingEdit(false);
-    }
-  };
-
   if (loading) {
     return (
       <Layout>
@@ -761,28 +638,14 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     {
       name: String(act.item_name ?? ''),
       serial: String(act.item_serial ?? ''),
-      imei: String(act.extra_data_json?.imei ?? ''),
       source: 'Основное',
     },
     ...equipmentList.map((item) => ({
       ...item,
       source: 'Доп.',
     })),
-  ].filter((item) => item.name || item.serial || item.imei);
-  const isIpadTemplate = template?.code === 'IPAD';
-  const isAdminUser = (user?.role || '').toUpperCase() === 'ADMIN';
-  const canEditIpadDraft = isAdminUser && isIpadTemplate && act.status === 'DRAFT';
-  const employees = participants.filter((participant) => participant.kind === 'EMPLOYEE' || participant.kind === 'BOTH');
-  const ipadEquipmentColumns = isIpadTemplate && mergedEquipmentList.length >= 4
-    ? [
-        mergedEquipmentList.slice(0, Math.ceil(mergedEquipmentList.length / 2)),
-        mergedEquipmentList.slice(Math.ceil(mergedEquipmentList.length / 2)),
-      ]
-    : [mergedEquipmentList];
-  const advisoryNote = String(act.extra_data_json?.advisory_note ?? '').trim();
-  const extraEntries = Object.entries(act.extra_data_json || {}).filter(
-    ([key]) => key !== 'equipment_list' && key !== 'recipients' && key !== 'advisory_note'
-  );
+  ].filter((item) => item.name || item.serial);
+  const extraEntries = Object.entries(act.extra_data_json || {}).filter(([key]) => key !== 'equipment_list' && key !== 'recipients');
   const party1Email = participants.find((participant) => participant.full_name === act.party1_name)?.email || '—';
   const party2Email = recipients.map((recipient) => recipient.email).filter(Boolean).join(', ') || act.receiver_email || '—';
   const currentSigningStep = signingSteps.find((step) => step.state === 'current') || null;
@@ -851,15 +714,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
           description="Проверьте детали документа, следите за статусом подписания, работайте с PDF и запускайте возврат техники при завершении выдачи."
           actions={
             <>
-              {canEditIpadDraft && !editing && (
-                <button
-                  type="button"
-                  onClick={startEdit}
-                  className="rounded-xl bg-emerald-600 px-4 py-3 font-medium text-white transition hover:bg-emerald-700"
-                >
-                  Редактировать
-                </button>
-              )}
               <button
                 type="button"
                 onClick={handleDownloadCurrentPdf}
@@ -868,7 +722,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
               >
                 {pdfLoading === 'download' ? 'Скачивание...' : 'Скачать PDF'}
               </button>
-              {isAdminUser && (
+              {user?.role === 'admin' && (
                 <button
                   type="button"
                   onClick={() => setShowDeleteModal(true)}
@@ -1076,128 +930,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
         </div>
 
         <SurfaceCard className="p-6 mb-6">
-          {editing && canEditIpadDraft && (
-            <div className="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold text-emerald-900">Редактирование iPad акта</h3>
-                  <p className="text-sm text-emerald-800">Можно менять получателей и список iPad. Поля для эдвайзери остаются без изменений.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={cancelEdit}
-                    disabled={savingEdit}
-                    className="rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
-                  >
-                    Отмена
-                  </button>
-                  <button
-                    type="button"
-                    onClick={saveEdit}
-                    disabled={savingEdit}
-                    className="rounded bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-60"
-                  >
-                    {savingEdit ? 'Сохранение...' : 'Сохранить'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="mb-4">
-                <RecipientsEditor
-                  recipients={editRecipients}
-                  employees={employees}
-                  onChange={setEditRecipients}
-                  maxRecipients={template?.schema_json?.max_recipients}
-                />
-              </div>
-
-              <div className="rounded-md border border-gray-200 bg-white p-3">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <h4 className="text-sm font-semibold text-gray-800">Инвентарные номера iPad</h4>
-                  <button
-                    type="button"
-                    onClick={addEditEquipmentItem}
-                    className="rounded bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
-                  >
-                    Добавить iPad
-                  </button>
-                </div>
-
-                <div className="hidden gap-2 border-b border-gray-200 pb-1 text-xs font-medium uppercase tracking-wide text-gray-500 md:grid md:grid-cols-[1fr_1fr_1fr_auto]">
-                  <span>Student name</span>
-                  <span>iPad Tag</span>
-                  <span>IMEI</span>
-                  <span className="text-right">Действие</span>
-                </div>
-
-                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_1fr_auto] md:items-center">
-                  <input
-                    type="text"
-                    value={editMainEquipment.name}
-                    onChange={(e) => setEditMainEquipment((prev) => ({ ...prev, name: e.target.value }))}
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Student name *"
-                  />
-                  <input
-                    type="text"
-                    value={editMainEquipment.serial}
-                    onChange={(e) => setEditMainEquipment((prev) => ({ ...prev, serial: e.target.value }))}
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="iPad Tag *"
-                  />
-                  <input
-                    type="text"
-                    value={editMainEquipment.imei || ''}
-                    onChange={(e) => setEditMainEquipment((prev) => ({ ...prev, imei: e.target.value }))}
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="IMEI *"
-                  />
-                  <span className="inline-flex h-[34px] items-center justify-center rounded bg-slate-100 px-3 text-xs font-medium text-slate-700">
-                    Основное
-                  </span>
-                </div>
-
-                {editEquipmentItems.map((item, index) => (
-                  <div key={`edit-item-${index}`} className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_1fr_auto] md:items-center">
-                    <input
-                      type="text"
-                      value={item.name}
-                      onChange={(e) => updateEditEquipmentItem(index, { name: e.target.value })}
-                      className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Student name"
-                    />
-                    <input
-                      type="text"
-                      value={item.serial}
-                      onChange={(e) => updateEditEquipmentItem(index, { serial: e.target.value })}
-                      className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="iPad Tag"
-                    />
-                    <input
-                      type="text"
-                      value={item.imei || ''}
-                      onChange={(e) => updateEditEquipmentItem(index, { imei: e.target.value })}
-                      className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="IMEI"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeEditEquipmentItem(index)}
-                      className="rounded bg-rose-600 px-3 py-1.5 text-sm text-white hover:bg-rose-700"
-                    >
-                      Удалить
-                    </button>
-                  </div>
-                ))}
-
-                {editEquipmentItems.length === 0 && (
-                  <p className="mt-2 text-xs text-gray-500">Дополнительных позиций пока нет.</p>
-                )}
-              </div>
-            </div>
-          )}
-
           <div className="mb-4">
             <StatusPill status={act.status} label={getStatusLabel(act.status)} />
           </div>
@@ -1279,78 +1011,41 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
 
             {mergedEquipmentList.length > 0 && (
               <div className="md:col-span-2">
-                <h3 className="text-sm font-medium text-gray-500 mb-2">
-                  {isIpadTemplate ? 'Инвентарные номера iPad' : 'Оборудование'}
-                </h3>
-                {isIpadTemplate && advisoryNote && (
-                  <p className="mb-3 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                    <span className="font-medium text-gray-900">Поля для эдвайзери:</span> {advisoryNote}
-                  </p>
-                )}
-                {isIpadTemplate ? (
-                  <div className={`grid gap-4 ${ipadEquipmentColumns.length > 1 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
-                    {ipadEquipmentColumns.map((columnItems, columnIndex) => {
-                      const startIndex = columnIndex === 0 ? 0 : Math.ceil(mergedEquipmentList.length / 2);
-                      return (
-                        <div key={`ipad-column-${columnIndex}`} className="overflow-hidden rounded border border-gray-200">
-                          <table className="w-full text-sm">
-                            <thead className="bg-gray-50">
-                              <tr>
-                                <th className="w-16 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">№</th>
-                                <th className="border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
-                                  Student name
-                                </th>
-                                <th className="w-56 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
-                                  iPad Tag
-                                </th>
-                                <th className="w-48 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
-                                  IMEI
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {columnItems.map((item, index) => (
-                                <tr key={`${item.name}-${item.serial}-${item.source}-${startIndex + index}`}>
-                                  <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{startIndex + index + 1}</td>
-                                  <td className="border-b border-gray-100 px-3 py-2 text-gray-900">{item.name || '—'}</td>
-                                  <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.serial || '—'}</td>
-                                  <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.imei || '—'}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="overflow-hidden rounded border border-gray-200">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="w-16 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">№</th>
-                          <th className="w-24 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">Тип</th>
-                          <th className="border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
-                            Наименование
+                <h3 className="text-sm font-medium text-gray-500 mb-2">Оборудование</h3>
+                <div className="overflow-hidden rounded border border-gray-200">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="w-16 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">№</th>
+                        <th className="w-24 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">Тип</th>
+                        <th className="border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
+                          Наименование
+                        </th>
+                        <th className="w-56 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
+                          Серийный номер
+                        </th>
+                        {template?.code === 'IPAD' && (
+                          <th className="w-48 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
+                            IMEI
                           </th>
-                          <th className="w-56 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
-                            Серийный номер
-                          </th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mergedEquipmentList.map((item, index) => (
+                        <tr key={`${item.name}-${item.serial}-${item.source}-${index}`}>
+                          <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{index + 1}</td>
+                          <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.source}</td>
+                          <td className="border-b border-gray-100 px-3 py-2 text-gray-900">{item.name || '—'}</td>
+                          <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.serial || '—'}</td>
+                          {template?.code === 'IPAD' && (
+                            <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.imei || '—'}</td>
+                          )}
                         </tr>
-                      </thead>
-                      <tbody>
-                        {mergedEquipmentList.map((item, index) => (
-                          <tr key={`${item.name}-${item.serial}-${item.source}-${index}`}>
-                            <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{index + 1}</td>
-                            <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.source}</td>
-                            <td className="border-b border-gray-100 px-3 py-2 text-gray-900">{item.name || '—'}</td>
-                            <td className="border-b border-gray-100 px-3 py-2 text-gray-700">{item.serial || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -1509,7 +1204,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
           <div className="rounded bg-white p-6 shadow">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold">История действий</h2>
-              {isAdminUser && (
+              {user?.role === 'admin' && (
                 <button
                   type="button"
                   onClick={handleSendNotification}

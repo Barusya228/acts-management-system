@@ -278,15 +278,15 @@ export default function ActsListPage() {
     <div className="max-w-7xl mx-auto">
       <PageHeader
         eyebrow="Acts Digitalization"
-        title="Акты по видам и шаблонам"
-        description="Выбирайте шаблоны, отслеживайте статусы документов и работайте с передачей и возвратом техники"
+        title="Список актов"
+        description="Отслеживайте состояние документов, фильтруйте выдачу и возврат техники" 
         actions={
           <>
             <div className="rounded-lg border border-white/15 bg-white/10 px-3 py-2 backdrop-blur-sm">
               <p className="text-xs text-slate-300">{user?.full_name || user?.email}</p>
             </div>
             <div className="rounded-lg border border-white/15 bg-white/10 px-3 py-2 backdrop-blur-sm">
-              <p className="mb-1 text-[11px] uppercase tracking-wide text-slate-300">Шаблон акта</p>
+              <p className="mb-1 text-[11px] uppercase tracking-wide text-slate-300">Шаблон</p>
               <select
                 value={selectedTemplateId}
                 onChange={(e) => {
@@ -304,7 +304,7 @@ export default function ActsListPage() {
                 ) : (
                   templates.map((template) => (
                     <option key={template.id} value={template.id}>
-                      {template.name}
+                      {template.name} ({template.code})
                     </option>
                   ))
                 )}
@@ -376,7 +376,7 @@ export default function ActsListPage() {
 
       <SurfaceCard className="mb-4 p-3">
         <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-          <SectionTitle title="Расширенный поиск по актам" description="Быстро находите документы по сторонам, технике и email получателя." />
+          <SectionTitle title="Фильтры и поиск" description="Сузьте список по сторонам, технике или email получателя." />
           <button
             type="button"
             onClick={() =>
@@ -396,19 +396,19 @@ export default function ActsListPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
-            <input
-              type="text"
-              placeholder="Передающая сторона"
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-              value={filters.party1}
-              onChange={(e) => setFilters({ ...filters, party1: e.target.value, page: 1 })}
-            />
-            <input
-              type="text"
-              placeholder="Получатель"
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-              value={filters.party2}
-              onChange={(e) => setFilters({ ...filters, party2: e.target.value, page: 1 })}
+          <input
+            type="text"
+            placeholder="Сторона 1"
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            value={filters.party1}
+            onChange={(e) => setFilters({ ...filters, party1: e.target.value, page: 1 })}
+          />
+          <input
+            type="text"
+            placeholder="Сторона 2"
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            value={filters.party2}
+            onChange={(e) => setFilters({ ...filters, party2: e.target.value, page: 1 })}
           />
           <input
             type="text"

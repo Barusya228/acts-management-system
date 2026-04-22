@@ -110,12 +110,6 @@ class ActBase(BaseModel):
 class ActCreate(ActBase):
     pass
 
-
-class ActUpdate(BaseModel):
-    item_name: Optional[str] = None
-    item_serial: Optional[str] = None
-    extra_data_json: Optional[dict] = None
-
 class ActResponse(ActBase):
     id: UUID4
     status: str

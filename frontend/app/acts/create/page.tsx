@@ -89,12 +89,10 @@ function ActCreatePageContent() {
   const preselectedTemplateId = searchParams.get('template_id') || '';
 
   const selectedTemplate = templates.find((template) => template.id === formData.template_id);
-  const isIpadTemplate = selectedTemplate?.code === 'IPAD';
-  const equipmentGridTemplate = isIpadTemplate ? '1fr 1fr 1fr auto' : '1fr 1fr auto';
   const itManagers = participants.filter((participant) => participant.kind === 'IT_MANAGER' || participant.kind === 'BOTH');
   const employees = participants.filter((participant) => participant.kind === 'EMPLOYEE' || participant.kind === 'BOTH');
   const dynamicFields = (selectedTemplate?.schema_json?.fields || []).filter(
-    (field) => !reservedFields.has(field.name) && field.name !== 'imei' && field.name !== 'advisory_note'
+    (field) => !reservedFields.has(field.name) && field.name !== 'imei'
   );
 
   useEffect(() => {
@@ -130,7 +128,7 @@ function ActCreatePageContent() {
 
         const initialTemplate = list.find((item) => item.id === initialTemplateId);
         const initialDynamic = (initialTemplate?.schema_json?.fields || []).filter(
-          (field: TemplateField) => !reservedFields.has(field.name) && field.name !== 'imei' && field.name !== 'advisory_note'
+          (field: TemplateField) => !reservedFields.has(field.name) && field.name !== 'imei'
         );
         const initialExtra: Record<string, string> = {};
         initialDynamic.forEach((field: TemplateField) => {
@@ -177,7 +175,7 @@ function ActCreatePageContent() {
           serial: item.serial.trim(),
           imei: item.imei?.trim() || '',
         }))
-        .filter((item) => item.name || item.serial || item.imei);
+        .filter((item) => item.name || item.serial);
 
       const payloadExtraData: Record<string, unknown> = { ...extraData };
       payloadExtraData.recipients = normalizedRecipients;
@@ -308,45 +306,24 @@ function ActCreatePageContent() {
 
           <div className="mb-6 rounded-md border border-gray-200 p-3">
             <div className="mb-2 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold text-gray-800">
-                  {isIpadTemplate ? 'Инвентарные номера iPad' : 'Оборудование'}
-                </h2>
-              </div>
+              <h2 className="text-sm font-semibold text-gray-800">Оборудование</h2>
               <button
                 type="button"
                 onClick={addEquipmentItem}
                 className="rounded bg-slate-700 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
               >
-                {isIpadTemplate ? 'Добавить iPad' : 'Добавить устройство'}
+                Добавить устройство
               </button>
             </div>
 
-            {isIpadTemplate && (
-              <div className="mb-3">
-                <label htmlFor="advisory_note" className="mb-2 block text-sm font-medium text-gray-700">
-                  Поля для эдвайзери *
-                </label>
-                <input
-                  type="text"
-                  id="advisory_note"
-                  value={extraData.advisory_note || ''}
-                  onChange={(e) => handleExtraFieldChange('advisory_note', e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                  placeholder="Поля для эдвайзери"
-                />
-              </div>
-            )}
-
-            <div className="hidden grid-cols-[1fr_1fr_auto] gap-2 border-b border-gray-200 pb-1 text-xs font-medium uppercase tracking-wide text-gray-500 md:grid" style={{ gridTemplateColumns: equipmentGridTemplate }}>
-              <span>{isIpadTemplate ? 'Student name' : 'Наименование'}</span>
-              <span>{isIpadTemplate ? 'iPad Tag' : 'Серийный номер'}</span>
-              {isIpadTemplate && <span>IMEI</span>}
+            <div className="hidden grid-cols-[1fr_1fr_auto] gap-2 border-b border-gray-200 pb-1 text-xs font-medium uppercase tracking-wide text-gray-500 md:grid" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
+              <span>Наименование</span>
+              <span>Серийный номер</span>
+              {selectedTemplate?.code === 'IPAD' && <span>IMEI</span>}
               <span className="text-right">Действие</span>
             </div>
 
-            <div className="mt-2 grid grid-cols-1 gap-2 md:items-center" style={{ gridTemplateColumns: equipmentGridTemplate }}>
+            <div className="mt-2 grid grid-cols-1 gap-2 md:items-center" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
               {selectedTemplate?.schema_json?.max_recipients === 1 ? (
                 <div className="flex gap-2">
                   <input
@@ -357,56 +334,35 @@ function ActCreatePageContent() {
                     onChange={handleChange}
                     className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
-                    placeholder={isIpadTemplate ? 'Student name *' : 'Наименование техники *'}
+                    placeholder="Наименование техники *"
                   />
-                  {!isIpadTemplate && (
-                    <select
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          handleChange({ target: { name: 'item_name', value: e.target.value } } as any);
-                        }
-                      }}
-                      className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      defaultValue=""
-                    >
-                      <option value="">Выбрать</option>
-                      <option value="Asus Tuf">Asus Tuf</option>
-                      <option value="Lenovo Legion">Lenovo Legion</option>
-                      <option value="Mac book">Mac book</option>
-                      <option value="Удлинитель Smart">Удлинитель Smart</option>
-                    </select>
-                  )}
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleChange({ target: { name: 'item_name', value: e.target.value } } as any);
+                      }
+                    }}
+                    className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    defaultValue=""
+                  >
+                    <option value="">Выбрать</option>
+                    <option value="Asus Tuf">Asus Tuf</option>
+                    <option value="Lenovo Legion">Lenovo Legion</option>
+                    <option value="Mac book">Mac book</option>
+                    <option value="Удлинитель Smart">Удлинитель Smart</option>
+                  </select>
                 </div>
               ) : (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    id="item_name"
-                    name="item_name"
-                    value={formData.item_name}
-                    onChange={handleChange}
-                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                    placeholder={isIpadTemplate ? 'Student name *' : 'Наименование техники *'}
-                  />
-                  {!isIpadTemplate && (
-                    <select
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          handleChange({ target: { name: 'item_name', value: e.target.value } } as any);
-                        }
-                      }}
-                      className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      defaultValue=""
-                    >
-                      <option value="">Выбрать</option>
-                      <option value="Asus Tuf">Asus Tuf</option>
-                      <option value="Lenovo Legion">Lenovo Legion</option>
-                      <option value="Mac book">Mac book</option>
-                      <option value="Удлинитель Smart">Удлинитель Smart</option>
-                    </select>
-                  )}
-                </div>
+                <input
+                  type="text"
+                  id="item_name"
+                  name="item_name"
+                  value={formData.item_name}
+                  onChange={handleChange}
+                  className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                  placeholder="Наименование техники *"
+                />
               )}
               <input
                 type="text"
@@ -416,9 +372,9 @@ function ActCreatePageContent() {
                 onChange={handleChange}
                 className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
-                placeholder={isIpadTemplate ? 'iPad Tag *' : 'Серийный номер *'}
+                placeholder="Серийный номер *"
               />
-              {isIpadTemplate && (
+              {selectedTemplate?.code === 'IPAD' && (
                 <input
                   type="text"
                   value={extraData['imei'] || ''}
@@ -434,7 +390,7 @@ function ActCreatePageContent() {
             </div>
 
             {equipmentItems.map((item, index) => (
-              <div key={index} className="mt-2 grid grid-cols-1 gap-2 md:items-center" style={{ gridTemplateColumns: equipmentGridTemplate }}>
+              <div key={index} className="mt-2 grid grid-cols-1 gap-2 md:items-center" style={{ gridTemplateColumns: selectedTemplate?.code === 'IPAD' ? '1fr 1fr 1fr auto' : '1fr 1fr auto' }}>
                 {selectedTemplate?.schema_json?.max_recipients === 1 ? (
                   <div className="flex gap-2">
                     <input
@@ -442,62 +398,41 @@ function ActCreatePageContent() {
                       value={item.name}
                       onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
                       className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder={isIpadTemplate ? 'Student name' : 'Наименование'}
+                      placeholder="Наименование"
                     />
-                    {!isIpadTemplate && (
-                      <select
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            updateEquipmentItem(index, { name: e.target.value });
-                          }
-                        }}
-                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        defaultValue=""
-                      >
-                        <option value="">Выбрать</option>
-                        <option value="Asus Tuf">Asus Tuf</option>
-                        <option value="Lenovo Legion">Lenovo Legion</option>
-                        <option value="Mac book">Mac book</option>
-                        <option value="Удлинитель Smart">Удлинитель Smart</option>
-                      </select>
-                    )}
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          updateEquipmentItem(index, { name: e.target.value });
+                        }
+                      }}
+                      className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      defaultValue=""
+                    >
+                      <option value="">Выбрать</option>
+                      <option value="Asus Tuf">Asus Tuf</option>
+                      <option value="Lenovo Legion">Lenovo Legion</option>
+                      <option value="Mac book">Mac book</option>
+                      <option value="Удлинитель Smart">Удлинитель Smart</option>
+                    </select>
                   </div>
                 ) : (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={item.name}
-                      onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
-                      className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder={isIpadTemplate ? 'Student name' : 'Наименование'}
-                    />
-                    {!isIpadTemplate && (
-                      <select
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            updateEquipmentItem(index, { name: e.target.value });
-                          }
-                        }}
-                        className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        defaultValue=""
-                      >
-                        <option value="">Выбрать</option>
-                        <option value="Asus Tuf">Asus Tuf</option>
-                        <option value="Lenovo Legion">Lenovo Legion</option>
-                        <option value="Mac book">Mac book</option>
-                        <option value="Удлинитель Smart">Удлинитель Smart</option>
-                      </select>
-                    )}
-                  </div>
+                  <input
+                    type="text"
+                    value={item.name}
+                    onChange={(e) => updateEquipmentItem(index, { name: e.target.value })}
+                    className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Наименование"
+                  />
                 )}
                 <input
                   type="text"
                   value={item.serial}
                   onChange={(e) => updateEquipmentItem(index, { serial: e.target.value })}
                   className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder={isIpadTemplate ? 'iPad Tag' : 'Серийный номер'}
+                  placeholder="Серийный номер"
                 />
-                {isIpadTemplate && (
+                {selectedTemplate?.code === 'IPAD' && (
                   <input
                     type="text"
                     value={item.imei || ''}
