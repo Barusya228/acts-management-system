@@ -50,7 +50,6 @@ services:
       - backend
     networks:
       - acts_network
-    command: npm run start
 
 volumes:
   postgres_data:
