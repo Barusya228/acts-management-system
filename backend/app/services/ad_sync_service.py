@@ -55,11 +55,11 @@ def _extract_title(dn: str) -> Optional[str]:
     if not dn:
         return None
     parts = dn.split(",")
-    if len(parts) >= 1:
-        first_ou = parts[0].strip()
-        if first_ou.lower().startswith("ou="):
-            return first_ou[3:]
-    return dn
+    for part in parts:
+        part = part.strip()
+        if part.lower().startswith("ou="):
+            return part[3:]
+    return None
 
 
 def _upsert_participant(db: Session, record: dict) -> Optional[Participant]:
@@ -204,3 +204,10 @@ def sync_ad_users(db: Session) -> dict:
         "skipped": skipped,
         "errors": errors,
     }
+
+
+def prune_ad_participants(db: Session) -> dict:
+    deleted = db.query(Participant).filter(Participant.ad_guid.isnot(None)).delete()
+    db.commit()
+    return {"status": "success", "deleted": deleted}
+

@@ -26,6 +26,12 @@ services:
       CORS_ORIGINS: '["http://localhost:5000"]'
       CORS_ORIGIN_REGEX: '^https?://.+(:\d+)?$'
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5000}
+      AD_ENABLED: ${AD_ENABLED:-false}
+      AD_SERVER: ${AD_SERVER:-}
+      AD_PORT: ${AD_PORT:-389}
+      AD_USER: ${AD_USER:-}
+      AD_PASSWORD: ${AD_PASSWORD:-}
+      AD_SEARCH_BASE: ${AD_SEARCH_BASE:-}
     ports:
       - "5000:8000"
     volumes:
