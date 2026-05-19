@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
     
+    # Active Directory
+    AD_ENABLED: bool = False
+    AD_SERVER: str = ""
+    AD_PORT: int = 389
+    AD_USER: str = ""
+    AD_PASSWORD: str = ""
+    AD_SEARCH_BASE: str = ""
+    
     # Storage
     STORAGE_PATH: str = "storage"
     

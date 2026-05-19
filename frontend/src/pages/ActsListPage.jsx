@@ -7,6 +7,9 @@ function ActsListPage() {
   const [acts, setActs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [adSyncLoading, setAdSyncLoading] = useState(false)
+  const [adSyncResult, setAdSyncResult] = useState(null)
+  const [showAdSync, setShowAdSync] = useState(false)
   const [filters, setFilters] = useState({
     template_code: '',
     party1: '',
@@ -66,6 +69,19 @@ function ActsListPage() {
     return labels[status] || status
   }
 
+  const handleAdSync = async () => {
+    setAdSyncLoading(true)
+    setAdSyncResult(null)
+    try {
+      const response = await api.post('/api/admin/ad-sync/run')
+      setAdSyncResult(response.data)
+    } catch (error) {
+      setAdSyncResult({ status: 'error', reason: error.response?.data?.detail || 'Ошибка синхронизации' })
+    } finally {
+      setAdSyncLoading(false)
+    }
+  }
+
   return (
     <div className="container">
       <div className="page-header">
@@ -74,6 +90,53 @@ function ActsListPage() {
           Создать акт
         </Link>
       </div>
+
+      {showAdSync && (
+        <div className="card" style={{ marginBottom: '16px' }}>
+          <h2>Массовая синхронизация с AD</h2>
+          <p style={{ fontSize: '14px', color: '#666' }}>
+            Загрузка пользователей из Active Directory. Новые пользователи будут созданы,
+            существующие — обновлены. Никто не удаляется.
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button
+              onClick={handleAdSync}
+              disabled={adSyncLoading}
+              className="btn btn-primary"
+            >
+              {adSyncLoading ? 'Синхронизация...' : 'Загрузить пользователей'}
+            </button>
+            <button
+              onClick={() => { setShowAdSync(false); setAdSyncResult(null) }}
+              className="btn btn-secondary"
+            >
+              Скрыть
+            </button>
+          </div>
+          {adSyncResult && (
+            <pre style={{
+              marginTop: '12px',
+              padding: '12px',
+              background: adSyncResult.status === 'success' ? '#e8f5e9' : '#ffebee',
+              borderRadius: '4px',
+              fontSize: '13px',
+              whiteSpace: 'pre-wrap'
+            }}>
+              {JSON.stringify(adSyncResult, null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {!showAdSync && (
+        <button
+          onClick={() => setShowAdSync(true)}
+          className="btn btn-secondary"
+          style={{ marginBottom: '16px' }}
+        >
+          Массовая синхронизация с АД
+        </button>
+      )}
 
       <div className="card">
         <h2>Фильтры</h2>

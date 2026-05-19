@@ -24,6 +24,10 @@ class UserUpdate(BaseModel):
 class UserResponse(UserBase):
     id: UUID
     is_active: bool
+    ad_guid: Optional[str] = None
+    department: Optional[str] = None
+    position: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
     created_at: datetime
 
     class Config:
