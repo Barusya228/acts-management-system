@@ -62,6 +62,8 @@ class Participant(Base):
     sticker_emoji = Column(String, nullable=True)
     kind = Column(SQLEnum(ParticipantKind), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    ad_guid = Column(String, unique=True, nullable=True)
+    last_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 class Template(Base):

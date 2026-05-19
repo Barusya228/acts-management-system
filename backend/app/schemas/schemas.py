@@ -88,6 +88,8 @@ class ParticipantUpdate(BaseModel):
 
 class ParticipantResponse(ParticipantBase):
     id: UUID4
+    ad_guid: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
     is_active: bool
     created_at: datetime
 

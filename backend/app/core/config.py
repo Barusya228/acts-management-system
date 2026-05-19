@@ -30,4 +30,12 @@ class Settings(BaseSettings):
     # Public URLs
     APP_BASE_URL: str = "http://localhost:8000"
     
+    # Active Directory
+    AD_ENABLED: bool = False
+    AD_SERVER: str = ""
+    AD_PORT: int = 389
+    AD_USER: str = ""
+    AD_PASSWORD: str = ""
+    AD_SEARCH_BASE: str = ""
+    
 settings = Settings()

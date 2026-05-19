@@ -93,6 +93,9 @@ export default function ParticipantsPage() {
   const [editForm, setEditForm] = useState<ParticipantFormState | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
   const [form, setForm] = useState<ParticipantFormState>(emptyFormState);
+  const [showAdSync, setShowAdSync] = useState(false);
+  const [adSyncLoading, setAdSyncLoading] = useState(false);
+  const [adSyncResult, setAdSyncResult] = useState<any>(null);
 
   useEffect(() => {
     if (user && user.role !== 'ADMIN') {
@@ -229,6 +232,22 @@ export default function ParticipantsPage() {
       showToast(err.response?.data?.detail || 'Ошибка удаления участника', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAdSync = async () => {
+    setAdSyncLoading(true);
+    setAdSyncResult(null);
+    try {
+      const res = await api.post('/api/admin/ad-sync/run');
+      setAdSyncResult(res.data);
+      if (res.data.imported > 0 || res.data.updated > 0) {
+        await fetchParticipants();
+      }
+    } catch (err: any) {
+      setAdSyncResult({ status: 'error', reason: err.response?.data?.detail || 'Ошибка синхронизации' });
+    } finally {
+      setAdSyncLoading(false);
     }
   };
 
@@ -473,6 +492,39 @@ export default function ParticipantsPage() {
                     Отмена
                   </button>
                 </div>
+              </div>
+            )}
+          </SurfaceCard>
+
+          <SurfaceCard className="p-6">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Синхронизация с AD</h2>
+                <p className="mt-1 text-sm text-gray-600">Загрузка участников из Active Directory. Новые добавляются, существующие обновляются. Никто не удаляется.</p>
+              </div>
+              <button
+                onClick={() => { setShowAdSync((prev) => !prev); setAdSyncResult(null) }}
+                className={`rounded-xl px-3 py-2 text-sm text-white ${showAdSync ? 'bg-gray-500 hover:bg-gray-600' : 'bg-purple-600 hover:bg-purple-700'}`}
+              >
+                {showAdSync ? 'Скрыть' : 'Открыть'}
+              </button>
+            </div>
+
+            {showAdSync && (
+              <div className="space-y-4">
+                <button
+                  onClick={handleAdSync}
+                  disabled={adSyncLoading}
+                  className="w-full rounded-xl bg-purple-600 px-4 py-2.5 text-white hover:bg-purple-700 disabled:bg-gray-400"
+                >
+                  {adSyncLoading ? 'Синхронизация...' : 'Загрузить пользователей из AD'}
+                </button>
+
+                {adSyncResult && (
+                  <div className={`rounded-xl p-3 text-sm ${adSyncResult.status === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                    <pre className="whitespace-pre-wrap">{JSON.stringify(adSyncResult, null, 2)}</pre>
+                  </div>
+                )}
               </div>
             )}
           </SurfaceCard>
