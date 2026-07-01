@@ -3,11 +3,11 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
-export default function Home() {
+export default function AdminPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace('/guest');
+    router.replace('/admin/acts');
   }, [router]);
 
   return null;

@@ -159,3 +159,55 @@ class ActVersionResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+# Inventory schemas
+class InventoryDeviceCreate(BaseModel):
+    inventory_number: str
+    barcode: Optional[str] = None
+    name: str
+    model: Optional[str] = None
+    category: str
+    serial_number: str
+    status: str = "available"
+    location: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class InventoryDeviceUpdate(BaseModel):
+    inventory_number: Optional[str] = None
+    barcode: Optional[str] = None
+    name: Optional[str] = None
+    model: Optional[str] = None
+    category: Optional[str] = None
+    serial_number: Optional[str] = None
+    status: Optional[str] = None
+    location: Optional[str] = None
+    assigned_to: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class InventoryDeviceResponse(BaseModel):
+    id: UUID4
+    inventory_number: str
+    barcode: Optional[str] = None
+    name: str
+    model: Optional[str] = None
+    category: str
+    serial_number: str
+    status: str
+    location: Optional[str] = None
+    assigned_to: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class InventoryListResponse(BaseModel):
+    items: list[InventoryDeviceResponse]
+    total: int
+    page: int
+    page_size: int

@@ -217,6 +217,7 @@ export default function ActsListPage() {
   const returnCount = acts.filter((act) => getProcessType(act.status) === 'RETURN').length;
 
   const statusTabs = [
+    { key: 'ALL' as const, label: 'Все', count: acts.length, subtitle: 'Все документы' },
     { key: 'DRAFT' as const, label: 'Черновики', count: draftsCount, subtitle: 'Не подписаны' },
     { key: 'SIGNING' as const, label: 'На подписи', count: signingCount, subtitle: 'Ожидают подписей' },
     { key: 'COMPLETED' as const, label: 'Завершено', count: completedCount, subtitle: 'Полностью подписаны' },
@@ -329,7 +330,7 @@ export default function ActsListPage() {
       />
 
       <div className="mb-4 space-y-2">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {statusTabs.map((tab) => {
             const active = processFilter === tab.key;
             return (
@@ -379,7 +380,8 @@ export default function ActsListPage() {
           <SectionTitle title="Расширенный поиск по актам" description="Быстро находите документы по сторонам, технике и email получателя." />
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
+              setProcessFilter('ALL');
               setFilters({
                 party1: '',
                 party2: '',
@@ -387,8 +389,8 @@ export default function ActsListPage() {
                 email: '',
                 page: 1,
                 page_size: 20,
-              })
-            }
+              });
+            }}
             className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs text-gray-700 transition hover:bg-gray-200"
           >
             Сбросить фильтры
@@ -396,19 +398,19 @@ export default function ActsListPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
-            <input
-              type="text"
-              placeholder="Передающая сторона"
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-              value={filters.party1}
-              onChange={(e) => setFilters({ ...filters, party1: e.target.value, page: 1 })}
-            />
-            <input
-              type="text"
-              placeholder="Получатель"
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-              value={filters.party2}
-              onChange={(e) => setFilters({ ...filters, party2: e.target.value, page: 1 })}
+          <input
+            type="text"
+            placeholder="Передающая сторона"
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            value={filters.party1}
+            onChange={(e) => setFilters({ ...filters, party1: e.target.value, page: 1 })}
+          />
+          <input
+            type="text"
+            placeholder="Получатель"
+            className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            value={filters.party2}
+            onChange={(e) => setFilters({ ...filters, party2: e.target.value, page: 1 })}
           />
           <input
             type="text"
@@ -500,7 +502,7 @@ export default function ActsListPage() {
                   <Link href={`/acts/${act.id}`} className="text-blue-600 hover:underline">
                     Просмотр
                   </Link>
-                  {user?.role === 'admin' && (
+                  {user?.role === 'ADMIN' && (
                     <button
                       type="button"
                       onClick={() => handleDeleteClick(act.id)}
@@ -579,7 +581,7 @@ export default function ActsListPage() {
                       <Link href={`/acts/${act.id}`} className="text-blue-600 hover:underline">
                         Просмотр
                       </Link>
-                      {user?.role === 'admin' && (
+                      {user?.role === 'ADMIN' && (
                         <button
                           type="button"
                           onClick={() => handleDeleteClick(act.id)}

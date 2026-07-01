@@ -3,11 +3,11 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
-export default function Home() {
+export default function CreateActV2Redirect() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace('/guest');
+    router.replace('/acts/create' + window.location.search);
   }, [router]);
 
   return null;

@@ -2,7 +2,7 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api import auth, acts, templates, participants, reminders, analytics, ad_sync
+from app.api import auth, acts, templates, participants, reminders, analytics, ad_sync, inventory
 
 FRONTEND_URL = "http://127.0.0.1:3000"
 
@@ -30,6 +30,7 @@ app.include_router(participants.router, prefix="/api/participants", tags=["parti
 app.include_router(reminders.router, prefix="/api/reminders", tags=["reminders"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(ad_sync.router, prefix="/api/admin/ad-sync", tags=["ad-sync"])
+app.include_router(inventory.router, prefix="/api/inventory", tags=["inventory"])
 
 @app.get("/health")
 async def health():

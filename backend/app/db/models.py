@@ -33,6 +33,24 @@ class FileAssetKind(str, enum.Enum):
     RETURN_SIGNATURE_PARTY1 = "RETURN_SIGNATURE_PARTY1"
     RETURN_SIGNATURE_PARTY2 = "RETURN_SIGNATURE_PARTY2"
 
+
+class DeviceStatus(str, enum.Enum):
+    AVAILABLE = "available"
+    ISSUED = "issued"
+    MAINTENANCE = "maintenance"
+    RETIRED = "retired"
+
+
+class DeviceCategory(str, enum.Enum):
+    NOTEBOOK = "notebook"
+    MONITOR = "monitor"
+    TABLET = "tablet"
+    PHONE = "phone"
+    PRINTER = "printer"
+    KEYBOARD = "keyboard"
+    MOUSE = "mouse"
+    OTHER = "other"
+
 class User(Base):
     __tablename__ = "users"
     
@@ -154,3 +172,21 @@ class AuditLog(Base):
     
     # Relationships
     user = relationship("User", back_populates="audit_logs")
+
+
+class InventoryDevice(Base):
+    __tablename__ = "inventory_devices"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    inventory_number = Column(String, unique=True, nullable=False)
+    barcode = Column(String, unique=True, nullable=True)
+    name = Column(String, nullable=False)
+    model = Column(String, nullable=True)
+    category = Column(SQLEnum(DeviceCategory), nullable=False)
+    serial_number = Column(String, unique=True, nullable=False)
+    status = Column(SQLEnum(DeviceStatus), nullable=False, default=DeviceStatus.AVAILABLE)
+    location = Column(String, nullable=True)
+    assigned_to = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

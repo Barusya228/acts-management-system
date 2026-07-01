@@ -4,23 +4,25 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { useAuth } from '@/contexts/AuthContext';
-import ActsListPage from '@/components/ActsListPage';
-import PageHeader from '@/components/ui/PageHeader';
+import GuestActsGrid from '@/components/GuestActsGrid';
 
 export default function GuestPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, loginAsGuest } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login');
-      return;
-    }
+    const ensureGuestSession = async () => {
+      if (!loading && !user) {
+        await loginAsGuest();
+      }
+    };
 
     if (!loading && user?.role === 'ADMIN') {
-      router.push('/');
+      router.push('/admin/acts');
     }
-  }, [loading, user, router]);
+
+    ensureGuestSession();
+  }, [loading, user, router, loginAsGuest]);
 
   if (loading || !user) {
     return null;
@@ -28,13 +30,7 @@ export default function GuestPage() {
 
   return (
     <Layout>
-      <PageHeader
-        eyebrow="Гостевой доступ"
-        title="Работа с актами"
-        description="В гостевом режиме доступны просмотр документов, создание актов, подписание и работа с PDF без доступа к шаблонам системы."
-      />
-
-      <ActsListPage />
+      <GuestActsGrid />
     </Layout>
   );
 }

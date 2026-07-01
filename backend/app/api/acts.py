@@ -6,7 +6,7 @@ from uuid import UUID
 from datetime import datetime
 from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_admin_user, get_current_guest_or_admin_user
-from app.db.models import Act, ActVersion, Template, User, ActStatus, FileAsset, FileAssetKind
+from app.db.models import Act, ActVersion, Template, User, ActStatus, FileAsset, FileAssetKind, InventoryDevice
 from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
 from app.services.email_service import (
@@ -17,6 +17,16 @@ from app.services.email_service import (
 from app.utils.storage import resolve_storage_path, save_data_url_file
 
 router = APIRouter()
+
+
+def _update_device_status(db: Session, serial_number: str, status: str, assigned_to: str | None = None):
+    """Update inventory device status and assigned_to by serial number."""
+    device = db.query(InventoryDevice).filter(InventoryDevice.serial_number == serial_number).first()
+    if device:
+        device.status = status
+        if assigned_to is not None:
+            device.assigned_to = assigned_to
+        db.commit()
 
 
 RESERVED_ACT_FIELDS = {
@@ -585,9 +595,12 @@ async def sign_party1(
                 db.commit()
                 db.refresh(act)
         except Exception:
-            # Email delivery should not break signing flow.
             pass
-    
+
+    # Inventory: mark device as issued when act is completed
+    if act.status == ActStatus.COMPLETED and act.item_serial:
+        _update_device_status(db, act.item_serial, "issued", act.party2_name)
+
     return act
 
 @router.post("/{act_id}/sign/party2", response_model=ActResponse)
@@ -678,7 +691,11 @@ async def sign_party2(
         except Exception:
             # Email delivery should not break signing flow.
             pass
-    
+
+    # Inventory: mark device back to available when returned
+    if act.status == ActStatus.RETURNED and act.item_serial:
+        _update_device_status(db, act.item_serial, "available")
+
     return act
 
 @router.get("/{act_id}/versions", response_model=list[ActVersionResponse])
