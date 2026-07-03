@@ -37,6 +37,7 @@ function CreateActForm() {
   const [recipients, setRecipients] = useState<Recipient[]>([{ full_name: '', email: '' }]);
   const [focusedRecipient, setFocusedRecipient] = useState(-1);
   const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
+  const [advisoryNote, setAdvisoryNote] = useState('');
   const [saving, setSaving] = useState(false);
 
   const employees = participants.filter(p => p.kind === 'EMPLOYEE' || p.kind === 'BOTH');
@@ -114,6 +115,7 @@ function CreateActForm() {
         receiver_email: normalized[0].email,
         extra_data_json: {
           recipients: normalized.map(r => ({ full_name: r.full_name, email: r.email })),
+          ...(advisoryNote.trim() ? { advisory_note: advisoryNote.trim() } : {}),
           ...(equipment.length > 0 ? { equipment_list: equipment.filter(e => e.name.trim() || e.serial.trim()) } : {}),
         },
       });
@@ -269,7 +271,8 @@ function CreateActForm() {
           {isIpad && (
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">📝 Поле для эдвайзери</label>
-              <textarea rows={2} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Advisory note" />
+              <textarea rows={2} value={advisoryNote} onChange={e => setAdvisoryNote(e.target.value)}
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Advisory note" />
             </div>
           )}
 
@@ -293,15 +296,32 @@ function CreateActForm() {
                 <div>
                   <dt className="text-xs text-slate-400">Устройство</dt>
                   <dd className="text-sm font-semibold text-slate-800">{selectedDevice?.name || '—'}</dd>
+                  {selectedDevice && <dd className="text-xs text-slate-400">SN: {selectedDevice.serial_number}</dd>}
                 </div>
+                {equipment.filter(e => e.name.trim()).length > 0 && (
+                  <div>
+                    <dt className="text-xs text-slate-400">Доп. устройства</dt>
+                    {equipment.filter(e => e.name.trim()).map((e, i) => (
+                      <dd key={i} className="text-sm text-slate-700">• {e.name}{e.serial ? ` (SN: ${e.serial})` : ''}</dd>
+                    ))}
+                  </div>
+                )}
                 <div>
                   <dt className="text-xs text-slate-400">Выдаёт</dt>
                   <dd className="text-sm font-semibold text-slate-800">{party1 || 'IT-Отдел'}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-slate-400">Получателей</dt>
-                  <dd className="text-sm font-semibold text-slate-800">{filledRecipients.length || 0}</dd>
+                  <dt className="text-xs text-slate-400">Получатели</dt>
+                  {filledRecipients.map((r, i) => (
+                    <dd key={i} className="text-sm text-slate-700">{r.full_name || '...'}</dd>
+                  ))}
                 </div>
+                {isIpad && advisoryNote.trim() && (
+                  <div>
+                    <dt className="text-xs text-slate-400">Эдвайзери</dt>
+                    <dd className="text-sm text-slate-700">{advisoryNote}</dd>
+                  </div>
+                )}
                 <div>
                   <dt className="text-xs text-slate-400">Дата</dt>
                   <dd className="text-sm font-semibold text-slate-800">{new Date(issueDate).toLocaleDateString('ru-RU')}</dd>
