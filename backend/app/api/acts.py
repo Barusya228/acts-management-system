@@ -6,7 +6,19 @@ from uuid import UUID
 from datetime import datetime
 from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_admin_user, get_current_guest_or_admin_user
-from app.db.models import Act, ActVersion, Template, User, ActStatus, FileAsset, FileAssetKind, InventoryDevice
+from app.db.models import (
+    Act,
+    ActVersion,
+    Template,
+    User,
+    ActStatus,
+    FileAsset,
+    FileAssetKind,
+    InventoryDevice,
+    Participant,
+    ParticipantEmploymentStatus,
+    ParticipantKind,
+)
 from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
 from app.services.email_service import (
@@ -40,6 +52,7 @@ RESERVED_ACT_FIELDS = {
 
 EQUIPMENT_LIST_KEY = "equipment_list"
 RECIPIENTS_KEY = "recipients"
+PARTY1_PARTICIPANT_ID_KEY = "party1_participant_id"
 IPAD_ADVISORY_KEY = "advisory_note"
 
 
@@ -124,6 +137,78 @@ def _get_primary_recipient_email(recipients: list[dict]) -> str:
     return ""
 
 
+def _get_selectable_participant(
+    db: Session,
+    participant_id: object,
+    allowed_kinds: set[ParticipantKind],
+    label: str,
+) -> Participant:
+    try:
+        normalized_id = UUID(str(participant_id))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Выберите {label} из справочника участников",
+        )
+
+    participant = db.query(Participant).filter(Participant.id == normalized_id).first()
+    if not participant:
+        raise HTTPException(status_code=404, detail=f"{label.capitalize()} не найден")
+    if participant.employment_status == ParticipantEmploymentStatus.DEPARTED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Нельзя создать новый акт: {participant.full_name} выбыл",
+        )
+    if not participant.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Нельзя создать новый акт: {participant.full_name} неактивен",
+        )
+    if participant.kind not in allowed_kinds:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Участник {participant.full_name} не подходит для роли «{label}»",
+        )
+    return participant
+
+
+def _validate_new_act_participants(
+    db: Session,
+    party1_participant_id: object,
+    recipients: list[dict],
+) -> tuple[Participant, list[dict]]:
+    party1 = _get_selectable_participant(
+        db,
+        party1_participant_id,
+        {ParticipantKind.IT_MANAGER, ParticipantKind.BOTH},
+        "выдающего",
+    )
+
+    normalized_recipients = []
+    recipient_ids = set()
+    for recipient in recipients:
+        participant = _get_selectable_participant(
+            db,
+            recipient.get("participant_id"),
+            {ParticipantKind.EMPLOYEE, ParticipantKind.BOTH},
+            "получателя",
+        )
+        if participant.id in recipient_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Получатель {participant.full_name} выбран несколько раз",
+            )
+        recipient_ids.add(participant.id)
+        normalized_recipients.append({
+            **recipient,
+            "participant_id": str(participant.id),
+            "full_name": participant.full_name,
+            "email": participant.email or recipient["email"],
+        })
+
+    return party1, normalized_recipients
+
+
 def _value_matches_type(value, field_type: str) -> bool:
     if value is None:
         return True
@@ -176,7 +261,8 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
         allowed_dynamic[IPAD_ADVISORY_KEY] = "string"
         required_dynamic.add(IPAD_ADVISORY_KEY)
 
-    unknown_keys = [key for key in payload.keys() if key not in allowed_dynamic and key not in {EQUIPMENT_LIST_KEY, RECIPIENTS_KEY}]
+    special_keys = {EQUIPMENT_LIST_KEY, RECIPIENTS_KEY, PARTY1_PARTICIPANT_ID_KEY}
+    unknown_keys = [key for key in payload.keys() if key not in allowed_dynamic and key not in special_keys]
     if unknown_keys:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -221,7 +307,7 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
             )
 
     for key, value in payload.items():
-        if key in {EQUIPMENT_LIST_KEY, RECIPIENTS_KEY}:
+        if key in special_keys:
             continue
         field_type = allowed_dynamic[key]
         if not _value_matches_type(value, field_type):
@@ -238,6 +324,8 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
         normalized[EQUIPMENT_LIST_KEY] = payload[EQUIPMENT_LIST_KEY]
     if RECIPIENTS_KEY in payload:
         normalized[RECIPIENTS_KEY] = payload[RECIPIENTS_KEY]
+    if PARTY1_PARTICIPANT_ID_KEY in payload:
+        normalized[PARTY1_PARTICIPANT_ID_KEY] = payload[PARTY1_PARTICIPANT_ID_KEY]
     return normalized
 
 
@@ -350,9 +438,17 @@ async def create_act(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Нужен хотя бы один получатель"
         )
+    party1, recipients = _validate_new_act_participants(
+        db,
+        act_data.party1_participant_id,
+        recipients,
+    )
     normalized_extra_data[RECIPIENTS_KEY] = recipients
+    normalized_extra_data[PARTY1_PARTICIPANT_ID_KEY] = str(party1.id)
 
     act_payload = act_data.model_dump()
+    act_payload.pop("party1_participant_id", None)
+    act_payload["party1_name"] = party1.full_name
     act_payload["party2_name"] = _build_party2_summary(recipients)
     act_payload["receiver_email"] = _get_primary_recipient_email(recipients)
     act_payload["extra_data_json"] = normalized_extra_data
@@ -443,6 +539,8 @@ async def update_act(
     existing_extra = dict(act.extra_data_json or {})
     if IPAD_ADVISORY_KEY in existing_extra:
         incoming_extra[IPAD_ADVISORY_KEY] = existing_extra.get(IPAD_ADVISORY_KEY)
+    if PARTY1_PARTICIPANT_ID_KEY in existing_extra:
+        incoming_extra[PARTY1_PARTICIPANT_ID_KEY] = existing_extra.get(PARTY1_PARTICIPANT_ID_KEY)
 
     normalized_extra_data = _validate_extra_data(incoming_extra, act.template)
     recipients = _extract_recipients(normalized_extra_data, act.party2_name, act.receiver_email)

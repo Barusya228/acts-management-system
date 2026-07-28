@@ -190,6 +190,12 @@ function ActCreatePageContent() {
       if (normalizedRecipients.length === 0) {
         throw new Error('Добавьте хотя бы одного получателя с ФИО и email');
       }
+      if (!party1ParticipantId) {
+        throw new Error('Выберите выдающего из справочника участников');
+      }
+      if (normalizedRecipients.some((recipient) => !recipient.participant_id)) {
+        throw new Error('Выберите каждого получателя из справочника участников');
+      }
 
       const normalizedEquipment = equipmentItems
         .map((item) => ({
@@ -207,6 +213,7 @@ function ActCreatePageContent() {
 
       const res = await api.post('/api/acts', {
         ...formData,
+        party1_participant_id: party1ParticipantId,
         party2_name: buildParty2Summary(normalizedRecipients),
         receiver_email: getPrimaryRecipientEmail(normalizedRecipients),
         issue_date: new Date(formData.issue_date).toISOString(),
@@ -215,7 +222,7 @@ function ActCreatePageContent() {
       showToast('Акт успешно создан', 'success');
       router.push(`/acts/${res.data.id}`);
     } catch (err: any) {
-      const msg = err.response?.data?.detail || 'Ошибка создания акта';
+      const msg = err.response?.data?.detail || err.message || 'Ошибка создания акта';
       setError(msg);
       showToast(msg, 'error');
     } finally {

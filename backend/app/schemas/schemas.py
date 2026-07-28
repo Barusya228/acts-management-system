@@ -90,6 +90,7 @@ class ParticipantResponse(ParticipantBase):
     id: UUID4
     ad_guid: Optional[str] = None
     last_synced_at: Optional[datetime] = None
+    employment_status: str
     is_active: bool
     created_at: datetime
 
@@ -110,7 +111,7 @@ class ActBase(BaseModel):
     return_note: Optional[str] = None
 
 class ActCreate(ActBase):
-    pass
+    party1_participant_id: UUID4
 
 
 class ActUpdate(BaseModel):

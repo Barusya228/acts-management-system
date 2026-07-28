@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 
 interface Recipient {
+  participant_id?: string;
   full_name: string;
   email: string;
 }
@@ -31,6 +32,7 @@ function CreateActForm() {
   const [participants, setParticipants] = useState<ParticipantOption[]>([]);
   const [templateId, setTemplateId] = useState(preselectedTemplateId);
   const [deviceSerial, setDeviceSerial] = useState('');
+  const [party1ParticipantId, setParty1ParticipantId] = useState('');
   const [party1, setParty1] = useState('');
   const [party2, setParty2] = useState('');
   const [issueDate, setIssueDate] = useState(new Date().toISOString().split('T')[0]);
@@ -46,8 +48,12 @@ function CreateActForm() {
     ? employees.filter(p => p.full_name.toLowerCase().includes(currentQuery.toLowerCase())).slice(0, 5)
     : [];
 
-  const selectEmployee = (idx: number, name: string, email: string) => {
-    setRecipients(prev => prev.map((r, i) => i === idx ? { full_name: name, email } : r));
+  const selectEmployee = (idx: number, participant: ParticipantOption) => {
+    setRecipients(prev => prev.map((r, i) => i === idx ? {
+      participant_id: participant.id,
+      full_name: participant.full_name,
+      email: participant.email || '',
+    } : r));
     setFocusedRecipient(-1);
   };
 
@@ -80,7 +86,9 @@ function CreateActForm() {
   const handleDeviceSelect = (serial: string) => setDeviceSerial(serial);
 
   const updateRecipient = (i: number, field: 'full_name' | 'email', value: string) => {
-    setRecipients(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
+    setRecipients(prev => prev.map((r, idx) => idx === i
+      ? { ...r, [field]: value, ...(field === 'full_name' ? { participant_id: undefined } : {}) }
+      : r));
   };
 
   const addRecipient = () => setRecipients(prev => [...prev, { full_name: '', email: '' }]);
@@ -96,8 +104,10 @@ function CreateActForm() {
 
   const handleSubmit = async () => {
     if (!templateId) { showToast('Выберите шаблон', 'error'); return; }
+    if (!party1ParticipantId) { showToast('Выберите выдающего из справочника', 'error'); return; }
     const normalized = recipients.filter(r => r.full_name.trim() && r.email.trim());
     if (normalized.length === 0) { showToast('Добавьте получателя', 'error'); return; }
+    if (normalized.some(r => !r.participant_id)) { showToast('Выберите каждого получателя из справочника', 'error'); return; }
 
     setSaving(true);
     try {
@@ -107,14 +117,15 @@ function CreateActForm() {
 
       const res = await api.post('/api/acts', {
         template_id: templateId,
-        party1_name: party1 || 'IT-Отдел',
+        party1_participant_id: party1ParticipantId,
+        party1_name: party1,
         party2_name: party2Str,
         issue_date: new Date(issueDate).toISOString(),
         item_name: name || 'Техника',
         item_serial: serial || '',
         receiver_email: normalized[0].email,
         extra_data_json: {
-          recipients: normalized.map(r => ({ full_name: r.full_name, email: r.email })),
+          recipients: normalized.map(r => ({ participant_id: r.participant_id, full_name: r.full_name, email: r.email })),
           ...(advisoryNote.trim() ? { advisory_note: advisoryNote.trim() } : {}),
           ...(equipment.length > 0 ? { equipment_list: equipment.filter(e => e.name.trim() || e.serial.trim()) } : {}),
         },
@@ -207,11 +218,15 @@ function CreateActForm() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">👤 Кто выдаёт</label>
-              <select value={party1} onChange={e => setParty1(e.target.value)}
+              <select value={party1ParticipantId} onChange={e => {
+                const participant = participants.find(p => p.id === e.target.value);
+                setParty1ParticipantId(e.target.value);
+                setParty1(participant?.full_name || '');
+              }}
                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400">
-                <option value="">IT-Отдел (по умолчанию)</option>
+                <option value="">Выберите выдающего</option>
                 {participants.filter(p => p.kind === 'IT_MANAGER' || p.kind === 'BOTH').map(p => (
-                  <option key={p.id} value={p.full_name}>{p.full_name}</option>
+                  <option key={p.id} value={p.id}>{p.full_name}</option>
                 ))}
               </select>
             </div>
@@ -247,7 +262,7 @@ function CreateActForm() {
                     <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
                       {suggestions.map(p => (
                         <button key={p.id} type="button"
-                          onMouseDown={() => selectEmployee(i, p.full_name, p.email || '')}
+                          onMouseDown={() => selectEmployee(i, p)}
                           className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm hover:bg-blue-50 transition">
                           <span>👤</span>
                           <span className="flex-1 font-medium text-slate-700">{p.full_name}</span>
@@ -308,7 +323,7 @@ function CreateActForm() {
                 )}
                 <div>
                   <dt className="text-xs text-slate-400">Выдаёт</dt>
-                  <dd className="text-sm font-semibold text-slate-800">{party1 || 'IT-Отдел'}</dd>
+                  <dd className="text-sm font-semibold text-slate-800">{party1 || '—'}</dd>
                 </div>
                 <div>
                   <dt className="text-xs text-slate-400">Получатели</dt>

@@ -6,7 +6,7 @@ from ldap3 import Server, Connection, ALL, SUBTREE
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import Participant, ParticipantKind
+from app.db.models import Participant, ParticipantEmploymentStatus, ParticipantKind
 
 
 def _normalize_guid(raw_guid) -> Optional[str]:
@@ -45,6 +45,14 @@ def _detect_department(dn: str) -> Optional[str]:
     return None
 
 
+def _is_departed_dn(dn: str) -> bool:
+    if not dn:
+        return False
+    parts = [part.strip().lower() for part in dn.split(",")]
+    expected_path = ["ou=disabled users", "ou=users", "ou=corporate"]
+    return any(parts[index:index + len(expected_path)] == expected_path for index in range(len(parts)))
+
+
 def _detect_kind(department: Optional[str]) -> ParticipantKind:
     if department == "IT":
         return ParticipantKind.IT_MANAGER
@@ -69,6 +77,7 @@ def _upsert_participant(db: Session, record: dict) -> Optional[Participant]:
     department = record.get("department")
     title = record.get("title")
     kind = record.get("kind")
+    employment_status = record.get("employment_status", ParticipantEmploymentStatus.ACTIVE)
 
     if not ad_guid or not full_name:
         return None
@@ -80,9 +89,9 @@ def _upsert_participant(db: Session, record: dict) -> Optional[Participant]:
         existing.email = email or existing.email
         existing.department = department or existing.department
         existing.title = title or existing.title
-        existing.kind = kind
+        existing.kind = kind or existing.kind
+        existing.employment_status = employment_status
         existing.last_synced_at = datetime.utcnow()
-        existing.is_active = True
         db.flush()
         return existing
     else:
@@ -91,7 +100,8 @@ def _upsert_participant(db: Session, record: dict) -> Optional[Participant]:
             email=email,
             department=department,
             title=title,
-            kind=kind,
+            kind=kind or ParticipantKind.EMPLOYEE,
+            employment_status=employment_status,
             is_active=True,
             ad_guid=ad_guid,
             last_synced_at=datetime.utcnow(),
@@ -112,6 +122,8 @@ def sync_ad_users(db: Session) -> dict:
     updated = 0
     skipped = 0
     errors = 0
+    departed = 0
+    reactivated = 0
 
     server = Server(settings.AD_SERVER, port=settings.AD_PORT, get_info=ALL)
     conn = Connection(
@@ -126,7 +138,6 @@ def sync_ad_users(db: Session) -> dict:
             "(&"
             "(objectClass=user)"
             "(objectCategory=person)"
-            "(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
             ")"
         )
         attributes = [
@@ -135,6 +146,7 @@ def sync_ad_users(db: Session) -> dict:
             "sn",
             "mail",
             "distinguishedName",
+            "userAccountControl",
         ]
 
         conn.search(
@@ -161,17 +173,26 @@ def sync_ad_users(db: Session) -> dict:
                 email = _get_attr_value(entry, "mail")
 
                 dn = _get_attr_value(entry, "distinguishedName") or ""
-                department = _detect_department(dn)
-                if department is None:
+                is_departed = _is_departed_dn(dn)
+                account_control = _get_attr_value(entry, "userAccountControl")
+                account_disabled = bool(int(account_control or 0) & 2)
+                department = None if is_departed else _detect_department(dn)
+                if not is_departed and (department is None or account_disabled):
                     skipped += 1
                     continue
 
-                title = _extract_title(dn)
+                title = None if is_departed else _extract_title(dn)
                 full_name = f"{first_name} {last_name}"
-                kind = _detect_kind(department)
 
                 existing = db.query(Participant).filter(Participant.ad_guid == ad_guid).first()
                 is_new = existing is None
+                previous_status = existing.employment_status if existing else None
+                kind = existing.kind if is_departed and existing else _detect_kind(department)
+                employment_status = (
+                    ParticipantEmploymentStatus.DEPARTED
+                    if is_departed
+                    else ParticipantEmploymentStatus.ACTIVE
+                )
 
                 record = {
                     "ad_guid": ad_guid,
@@ -180,14 +201,21 @@ def sync_ad_users(db: Session) -> dict:
                     "department": department,
                     "title": title,
                     "kind": kind,
+                    "employment_status": employment_status,
                 }
 
                 participant = _upsert_participant(db, record)
                 if participant:
                     if is_new:
                         imported += 1
+                        if is_departed:
+                            departed += 1
                     else:
                         updated += 1
+                        if previous_status == ParticipantEmploymentStatus.ACTIVE and is_departed:
+                            departed += 1
+                        elif previous_status == ParticipantEmploymentStatus.DEPARTED and not is_departed:
+                            reactivated += 1
             except Exception:
                 errors += 1
                 continue
@@ -203,11 +231,15 @@ def sync_ad_users(db: Session) -> dict:
         "updated": updated,
         "skipped": skipped,
         "errors": errors,
+        "departed": departed,
+        "reactivated": reactivated,
     }
 
 
 def prune_ad_participants(db: Session) -> dict:
-    deleted = db.query(Participant).filter(Participant.ad_guid.isnot(None)).delete()
+    participants = db.query(Participant).filter(Participant.ad_guid.isnot(None)).all()
+    for participant in participants:
+        participant.is_active = False
     db.commit()
-    return {"status": "success", "deleted": deleted}
+    return {"status": "success", "deactivated": len(participants)}
 

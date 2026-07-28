@@ -16,6 +16,11 @@ class ParticipantKind(str, enum.Enum):
     EMPLOYEE = "EMPLOYEE"
     BOTH = "BOTH"
 
+
+class ParticipantEmploymentStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    DEPARTED = "DEPARTED"
+
 class ActStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     SIGNED_PARTY1 = "SIGNED_PARTY1"
@@ -79,6 +84,11 @@ class Participant(Base):
     title = Column(String, nullable=True)
     sticker_emoji = Column(String, nullable=True)
     kind = Column(SQLEnum(ParticipantKind), nullable=False)
+    employment_status = Column(
+        SQLEnum(ParticipantEmploymentStatus),
+        nullable=False,
+        default=ParticipantEmploymentStatus.ACTIVE,
+    )
     is_active = Column(Boolean, default=True, nullable=False)
     ad_guid = Column(String, unique=True, nullable=True)
     last_synced_at = Column(DateTime, nullable=True)

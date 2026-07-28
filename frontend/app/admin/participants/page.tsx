@@ -18,7 +18,19 @@ interface Participant {
   title?: string | null;
   sticker_emoji?: string | null;
   kind: ParticipantKind;
+  employment_status: 'ACTIVE' | 'DEPARTED';
   is_active: boolean;
+}
+
+interface AdSyncResult {
+  status: 'success' | 'disabled' | 'error';
+  imported?: number;
+  updated?: number;
+  skipped?: number;
+  errors?: number;
+  departed?: number;
+  reactivated?: number;
+  reason?: string;
 }
 
 const emptyForm = { full_name: '', email: '', department: '', title: '', sticker_emoji: '👤', kind: 'EMPLOYEE' as ParticipantKind };
@@ -48,18 +60,16 @@ export default function ParticipantsPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<'ALL' | ParticipantKind>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE' | 'DEPARTED'>('ALL');
 
   // Add/Edit modal
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
 
-  // Delete confirm
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-
   // AD sync
   const [adSyncLoading, setAdSyncLoading] = useState(false);
-  const [adSyncResult, setAdSyncResult] = useState<any>(null);
+  const [adSyncResult, setAdSyncResult] = useState<AdSyncResult | null>(null);
 
   useEffect(() => {
     if (user && user.role !== 'ADMIN') { router.push('/guest'); }
@@ -129,19 +139,8 @@ export default function ParticipantsPage() {
     }
   };
 
-  const handleDelete = async () => {
-    if (!deleteTarget) return;
-    try {
-      await api.delete(`/api/participants/${deleteTarget.id}`);
-      showToast('Удалён', 'success');
-      setDeleteTarget(null);
-      await fetchParticipants();
-    } catch (err: any) {
-      showToast(err.response?.data?.detail || 'Ошибка удаления', 'error');
-    }
-  };
-
   const handleToggleActive = async (p: Participant) => {
+    if (p.employment_status === 'DEPARTED') return;
     try {
       await api.patch(`/api/participants/${p.id}`, { is_active: !p.is_active });
       showToast(p.is_active ? 'Деактивирован' : 'Активирован', 'success');
@@ -156,7 +155,10 @@ export default function ParticipantsPage() {
     setAdSyncResult(null);
     try {
       const res = await api.post('/api/admin/ad-sync/run');
-      setAdSyncResult(res.data);
+      setAdSyncResult(res.data as AdSyncResult);
+      if (res.data.status === 'success') {
+        await fetchParticipants();
+      }
     } catch (err: any) {
       setAdSyncResult({ status: 'error', reason: err.response?.data?.detail || 'Ошибка' });
     } finally {
@@ -168,10 +170,16 @@ export default function ParticipantsPage() {
     const s = search.toLowerCase();
     if (s && !p.full_name.toLowerCase().includes(s) && !(p.department || '').toLowerCase().includes(s)) return false;
     if (kindFilter !== 'ALL') {
-      if (kindFilter === 'IT_MANAGER') return p.kind === 'IT_MANAGER' || p.kind === 'BOTH';
-      if (kindFilter === 'EMPLOYEE') return p.kind === 'EMPLOYEE' || p.kind === 'BOTH';
-      return p.kind === 'BOTH';
+      const matchesKind = kindFilter === 'IT_MANAGER'
+        ? p.kind === 'IT_MANAGER' || p.kind === 'BOTH'
+        : kindFilter === 'EMPLOYEE'
+          ? p.kind === 'EMPLOYEE' || p.kind === 'BOTH'
+          : p.kind === 'BOTH';
+      if (!matchesKind) return false;
     }
+    if (statusFilter === 'DEPARTED') return p.employment_status === 'DEPARTED';
+    if (statusFilter === 'ACTIVE') return p.employment_status === 'ACTIVE' && p.is_active;
+    if (statusFilter === 'INACTIVE') return p.employment_status === 'ACTIVE' && !p.is_active;
     return true;
   });
 
@@ -197,6 +205,13 @@ export default function ParticipantsPage() {
             <option value="EMPLOYEE">Сотрудник / Получатель</option>
             <option value="BOTH">Универсал</option>
           </select>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as typeof statusFilter)}
+            className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none transition focus:border-blue-400">
+            <option value="ALL">Все статусы</option>
+            <option value="ACTIVE">Активные</option>
+            <option value="INACTIVE">Неактивные</option>
+            <option value="DEPARTED">Выбывшие</option>
+          </select>
         </div>
 
         {/* AD Sync section */}
@@ -208,8 +223,8 @@ export default function ParticipantsPage() {
             </div>
             <div className="flex items-center gap-3">
               {adSyncResult && (
-                <span className={`rounded-full px-3 py-1 text-xs font-medium ${adSyncResult.status === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                  {adSyncResult.status === 'success' ? 'Выполнено' : 'Ошибка'}
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${adSyncResult.status === 'success' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {adSyncResult.status === 'success' ? 'Выполнено' : adSyncResult.status === 'disabled' ? 'Отключено' : 'Ошибка'}
                 </span>
               )}
               <button onClick={handleAdSync} disabled={adSyncLoading}
@@ -219,7 +234,23 @@ export default function ParticipantsPage() {
             </div>
           </div>
           {adSyncResult && (
-            <pre className="mt-3 max-h-40 overflow-auto rounded-xl bg-slate-900 p-4 text-xs text-green-300">{JSON.stringify(adSyncResult, null, 2)}</pre>
+            adSyncResult.status === 'success' ? (
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-sm font-semibold text-emerald-800">Синхронизация завершена</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                  <SyncStat label="Добавлено" value={adSyncResult.imported ?? 0} className="text-emerald-700" />
+                  <SyncStat label="Обновлено" value={adSyncResult.updated ?? 0} className="text-blue-700" />
+                  <SyncStat label="Выбыло" value={adSyncResult.departed ?? 0} className="text-amber-700" />
+                  <SyncStat label="Вернулось" value={adSyncResult.reactivated ?? 0} className="text-violet-700" />
+                  <SyncStat label="Пропущено" value={adSyncResult.skipped ?? 0} className="text-slate-600" />
+                  <SyncStat label="Ошибок" value={adSyncResult.errors ?? 0} className={adSyncResult.errors ? 'text-red-700' : 'text-emerald-700'} />
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                {adSyncResult.reason || 'Не удалось выполнить синхронизацию с Active Directory.'}
+              </div>
+            )
           )}
         </div>
 
@@ -240,7 +271,7 @@ export default function ParticipantsPage() {
               <span className="text-sm font-medium">Добавить участника</span>
             </button>
             {filtered.map(p => (
-              <div key={p.id} className={`group rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md ${p.is_active ? 'border-gray-200' : 'border-gray-100 bg-gray-50 opacity-70'}`}>
+              <div key={p.id} className={`group rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md ${p.employment_status === 'DEPARTED' ? 'border-amber-200 bg-amber-50/40' : p.is_active ? 'border-gray-200' : 'border-gray-100 bg-gray-50 opacity-70'}`}>
                 <div className="flex items-start gap-3">
                   <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-2xl">{p.sticker_emoji || '👤'}</span>
                   <div className="min-w-0 flex-1">
@@ -254,17 +285,19 @@ export default function ParticipantsPage() {
                   <div className="flex shrink-0 gap-1 opacity-0 transition group-hover:opacity-100">
                     <button onClick={() => openEdit(p)}
                       className="rounded-lg bg-slate-100 p-1.5 text-xs text-slate-600 hover:bg-blue-100 hover:text-blue-700">✎</button>
-                    <button onClick={() => setDeleteTarget({ id: p.id, name: p.full_name })}
-                      className="rounded-lg bg-slate-100 p-1.5 text-xs text-slate-600 hover:bg-red-100 hover:text-red-700">✕</button>
                   </div>
                 </div>
                 {p.email && <p className="mt-2 text-xs text-slate-400 truncate">{p.email}</p>}
                 <div className="mt-2.5 flex items-center justify-between border-t border-gray-100 pt-2.5">
-                  <span className={`text-xs font-medium ${p.is_active ? 'text-emerald-600' : 'text-slate-400'}`}>{p.is_active ? 'Активен' : 'Отключён'}</span>
-                  <button onClick={() => handleToggleActive(p)}
-                    className={`relative h-5 w-9 rounded-full transition ${p.is_active ? 'bg-emerald-500' : 'bg-gray-300'}`}>
-                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${p.is_active ? 'left-[18px]' : 'left-0.5'}`} />
-                  </button>
+                  <span className={`text-xs font-medium ${p.employment_status === 'DEPARTED' ? 'text-amber-700' : p.is_active ? 'text-emerald-600' : 'text-slate-400'}`}>
+                    {p.employment_status === 'DEPARTED' ? 'Выбыл' : p.is_active ? 'Активен' : 'Неактивен'}
+                  </span>
+                  {p.employment_status === 'ACTIVE' && (
+                    <button onClick={() => handleToggleActive(p)}
+                      className={`relative h-5 w-9 rounded-full transition ${p.is_active ? 'bg-emerald-500' : 'bg-gray-300'}`}>
+                      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${p.is_active ? 'left-[18px]' : 'left-0.5'}`} />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -330,19 +363,16 @@ export default function ParticipantsPage() {
         </Modal>
       )}
 
-      {/* Delete Confirm Modal */}
-      {deleteTarget && (
-        <Modal onClose={() => setDeleteTarget(null)} title="Удалить участника?">
-          <p className="text-sm text-slate-500">Вы уверены что хотите удалить <span className="font-semibold text-slate-800">{deleteTarget.name}</span>? Это действие нельзя отменить.</p>
-          <div className="mt-6 flex gap-3">
-            <button onClick={handleDelete}
-              className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-700">Удалить</button>
-            <button onClick={() => setDeleteTarget(null)}
-              className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-200">Отмена</button>
-          </div>
-        </Modal>
-      )}
     </AdminLayout>
+  );
+}
+
+function SyncStat({ label, value, className }: { label: string; value: number; className: string }) {
+  return (
+    <div className="rounded-lg bg-white px-3 py-2 shadow-sm">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className={`mt-0.5 text-xl font-bold ${className}`}>{value}</p>
+    </div>
   );
 }
 

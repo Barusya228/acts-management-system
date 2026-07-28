@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.deps import get_current_guest_or_admin_user, get_current_admin_user
-from app.db.models import Participant, ParticipantKind, User
+from app.db.models import Participant, ParticipantEmploymentStatus, ParticipantKind, User
 from app.schemas.schemas import ParticipantCreate, ParticipantUpdate, ParticipantResponse
 
 
@@ -29,6 +29,7 @@ class BulkParticipantCreate(BaseModel):
 async def list_participants(
     kind: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
+    employment_status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user),
 ):
@@ -48,6 +49,14 @@ async def list_participants(
             query = query.filter(Participant.kind == requested_kind)
     if is_active is not None:
         query = query.filter(Participant.is_active == is_active)
+        if is_active:
+            query = query.filter(Participant.employment_status == ParticipantEmploymentStatus.ACTIVE)
+    if employment_status:
+        try:
+            requested_status = ParticipantEmploymentStatus(employment_status)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Некорректный статус участника")
+        query = query.filter(Participant.employment_status == requested_status)
 
     return query.order_by(Participant.full_name.asc()).all()
 
@@ -106,6 +115,14 @@ async def update_participant(
         raise HTTPException(status_code=404, detail="Участник не найден")
 
     updates = payload.model_dump(exclude_unset=True)
+    if (
+        updates.get("is_active") is True
+        and participant.employment_status == ParticipantEmploymentStatus.DEPARTED
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Выбывшего участника нельзя активировать, пока он находится в Disabled Users",
+        )
     if "kind" in updates:
         try:
             updates["kind"] = ParticipantKind(updates["kind"])
@@ -132,7 +149,7 @@ async def delete_participant(
     if not participant:
         raise HTTPException(status_code=404, detail="Участник не найден")
 
-    db.delete(participant)
+    participant.is_active = False
     db.commit()
     return None
 

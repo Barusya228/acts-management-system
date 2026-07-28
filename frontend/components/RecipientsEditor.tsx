@@ -62,7 +62,7 @@ export default function RecipientsEditor({ recipients, employees, onChange, maxR
               email: participant.email || '',
             });
           }}
-          helperText="Выбранный сотрудник будет подставлен как сторона 2 во все данные акта."
+          helperText="Для нового акта сотрудника нужно выбрать из справочника."
         />
         
         {selectedEmployee && !selectedEmployee.email && (
@@ -142,7 +142,7 @@ export default function RecipientsEditor({ recipients, employees, onChange, maxR
                       email: participant.email || '',
                     });
                   }}
-                  helperText="Если email есть в справочнике, он заполнится автоматически. Иначе его можно указать вручную ниже."
+                   helperText="Для нового акта сотрудника нужно выбрать из справочника. Если email отсутствует, укажите его ниже."
                 />
               </div>
 
@@ -152,7 +152,7 @@ export default function RecipientsEditor({ recipients, employees, onChange, maxR
                   <input
                     type="text"
                     value={recipient.full_name}
-                    onChange={(e) => updateRecipient(index, { full_name: e.target.value, participant_id: selectedEmployee?.full_name === e.target.value ? recipient.participant_id : undefined })}
+                    onChange={(e) => updateRecipient(index, { full_name: e.target.value, participant_id: undefined })}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                     placeholder="ФИО"
