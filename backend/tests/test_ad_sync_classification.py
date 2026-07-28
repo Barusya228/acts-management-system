@@ -1,4 +1,4 @@
-from app.services.ad_sync_service import _detect_department, _is_departed_dn
+from app.services.ad_sync_service import _detect_department, _is_departed_dn, _normalize_email
 
 
 def test_detects_exact_disabled_users_path():
@@ -16,3 +16,9 @@ def test_does_not_treat_unrelated_disabled_users_ou_as_departed():
 def test_detects_active_participant_departments():
     assert _detect_department("CN=Ivan,OU=IT Department,DC=example,DC=local") == "IT"
     assert _detect_department("CN=Anna,OU=Staff,DC=example,DC=local") == "Сотрудники"
+
+
+def test_normalizes_ad_email_values():
+    assert _normalize_email("User@Example.Local") == "user@example.local"
+    assert _normalize_email("amir.aliyakbar") is None
+    assert _normalize_email("") is None

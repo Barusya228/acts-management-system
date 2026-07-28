@@ -34,6 +34,18 @@ def _get_attr_value(entry, attr_name: str) -> Optional[str]:
     return str(val) if val else None
 
 
+def _normalize_email(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    email = str(value).strip().lower()
+    if not email or email.count("@") != 1:
+        return None
+    local_part, domain = email.split("@", 1)
+    if not local_part or "." not in domain:
+        return None
+    return email
+
+
 def _detect_department(dn: str) -> Optional[str]:
     if not dn:
         return None
@@ -72,7 +84,7 @@ def _extract_title(dn: str) -> Optional[str]:
 
 def _upsert_participant(db: Session, record: dict) -> Optional[Participant]:
     ad_guid = record.get("ad_guid")
-    email = record.get("email")
+    email = _normalize_email(record.get("email"))
     full_name = record.get("full_name")
     department = record.get("department")
     title = record.get("title")
@@ -86,7 +98,7 @@ def _upsert_participant(db: Session, record: dict) -> Optional[Participant]:
 
     if existing:
         existing.full_name = full_name
-        existing.email = email or existing.email
+        existing.email = email
         existing.department = department or existing.department
         existing.title = title or existing.title
         existing.kind = kind or existing.kind
@@ -170,7 +182,7 @@ def sync_ad_users(db: Session) -> dict:
                     skipped += 1
                     continue
 
-                email = _get_attr_value(entry, "mail")
+                email = _normalize_email(_get_attr_value(entry, "mail"))
 
                 dn = _get_attr_value(entry, "distinguishedName") or ""
                 is_departed = _is_departed_dn(dn)
