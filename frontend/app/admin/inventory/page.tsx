@@ -1,12 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import AdminLayout from '@/components/AdminLayout';
 import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
+
+const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
 
 interface Device {
   id: string;
@@ -69,6 +72,7 @@ export default function InventoryPage() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [categorySaving, setCategorySaving] = useState(false);
   const [categoryForm, setCategoryForm] = useState({ name: '', code: '', icon: '📦' });
+  const [showCategoryEmojiPicker, setShowCategoryEmojiPicker] = useState(false);
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<InventoryCategory | null>(null);
 
   useEffect(() => {
@@ -190,6 +194,7 @@ export default function InventoryPage() {
       await fetchCategories();
       setForm(current => ({ ...current, category: response.data.code }));
       setCategoryForm({ name: '', code: '', icon: '📦' });
+      setShowCategoryEmojiPicker(false);
       showToast('Категория добавлена', 'success');
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Не удалось добавить категорию', 'error');
@@ -370,7 +375,7 @@ export default function InventoryPage() {
       )}
 
       {showCategoryModal && (
-        <Modal onClose={() => setShowCategoryModal(false)} title="Категории инвентаря">
+        <Modal onClose={() => { setShowCategoryModal(false); setShowCategoryEmojiPicker(false); }} title="Категории инвентаря">
           <div className="max-h-48 space-y-2 overflow-auto rounded-xl bg-slate-50 p-3">
             {categories.map(category => (
               <div key={category.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
@@ -398,6 +403,10 @@ export default function InventoryPage() {
                 <label className="mb-1 block text-xs font-medium text-slate-600">Значок</label>
                 <input value={categoryForm.icon} onChange={e => setCategoryForm({ ...categoryForm, icon: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-center text-lg outline-none focus:border-blue-400" maxLength={4} />
+                <button type="button" onClick={() => setShowCategoryEmojiPicker(value => !value)}
+                  className="mt-1 w-full rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-100">
+                  {showCategoryEmojiPicker ? 'Скрыть' : 'Выбрать'}
+                </button>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">Название *</label>
@@ -405,6 +414,21 @@ export default function InventoryPage() {
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Камера" />
               </div>
             </div>
+            {showCategoryEmojiPicker && (
+              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+                <EmojiPicker
+                  width="100%"
+                  height={320}
+                  searchDisabled={false}
+                  skinTonesDisabled
+                  previewConfig={{ showPreview: false }}
+                  onEmojiClick={(emojiData) => {
+                    setCategoryForm(current => ({ ...current, icon: emojiData.emoji }));
+                    setShowCategoryEmojiPicker(false);
+                  }}
+                />
+              </div>
+            )}
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">Код для backup-папки</label>
               <input value={categoryForm.code} onChange={e => setCategoryForm({ ...categoryForm, code: e.target.value })}
@@ -417,7 +441,7 @@ export default function InventoryPage() {
               className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">
               {categorySaving ? 'Добавление...' : 'Добавить категорию'}
             </button>
-            <button onClick={() => setShowCategoryModal(false)} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">Закрыть</button>
+            <button onClick={() => { setShowCategoryModal(false); setShowCategoryEmojiPicker(false); }} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">Закрыть</button>
           </div>
         </Modal>
       )}
