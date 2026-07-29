@@ -169,6 +169,22 @@ class FileAsset(Base):
     # Relationships
     act = relationship("Act", back_populates="file_assets", foreign_keys=[act_id])
 
+
+class PdfBackupRecord(Base):
+    __tablename__ = "pdf_backup_records"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    file_asset_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    act_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    version_number = Column(Integer, nullable=False)
+    destination = Column(String, nullable=False)
+    backup_path = Column(String, nullable=True)
+    size_bytes = Column(Integer, nullable=True)
+    sha256 = Column(String, nullable=True)
+    status = Column(String, nullable=False, index=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     

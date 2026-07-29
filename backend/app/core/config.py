@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # Storage
     STORAGE_PATH: str = "./storage"
 
+    # PDF backups
+    PDF_BACKUP_ENABLED: bool = False
+    PDF_BACKUP_PATH: str = "./pdf-backups"
+    PDF_BACKUP_LABEL: str = "Google Drive"
+
     # Public URLs
     APP_BASE_URL: str = "http://localhost:8000"
     

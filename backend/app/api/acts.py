@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -21,6 +21,7 @@ from app.db.models import (
 )
 from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
+from app.services.pdf_backup_service import backup_pdf_by_ids
 from app.services.email_service import (
     send_act_completed_email,
     send_act_created_email,
@@ -420,6 +421,7 @@ async def list_acts(
 @router.post("", response_model=ActResponse, status_code=status.HTTP_201_CREATED)
 async def create_act(
     act_data: ActCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
@@ -473,7 +475,7 @@ async def create_act(
     )
     db.add(version)
     db.flush()
-    create_pdf_asset_for_version(
+    pdf_asset = create_pdf_asset_for_version(
         db,
         act,
         version,
@@ -482,6 +484,7 @@ async def create_act(
         use_v2=(getattr(template, "pdf_version", 2) == 2),
     )
     db.commit()
+    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     
     return act
 
@@ -506,6 +509,7 @@ async def get_act(
 async def update_act(
     act_id: UUID,
     payload: ActUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user)
 ):
@@ -571,7 +575,7 @@ async def update_act(
     )
     db.add(version)
     db.flush()
-    create_pdf_asset_for_version(
+    pdf_asset = create_pdf_asset_for_version(
         db,
         act,
         version,
@@ -581,6 +585,7 @@ async def update_act(
     )
 
     db.commit()
+    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)
     return act
 
@@ -607,6 +612,7 @@ async def delete_act(
 async def sign_party1(
     act_id: UUID,
     signature: SignatureRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
@@ -676,6 +682,7 @@ async def sign_party1(
     )
     
     db.commit()
+    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)
 
     if (
@@ -705,6 +712,7 @@ async def sign_party1(
 async def sign_party2(
     act_id: UUID,
     signature: SignatureRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
@@ -770,6 +778,7 @@ async def sign_party2(
     )
     
     db.commit()
+    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)
 
     if (
@@ -819,6 +828,7 @@ async def get_act_versions(
 async def start_return_flow(
     act_id: UUID,
     payload: ReturnStartRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
@@ -851,7 +861,7 @@ async def start_return_flow(
     )
     db.add(version)
     db.flush()
-    create_pdf_asset_for_version(
+    pdf_asset = create_pdf_asset_for_version(
         db,
         act,
         version,
@@ -861,6 +871,7 @@ async def start_return_flow(
     )
 
     db.commit()
+    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)
     return act
 

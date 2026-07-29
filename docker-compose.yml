@@ -32,10 +32,19 @@ services:
       AD_USER: ${AD_USER:-}
       AD_PASSWORD: ${AD_PASSWORD:-}
       AD_SEARCH_BASE: ${AD_SEARCH_BASE:-}
+      PDF_BACKUP_ENABLED: ${PDF_BACKUP_ENABLED:-false}
+      PDF_BACKUP_PATH: /app/pdf-backups
+      PDF_BACKUP_LABEL: ${PDF_BACKUP_LABEL:-Google Drive}
     ports:
       - "5000:8000"
     volumes:
       - ./backend/storage:/app/storage
+      - type: bind
+        source: ${PDF_BACKUP_HOST_PATH:-./backend/pdf-backups}
+        target: /app/pdf-backups
+        bind:
+          create_host_path: false
+          selinux: Z
     depends_on:
       - db
     networks:

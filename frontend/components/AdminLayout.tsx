@@ -26,6 +26,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin/templates', label: 'Шаблоны' },
     { href: '/admin/analytics', label: 'Аналитика' },
     { href: '/admin/reminders', label: 'Напоминания' },
+    { href: '/admin/backups', label: 'Бэкапы' },
   ];
 
   const isActive = (href: string) => {
@@ -43,7 +44,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <Link href="/admin/acts" className="text-lg font-bold text-slate-900">
               ActDigital
             </Link>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 overflow-x-auto">
               {navItems.map((item) => (
                 <Link
                   key={item.href}
