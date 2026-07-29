@@ -199,7 +199,9 @@ def list_devices(
 
     if category:
         query = query.filter(InventoryDevice.category == category)
-    if status:
+    if status == "assigned":
+        query = query.filter(InventoryDevice.status.in_(["reserved", "issued"]))
+    elif status:
         query = query.filter(InventoryDevice.status == status)
     if search:
         s = f"%{search}%"
@@ -226,8 +228,8 @@ def create_device(
     _require_active_category(db, data.category)
     if data.status in {"reserved", "issued"}:
         raise HTTPException(status_code=422, detail="Статус выдачи меняется только через акт")
-    if not data.inventory_number.strip() or not data.name.strip() or not data.serial_number.strip():
-        raise HTTPException(status_code=422, detail="Инвентарный номер, название и серийный номер обязательны")
+    if not data.inventory_number.strip() or not data.barcode.strip() or not data.name.strip() or not data.serial_number.strip():
+        raise HTTPException(status_code=422, detail="Инвентарный номер, штрихкод и название обязательны")
     device = InventoryDevice(**data.model_dump())
     db.add(device)
     db.flush()
@@ -273,6 +275,8 @@ def update_device(
             updates[required_field] is None or not updates[required_field].strip()
         ):
             raise HTTPException(status_code=422, detail="Обязательные поля устройства не могут быть пустыми")
+    if "barcode" in updates and (updates["barcode"] is None or not updates["barcode"].strip()):
+        raise HTTPException(status_code=422, detail="Штрихкод не может быть пустым")
     if "category" in updates and updates["category"] != device.category:
         _require_active_category(db, updates["category"])
     for field, value in updates.items():

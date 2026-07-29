@@ -37,15 +37,15 @@ interface InventoryCategory {
 }
 
 const statusOptions = [
-  { value: 'available', label: 'На складе', cls: 'bg-emerald-100 text-emerald-700' },
-  { value: 'reserved', label: 'Зарезервировано', cls: 'bg-violet-100 text-violet-700' },
-  { value: 'issued', label: 'Выдано', cls: 'bg-amber-100 text-amber-700' },
-  { value: 'maintenance', label: 'Обслуживание', cls: 'bg-blue-100 text-blue-700' },
-  { value: 'retired', label: 'Списано', cls: 'bg-gray-200 text-gray-600' },
+  { value: 'available', label: 'Не выдан', cls: 'bg-emerald-100 text-emerald-700' },
+  { value: 'assigned', label: 'Выдан под акт', cls: 'bg-amber-100 text-amber-700' },
+  { value: 'maintenance', label: 'Косячный', cls: 'bg-red-100 text-red-700' },
+  { value: 'retired', label: 'Списан', cls: 'bg-gray-200 text-gray-600' },
 ];
 
-const getStatusBadge = (s: string) => statusOptions.find(o => o.value === s)?.cls || 'bg-gray-100 text-gray-700';
-const getStatusLabel = (s: string) => statusOptions.find(o => o.value === s)?.label || s;
+const normalizedStatus = (status: string) => status === 'reserved' || status === 'issued' ? 'assigned' : status;
+const getStatusBadge = (s: string) => statusOptions.find(o => o.value === normalizedStatus(s))?.cls || 'bg-gray-100 text-gray-700';
+const getStatusLabel = (s: string) => statusOptions.find(o => o.value === normalizedStatus(s))?.label || s;
 
 const emptyForm = {
   inventory_number: '', barcode: '', name: '', model: '', category: 'notebook',
@@ -159,13 +159,13 @@ export default function InventoryPage() {
   };
 
   const handleSubmit = async () => {
-    if (!form.inventory_number.trim() || !form.name.trim() || !form.serial_number.trim()) { showToast('Инв.номер, название и серийник обязательны', 'error'); return; }
+    if (!form.inventory_number.trim() || !form.barcode.trim() || !form.name.trim()) { showToast('Инв. номер, штрихкод и название обязательны', 'error'); return; }
     setSaving(true);
     try {
       const payload: any = {
         inventory_number: form.inventory_number.trim(), name: form.name.trim(), category: form.category,
-        serial_number: form.serial_number.trim(), status: form.status,
-        barcode: form.barcode.trim() || null, model: form.model.trim() || null, location: form.location.trim() || null, notes: form.notes.trim() || null,
+        serial_number: editId ? form.serial_number : form.inventory_number.trim(), status: form.status,
+        barcode: form.barcode.trim(), model: form.model.trim() || null,
       };
       if (editId) {
         await api.patch(`/api/inventory/${editId}`, payload);
@@ -301,10 +301,8 @@ export default function InventoryPage() {
                   </div>
                 </div>
                 <div className="mt-2.5 space-y-1">
-                  <p className="text-xs text-slate-400">SN: <span className="font-mono text-slate-600">{d.serial_number}</span></p>
                   <p className="text-xs text-slate-400">Инв: <span className="font-mono text-slate-600">{d.inventory_number}</span></p>
-                  {d.barcode && <p className="text-xs text-slate-400">ШК: <span className="font-mono text-slate-600">{d.barcode}</span></p>}
-                  {d.location && <p className="text-xs text-slate-400">📍 {d.location}</p>}
+                  <p className="text-xs text-slate-400">ШК: <span className="font-mono text-slate-600">{d.barcode || '—'}</span></p>
                   {d.assigned_to && <p className="text-xs text-slate-500">👤 {d.assigned_to}</p>}
                 </div>
               </div>
@@ -328,16 +326,16 @@ export default function InventoryPage() {
             <div className="grid grid-cols-2 gap-3">
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Инв. номер *</label>
                 <input value={form.inventory_number} onChange={e => setForm({ ...form, inventory_number: e.target.value })}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="INV-001" /></div>
-              <div><label className="block text-xs font-medium text-slate-600 mb-1">Штрихкод</label>
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="2000000012345" /></div>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Штрихкод *</label>
                 <input value={form.barcode} onChange={e => setForm({ ...form, barcode: e.target.value })}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="4820..." /></div>
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="1234" /></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Название *</label>
                 <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Lenovo Legion 5" /></div>
-              <div><label className="block text-xs font-medium text-slate-600 mb-1">Модель</label>
+              <div><label className="block text-xs font-medium text-slate-600 mb-1">Модель <span className="font-normal text-slate-400">(по желанию)</span></label>
                 <input value={form.model} onChange={e => setForm({ ...form, model: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Legion 5 Pro" /></div>
             </div>
@@ -353,19 +351,14 @@ export default function InventoryPage() {
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Статус</label>
                 <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none">
-                  {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  {(form.status === 'reserved' || form.status === 'issued') && (
+                    <option value={form.status}>Выдан под акт</option>
+                  )}
+                  {form.status !== 'reserved' && form.status !== 'issued' && (
+                    <option value="assigned" disabled>Выдан под акт (автоматически)</option>
+                  )}
+                  {statusOptions.filter(option => option.value !== 'assigned').map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select></div>
-            </div>
-            <div><label className="block text-xs font-medium text-slate-600 mb-1">Серийный номер *</label>
-              <input value={form.serial_number} onChange={e => setForm({ ...form, serial_number: e.target.value })}
-                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-mono outline-none focus:border-blue-400" placeholder="SN-PF4A8B9C" /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="block text-xs font-medium text-slate-600 mb-1">Расположение</label>
-                <input value={form.location} onChange={e => setForm({ ...form, location: e.target.value })}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Склад, стеллаж А" /></div>
-              <div><label className="block text-xs font-medium text-slate-600 mb-1">Заметки</label>
-                <input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Любые заметки" /></div>
             </div>
           </div>
           <div className="mt-6 flex gap-3">

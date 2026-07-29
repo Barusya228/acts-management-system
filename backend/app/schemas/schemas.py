@@ -193,12 +193,12 @@ class InventoryCategoryResponse(BaseModel):
 
 class InventoryDeviceCreate(BaseModel):
     inventory_number: str
-    barcode: Optional[str] = None
+    barcode: str
     name: str
     model: Optional[str] = None
     category: str
     serial_number: str
-    status: Literal["available", "reserved", "issued", "maintenance", "retired"] = "available"
+    status: Literal["available", "maintenance", "retired"] = "available"
     location: Optional[str] = None
     notes: Optional[str] = None
 
