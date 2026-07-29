@@ -118,6 +118,32 @@ def update_category(
     return category
 
 
+@router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_category(
+    category_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    category = db.query(InventoryCategory).filter(InventoryCategory.id == category_id).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Категория не найдена")
+    if category.is_system:
+        raise HTTPException(status_code=409, detail="Системную категорию удалить нельзя")
+
+    devices_count = db.query(InventoryDevice).filter(
+        InventoryDevice.category == category.code
+    ).count()
+    if devices_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Категория используется устройствами: {devices_count}. Сначала перенесите их в другую категорию",
+        )
+
+    db.delete(category)
+    db.commit()
+    return None
+
+
 @router.get("/available")
 def list_available_devices(
     db: Session = Depends(get_db),

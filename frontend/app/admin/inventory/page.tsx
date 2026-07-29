@@ -68,6 +68,7 @@ export default function InventoryPage() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [categorySaving, setCategorySaving] = useState(false);
   const [categoryForm, setCategoryForm] = useState({ name: '', code: '', icon: '📦' });
+  const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<InventoryCategory | null>(null);
 
   useEffect(() => {
     if (user && user.role !== 'ADMIN') { router.push('/guest'); }
@@ -179,6 +180,22 @@ export default function InventoryPage() {
       showToast(err.response?.data?.detail || 'Не удалось добавить категорию', 'error');
     } finally {
       setCategorySaving(false);
+    }
+  };
+
+  const handleDeleteCategory = async () => {
+    if (!deleteCategoryTarget) return;
+    try {
+      await api.delete(`/api/inventory/categories/${deleteCategoryTarget.id}`);
+      if (catFilter === deleteCategoryTarget.code) setCatFilter('');
+      if (form.category === deleteCategoryTarget.code) {
+        setForm(current => ({ ...current, category: '' }));
+      }
+      setDeleteCategoryTarget(null);
+      await fetchCategories();
+      showToast('Категория удалена', 'success');
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Не удалось удалить категорию', 'error');
     }
   };
 
@@ -336,7 +353,15 @@ export default function InventoryPage() {
             {categories.map(category => (
               <div key={category.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
                 <span>{category.icon} <span className="font-medium text-slate-700">{category.name}</span></span>
-                <code className="text-xs text-slate-400">{category.code}</code>
+                <div className="flex items-center gap-2">
+                  <code className="text-xs text-slate-400">{category.code}</code>
+                  {!category.is_system && (
+                    <button type="button" onClick={() => setDeleteCategoryTarget(category)}
+                      className="rounded-lg bg-rose-50 px-2 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100">
+                      Удалить
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -367,6 +392,25 @@ export default function InventoryPage() {
               {categorySaving ? 'Добавление...' : 'Добавить категорию'}
             </button>
             <button onClick={() => setShowCategoryModal(false)} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">Закрыть</button>
+          </div>
+        </Modal>
+      )}
+
+      {deleteCategoryTarget && (
+        <Modal onClose={() => setDeleteCategoryTarget(null)} title="Удалить категорию?">
+          <p className="text-sm text-slate-500">
+            Категория <span className="font-semibold text-slate-800">{deleteCategoryTarget.icon} {deleteCategoryTarget.name}</span> будет удалена.
+          </p>
+          <p className="mt-2 text-xs text-slate-400">Удаление доступно только если в категории нет устройств.</p>
+          <div className="mt-6 flex gap-3">
+            <button onClick={handleDeleteCategory}
+              className="flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700">
+              Удалить
+            </button>
+            <button onClick={() => setDeleteCategoryTarget(null)}
+              className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">
+              Отмена
+            </button>
           </div>
         </Modal>
       )}
