@@ -38,6 +38,7 @@ interface InventoryCategory {
 
 const statusOptions = [
   { value: 'available', label: 'На складе', cls: 'bg-emerald-100 text-emerald-700' },
+  { value: 'reserved', label: 'Зарезервировано', cls: 'bg-violet-100 text-violet-700' },
   { value: 'issued', label: 'Выдано', cls: 'bg-amber-100 text-amber-700' },
   { value: 'maintenance', label: 'Обслуживание', cls: 'bg-blue-100 text-blue-700' },
   { value: 'retired', label: 'Списано', cls: 'bg-gray-200 text-gray-600' },
@@ -63,6 +64,9 @@ export default function InventoryPage() {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loadError, setLoadError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
 
   const [showModal, setShowModal] = useState(false);
@@ -80,7 +84,7 @@ export default function InventoryPage() {
   }, [user, router]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchDevices();
-  }, [user, catFilter, statusFilter, refreshKey]);
+  }, [user, catFilter, statusFilter, page, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchCategories();
   }, [user]);
@@ -99,23 +103,33 @@ export default function InventoryPage() {
 
   const fetchDevices = async () => {
     setLoading(true);
+    setLoadError('');
     try {
-      const params = new URLSearchParams({ page_size: '200' } as any);
+      const params = new URLSearchParams({ page: String(page), page_size: '24' });
       if (catFilter) params.set('category', catFilter);
       if (statusFilter) params.set('status', statusFilter);
       if (search) params.set('search', search);
       const res = await api.get(`/api/inventory?${params.toString()}`);
       setDevices(res.data.items || []);
-    } catch { setDevices([]); }
+      setTotal(res.data.total || 0);
+    } catch {
+      setDevices([]);
+      setTotal(0);
+      setLoadError('Не удалось загрузить инвентарь');
+    }
     finally { setLoading(false); }
   };
 
-  const handleSearch = () => fetchDevices();
+  const handleSearch = () => {
+    if (page === 1) fetchDevices();
+    else setPage(1);
+  };
 
   const resetFilters = () => {
     setSearch('');
     setCatFilter('');
     setStatusFilter('');
+    setPage(1);
     setRefreshKey(value => value + 1);
   };
 
@@ -123,6 +137,7 @@ export default function InventoryPage() {
     setSearch('');
     setStatusFilter('');
     setCatFilter(categoryCode);
+    setPage(1);
     setShowCategoryModal(false);
   };
 
@@ -169,14 +184,6 @@ export default function InventoryPage() {
     if (!deleteTarget) return;
     try { await api.delete(`/api/inventory/${deleteTarget.id}`); showToast('Удалено', 'success'); setDeleteTarget(null); fetchDevices(); }
     catch (err: any) { showToast(err.response?.data?.detail || 'Ошибка', 'error'); }
-  };
-
-  const handleToggleStatus = async (d: Device) => {
-    try {
-      const next = d.status === 'available' ? 'issued' : 'available';
-      await api.patch(`/api/inventory/${d.id}`, { status: next });
-      fetchDevices();
-    } catch (err: any) { showToast(err.response?.data?.detail || 'Ошибка', 'error'); }
   };
 
   const handleCreateCategory = async () => {
@@ -244,12 +251,12 @@ export default function InventoryPage() {
           <input type="text" placeholder="Поиск по названию, модели, серийнику..." value={search} onChange={e => setSearch(e.target.value)}
             className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }} />
-          <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+          <select value={catFilter} onChange={e => { setCatFilter(e.target.value); setPage(1); }}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
             <option value="">Все категории</option>
             {categories.map(category => <option key={category.id} value={category.code}>{category.icon} {category.name}</option>)}
           </select>
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
             <option value="">Все статусы</option>
             {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -267,6 +274,8 @@ export default function InventoryPage() {
             <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
             <p className="text-sm text-slate-500">Загрузка устройств...</p>
           </div>
+        ) : loadError ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{loadError}</div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <button type="button" onClick={openCreate} disabled={categoriesLoading}
@@ -286,7 +295,7 @@ export default function InventoryPage() {
                       <span className="text-[10px] text-slate-400">{getCategoryLabel(d.category)}</span>
                     </div>
                   </div>
-                  <div className="flex shrink-0 gap-1 opacity-0 transition group-hover:opacity-100">
+                  <div className="flex shrink-0 gap-1 opacity-100 transition lg:opacity-0 lg:group-hover:opacity-100">
                     <button onClick={() => openEdit(d)} className="rounded-lg bg-slate-100 p-1.5 text-xs text-slate-600 hover:bg-blue-100 hover:text-blue-700">✎</button>
                     <button onClick={() => setDeleteTarget({ id: d.id, name: d.name })} className="rounded-lg bg-slate-100 p-1.5 text-xs text-slate-600 hover:bg-red-100 hover:text-red-700">✕</button>
                   </div>
@@ -298,14 +307,17 @@ export default function InventoryPage() {
                   {d.location && <p className="text-xs text-slate-400">📍 {d.location}</p>}
                   {d.assigned_to && <p className="text-xs text-slate-500">👤 {d.assigned_to}</p>}
                 </div>
-                <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-2.5">
-                  <button onClick={() => handleToggleStatus(d)}
-                    className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-200">
-                    {d.status === 'available' ? 'Выдать' : 'Вернуть'}
-                  </button>
-                </div>
               </div>
             ))}
+          </div>
+        )}
+        {total > 24 && !loading && !loadError && (
+          <div className="mt-5 flex items-center justify-between rounded-xl bg-white px-4 py-3 ring-1 ring-gray-100">
+            <span className="text-sm text-slate-500">Страница {page} из {Math.ceil(total / 24)} · всего {total}</span>
+            <div className="flex gap-2">
+              <button type="button" disabled={page === 1} onClick={() => setPage(value => value - 1)} className="min-h-11 rounded-lg border px-4 text-sm disabled:opacity-40">Назад</button>
+              <button type="button" disabled={page >= Math.ceil(total / 24)} onClick={() => setPage(value => value + 1)} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm text-white disabled:opacity-40">Далее</button>
+            </div>
           </div>
         )}
       </div>

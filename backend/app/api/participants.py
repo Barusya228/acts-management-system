@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.deps import get_current_guest_or_admin_user, get_current_admin_user
 from app.db.models import Participant, ParticipantEmploymentStatus, ParticipantKind, User
+from app.services.audit_service import record_audit
 from app.schemas.schemas import ParticipantCreate, ParticipantUpdate, ParticipantResponse
 
 
@@ -89,6 +90,7 @@ async def create_participant(
         existing.sticker_emoji = payload.sticker_emoji or existing.sticker_emoji
         existing.kind = _merge_participant_kind(existing.kind, kind)
         existing.is_active = True
+        record_audit(db, current_user, "PARTICIPANT", existing.id, "PARTICIPANT_UPDATED")
         db.commit()
         db.refresh(existing)
         return existing
@@ -98,6 +100,8 @@ async def create_participant(
     participant_data["email"] = normalized_email
     participant = Participant(**participant_data)
     db.add(participant)
+    db.flush()
+    record_audit(db, current_user, "PARTICIPANT", participant.id, "PARTICIPANT_CREATED")
     db.commit()
     db.refresh(participant)
     return participant
@@ -134,6 +138,9 @@ async def update_participant(
     for field, value in updates.items():
         setattr(participant, field, value)
 
+    record_audit(db, current_user, "PARTICIPANT", participant.id, "PARTICIPANT_UPDATED", {
+        "fields": list(updates.keys()),
+    })
     db.commit()
     db.refresh(participant)
     return participant
@@ -150,6 +157,7 @@ async def delete_participant(
         raise HTTPException(status_code=404, detail="Участник не найден")
 
     participant.is_active = False
+    record_audit(db, current_user, "PARTICIPANT", participant.id, "PARTICIPANT_DEACTIVATED")
     db.commit()
     return None
 

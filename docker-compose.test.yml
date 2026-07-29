@@ -1,0 +1,28 @@
+services:
+  test-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: acts_test
+      POSTGRES_USER: acts_test
+      POSTGRES_PASSWORD: acts_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acts_test -d acts_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  tests:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["sh", "-c", "alembic upgrade head && pytest -q"]
+    environment:
+      DATABASE_URL: postgresql://acts_test:acts_test@test-db:5432/acts_test
+      SECRET_KEY: test-only-secret
+      STORAGE_PATH: /tmp/acts-test-storage
+      PDF_BACKUP_ENABLED: "false"
+    depends_on:
+      test-db:
+        condition: service_healthy

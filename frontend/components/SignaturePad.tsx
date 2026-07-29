@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import SignatureCanvas from 'react-signature-canvas';
 
 interface SignaturePadProps {
@@ -10,14 +10,21 @@ interface SignaturePadProps {
 
 export default function SignaturePad({ onSave, onClear }: SignaturePadProps) {
   const sigCanvas = useRef<SignatureCanvas>(null);
+  const [error, setError] = useState('');
 
   const clear = () => {
     sigCanvas.current?.clear();
+    setError('');
     if (onClear) onClear();
   };
 
   const save = () => {
     if (sigCanvas.current) {
+      if (sigCanvas.current.isEmpty()) {
+        setError('Поставьте подпись перед сохранением');
+        return;
+      }
+      setError('');
       const dataURL = sigCanvas.current.toDataURL();
       onSave(dataURL);
     }
@@ -33,6 +40,7 @@ export default function SignaturePad({ onSave, onClear }: SignaturePadProps) {
           }}
         />
       </div>
+      {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
       <div className="flex gap-2">
         <button
           type="button"

@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Date, Text, Enum as SQLEnum, JSON
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Date, Text, Enum as SQLEnum, JSON, UniqueConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -41,6 +41,7 @@ class FileAssetKind(str, enum.Enum):
 
 class DeviceStatus(str, enum.Enum):
     AVAILABLE = "available"
+    RESERVED = "reserved"
     ISSUED = "issued"
     MAINTENANCE = "maintenance"
     RETIRED = "retired"
@@ -104,6 +105,7 @@ class Act(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     template_id = Column(UUID(as_uuid=True), ForeignKey("templates.id"), nullable=False)
+    inventory_device_id = Column(UUID(as_uuid=True), ForeignKey("inventory_devices.id"), nullable=True)
     party1_name = Column(String, nullable=False)
     party2_name = Column(String, nullable=False)
     issue_date = Column(Date, nullable=False)
@@ -126,9 +128,17 @@ class Act(Base):
     creator = relationship("User", back_populates="created_acts", foreign_keys=[created_by])
     versions = relationship("ActVersion", back_populates="act", cascade="all, delete-orphan")
     file_assets = relationship("FileAsset", back_populates="act", cascade="all, delete-orphan")
+    device_assignments = relationship("ActDeviceAssignment", back_populates="act", cascade="all, delete-orphan")
 
 class ActVersion(Base):
     __tablename__ = "act_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "act_id",
+            "version_number",
+            name="uq_act_versions_act_id_version_number",
+        ),
+    )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id"), nullable=False)
@@ -175,6 +185,27 @@ class PdfBackupRecord(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
+
+class EmailOutbox(Base):
+    __tablename__ = "email_outbox"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="SET NULL"), nullable=True, index=True)
+    kind = Column(String, nullable=False, index=True)
+    recipient_email = Column(String, nullable=False)
+    recipient_name = Column(String, nullable=True)
+    subject = Column(Text, nullable=False)
+    body = Column(Text, nullable=False)
+    attachment_storage_path = Column(String, nullable=True)
+    dedupe_key = Column(String, unique=True, nullable=False, index=True)
+    status = Column(String, nullable=False, default="PENDING", index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    locked_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    sent_at = Column(DateTime, nullable=True)
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     
@@ -214,6 +245,33 @@ class InventoryDevice(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    assignments = relationship("ActDeviceAssignment", back_populates="device")
+
+
+class ActDeviceAssignment(Base):
+    __tablename__ = "act_device_assignments"
+    __table_args__ = (
+        UniqueConstraint("act_id", "device_id", name="uq_act_device_assignments_act_device"),
+        Index(
+            "uq_act_device_assignments_active_device",
+            "device_id",
+            unique=True,
+            postgresql_where=text("status IN ('RESERVED', 'ISSUED')"),
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=False, index=True)
+    device_id = Column(UUID(as_uuid=True), ForeignKey("inventory_devices.id"), nullable=False, index=True)
+    assignment_type = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="RESERVED", index=True)
+    recipient_name = Column(String, nullable=False)
+    reserved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    issued_at = Column(DateTime, nullable=True)
+    returned_at = Column(DateTime, nullable=True)
+
+    act = relationship("Act", back_populates="device_assignments")
+    device = relationship("InventoryDevice", back_populates="assignments")
 
 
 class InventoryCategory(Base):

@@ -32,6 +32,12 @@ services:
       AD_USER: ${AD_USER:-}
       AD_PASSWORD: ${AD_PASSWORD:-}
       AD_SEARCH_BASE: ${AD_SEARCH_BASE:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TLS: ${SMTP_TLS:-true}
       PDF_BACKUP_ENABLED: ${PDF_BACKUP_ENABLED:-false}
       PDF_BACKUP_PATH: /app/pdf-backups
       PDF_BACKUP_LABEL: ${PDF_BACKUP_LABEL:-Google Drive}
@@ -46,6 +52,31 @@ services:
           create_host_path: false
     depends_on:
       - db
+    networks:
+      - acts_network
+
+  email-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: acts_email_worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.email_outbox_worker"]
+    environment:
+      DATABASE_URL: postgresql://acts_user:acts_password@db:5432/acts_db
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      STORAGE_PATH: /app/storage
+    volumes:
+      - ./backend/storage:/app/storage:ro
+    depends_on:
+      - db
+      - backend
     networks:
       - acts_network
 

@@ -6,7 +6,8 @@ from app.core.database import get_db
 from app.core.deps import get_current_admin_user
 from app.db.models import Act, ActStatus, User
 from app.schemas.schemas import ActResponse
-from app.services.email_service import send_act_created_email
+from app.services.audit_service import record_audit
+from app.services.email_outbox_service import REMINDER, enqueue_act_emails
 
 router = APIRouter()
 
@@ -94,14 +95,19 @@ async def send_reminder(
             detail="Нет получателей, ожидающих подписи"
         )
     
-    try:
-        await send_act_created_email(act)
-        return {
-            "message": f"Напоминание отправлено {len(pending_recipients)} получателям",
-            "recipients_count": len(pending_recipients)
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка отправки напоминания: {str(e)}"
-        )
+    queued = enqueue_act_emails(
+        db,
+        act,
+        REMINDER,
+        pending_only=True,
+        dedupe_suffix=datetime.utcnow().strftime("%Y-%m-%d"),
+    )
+    record_audit(db, current_user, "ACT", act.id, "EMAIL_ENQUEUED", {
+        "kind": REMINDER,
+        "queued": queued,
+    })
+    db.commit()
+    return {
+        "message": f"Напоминание поставлено в очередь для {queued} получателей",
+        "recipients_count": queued,
+    }

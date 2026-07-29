@@ -50,6 +50,7 @@ interface ParticipantOption {
 }
 
 interface EquipmentItem {
+  inventory_device_id?: string;
   name: string;
   serial: string;
   imei?: string;
@@ -193,17 +194,28 @@ function ActCreatePageContent() {
       if (!party1ParticipantId) {
         throw new Error('Выберите выдающего из справочника участников');
       }
+      const selectedDevice = availableDevices.find(device => device.serial_number === selectedDeviceSerial);
+      if (!selectedDevice) {
+        throw new Error('Выберите основное устройство из доступного инвентаря');
+      }
       if (normalizedRecipients.some((recipient) => !recipient.participant_id)) {
         throw new Error('Выберите каждого получателя из справочника участников');
       }
 
       const normalizedEquipment = equipmentItems
-        .map((item) => ({
-          name: item.name.trim(),
-          serial: item.serial.trim(),
-          imei: item.imei?.trim() || '',
-        }))
+        .map((item) => {
+          const device = availableDevices.find(candidate => candidate.serial_number === item.serial.trim());
+          return {
+            inventory_device_id: device?.id,
+            name: device?.name || item.name.trim(),
+            serial: device?.serial_number || item.serial.trim(),
+            imei: item.imei?.trim() || '',
+          };
+        })
         .filter((item) => item.name || item.serial || item.imei);
+      if (normalizedEquipment.some(item => !item.inventory_device_id)) {
+        throw new Error('Каждое дополнительное устройство должно быть выбрано из инвентаря');
+      }
 
       const payloadExtraData: Record<string, unknown> = { ...extraData };
       payloadExtraData.recipients = normalizedRecipients;
@@ -214,6 +226,7 @@ function ActCreatePageContent() {
       const res = await api.post('/api/acts', {
         ...formData,
         party1_participant_id: party1ParticipantId,
+        inventory_device_id: selectedDevice.id,
         party2_name: buildParty2Summary(normalizedRecipients),
         receiver_email: getPrimaryRecipientEmail(normalizedRecipients),
         issue_date: new Date(formData.issue_date).toISOString(),

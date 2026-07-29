@@ -112,6 +112,7 @@ export default function ActsListPage() {
 
   const fetchActs = async () => {
     setLoading(true);
+    setError('');
     try {
       const params = new URLSearchParams();
       Object.entries(filters).forEach(([k, v]) => {
@@ -599,6 +600,31 @@ export default function ActsListPage() {
               </tbody>
             </table>
           </div>
+          {total > filters.page_size && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white px-4 py-3 shadow-sm ring-1 ring-gray-100">
+              <p className="text-sm text-gray-600">
+                Страница {filters.page} из {Math.ceil(total / filters.page_size)} · всего {total}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={filters.page === 1}
+                  onClick={() => setFilters(current => ({ ...current, page: current.page - 1 }))}
+                  className="min-h-11 rounded-lg border border-gray-200 px-4 text-sm font-medium disabled:opacity-40"
+                >
+                  Назад
+                </button>
+                <button
+                  type="button"
+                  disabled={filters.page >= Math.ceil(total / filters.page_size)}
+                  onClick={() => setFilters(current => ({ ...current, page: current.page + 1 }))}
+                  className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white disabled:opacity-40"
+                >
+                  Далее
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 

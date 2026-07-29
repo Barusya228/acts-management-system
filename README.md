@@ -482,3 +482,26 @@ docker compose down -v
 ## License
 
 MIT
+## Full system backup and restore
+
+Final-PDF copies are exports, not disaster-recovery backups. A full bundle contains PostgreSQL and all files from `backend/storage`.
+
+Create a consistent backup during a maintenance window:
+
+```bash
+docker compose stop backend email-worker
+docker compose run --rm --no-deps backend sh scripts/backup_system.sh
+docker compose up -d backend email-worker
+```
+
+Restore is destructive. Keep `db` running and stop application processes first:
+
+```bash
+docker compose stop backend email-worker
+docker compose run --rm --no-deps \
+  -e CONFIRM_RESTORE=YES \
+  backend sh scripts/restore_system.sh /app/pdf-backups/system/BUNDLE_DIRECTORY
+docker compose up -d backend email-worker
+```
+
+After restore, verify `/health`, `alembic current`, act lists, PDF downloads, and inventory counts before reopening access.

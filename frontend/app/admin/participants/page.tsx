@@ -282,7 +282,7 @@ export default function ParticipantsPage() {
                       {p.title && <span className="text-[10px] text-slate-400">{p.title}</span>}
                     </div>
                   </div>
-                  <div className="flex shrink-0 gap-1 opacity-0 transition group-hover:opacity-100">
+                  <div className="flex shrink-0 gap-1 opacity-100 transition lg:opacity-0 lg:group-hover:opacity-100">
                     <button onClick={() => openEdit(p)}
                       className="rounded-lg bg-slate-100 p-1.5 text-xs text-slate-600 hover:bg-blue-100 hover:text-blue-700">✎</button>
                   </div>

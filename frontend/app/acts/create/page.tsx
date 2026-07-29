@@ -13,7 +13,7 @@ interface Recipient {
   email: string;
 }
 
-interface EquipmentItem { name: string; serial: string; }
+interface EquipmentItem { inventory_device_id?: string; name: string; serial: string; }
 
 interface TemplateOption { id: string; code: string; name: string; }
 interface DeviceOption { id: string; name: string; serial_number: string; inventory_number: string; }
@@ -98,12 +98,18 @@ function CreateActForm() {
 
   const addEquipment = () => setEquipment(prev => [...prev, { name: '', serial: '' }]);
   const removeEquipment = (i: number) => setEquipment(prev => prev.filter((_, idx) => idx !== i));
-  const updateEquipment = (i: number, field: 'name' | 'serial', value: string) => {
-    setEquipment(prev => prev.map((item, idx) => idx === i ? { ...item, [field]: value } : item));
+  const updateEquipmentDevice = (i: number, deviceId: string) => {
+    const device = devices.find(item => item.id === deviceId);
+    setEquipment(prev => prev.map((item, idx) => idx === i ? {
+      inventory_device_id: device?.id,
+      name: device?.name || '',
+      serial: device?.serial_number || '',
+    } : item));
   };
 
   const handleSubmit = async () => {
     if (!templateId) { showToast('Выберите шаблон', 'error'); return; }
+    if (!selectedDevice) { showToast('Выберите доступное устройство', 'error'); return; }
     if (!party1ParticipantId) { showToast('Выберите выдающего из справочника', 'error'); return; }
     const normalized = recipients.filter(r => r.full_name.trim() && r.email.trim());
     if (normalized.length === 0) { showToast('Добавьте получателя', 'error'); return; }
@@ -117,6 +123,7 @@ function CreateActForm() {
 
       const res = await api.post('/api/acts', {
         template_id: templateId,
+        inventory_device_id: selectedDevice.id,
         party1_participant_id: party1ParticipantId,
         party1_name: party1,
         party2_name: party2Str,
@@ -127,7 +134,7 @@ function CreateActForm() {
         extra_data_json: {
           recipients: normalized.map(r => ({ participant_id: r.participant_id, full_name: r.full_name, email: r.email })),
           ...(advisoryNote.trim() ? { advisory_note: advisoryNote.trim() } : {}),
-          ...(equipment.length > 0 ? { equipment_list: equipment.filter(e => e.name.trim() || e.serial.trim()) } : {}),
+          ...(equipment.length > 0 ? { equipment_list: equipment.filter(e => e.inventory_device_id) } : {}),
         },
       });
       showToast('Акт создан', 'success');
@@ -197,10 +204,13 @@ function CreateActForm() {
                 <div className="space-y-1.5 mb-2">
                   {equipment.map((item, i) => (
                     <div key={i} className="flex items-center gap-1.5">
-                      <input type="text" value={item.name} onChange={e => updateEquipment(i, 'name', e.target.value)}
-                        placeholder="Название" className="flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-400" />
-                      <input type="text" value={item.serial} onChange={e => updateEquipment(i, 'serial', e.target.value)}
-                        placeholder="SN" className="w-24 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-400" />
+                      <select value={item.inventory_device_id || ''} onChange={e => updateEquipmentDevice(i, e.target.value)}
+                        className="flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-400">
+                        <option value="">Выберите устройство</option>
+                        {devices.filter(device => device.id !== selectedDevice?.id && !equipment.some((selected, selectedIndex) => selectedIndex !== i && selected.inventory_device_id === device.id)).map(device => (
+                          <option key={device.id} value={device.id}>{device.name} — {device.serial_number}</option>
+                        ))}
+                      </select>
                       <button type="button" onClick={() => removeEquipment(i)}
                         className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500 text-xs">✕</button>
                     </div>

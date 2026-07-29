@@ -15,6 +15,8 @@ from app.db.models import (
     FileAsset,
     FileAssetKind,
     InventoryDevice,
+    ActDeviceAssignment,
+    DeviceStatus,
     Participant,
     ParticipantEmploymentStatus,
     ParticipantKind,
@@ -22,24 +24,16 @@ from app.db.models import (
 from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
 from app.services.pdf_backup_service import backup_pdf_by_ids
-from app.services.email_service import (
-    send_act_completed_email,
-    send_act_created_email,
-    send_return_completed_email,
+from app.services.audit_service import record_audit
+from app.services.email_outbox_service import (
+    ACT_CREATED,
+    ISSUE_COMPLETED,
+    RETURN_COMPLETED,
+    enqueue_act_emails,
 )
-from app.utils.storage import resolve_storage_path, save_data_url_file
+from app.utils.storage import resolve_storage_path, save_data_url_file, validate_signature_data_url
 
 router = APIRouter()
-
-
-def _update_device_status(db: Session, serial_number: str, status: str, assigned_to: str | None = None):
-    """Update inventory device status and assigned_to by serial number."""
-    device = db.query(InventoryDevice).filter(InventoryDevice.serial_number == serial_number).first()
-    if device:
-        device.status = status
-        if assigned_to is not None:
-            device.assigned_to = assigned_to
-        db.commit()
 
 
 RESERVED_ACT_FIELDS = {
@@ -58,7 +52,7 @@ INVENTORY_CATEGORY_KEY = "inventory_category"
 IPAD_ADVISORY_KEY = "advisory_note"
 
 
-def _normalize_recipients(recipients: object) -> list[dict]:
+def _normalize_recipients(recipients: object, preserve_signature_state: bool = True) -> list[dict]:
     if recipients is None:
         return []
 
@@ -92,10 +86,10 @@ def _normalize_recipients(recipients: object) -> list[dict]:
             "participant_id": participant_id,
             "full_name": full_name,
             "email": email,
-            "signed_at": item.get("signed_at") if isinstance(item.get("signed_at"), str) else None,
-            "signature_file_path": item.get("signature_file_path") if isinstance(item.get("signature_file_path"), str) else None,
-            "return_signed_at": item.get("return_signed_at") if isinstance(item.get("return_signed_at"), str) else None,
-            "return_signature_file_path": item.get("return_signature_file_path") if isinstance(item.get("return_signature_file_path"), str) else None,
+            "signed_at": item.get("signed_at") if preserve_signature_state and isinstance(item.get("signed_at"), str) else None,
+            "signature_file_path": item.get("signature_file_path") if preserve_signature_state and isinstance(item.get("signature_file_path"), str) else None,
+            "return_signed_at": item.get("return_signed_at") if preserve_signature_state and isinstance(item.get("return_signed_at"), str) else None,
+            "return_signature_file_path": item.get("return_signature_file_path") if preserve_signature_state and isinstance(item.get("return_signature_file_path"), str) else None,
         })
 
     return normalized_recipients
@@ -146,6 +140,131 @@ def _inventory_category_for_serial(db: Session, serial_number: str | None) -> st
         InventoryDevice.serial_number == serial_number
     ).first()
     return str(device.category) if device else None
+
+
+def _parse_device_id(value: object, label: str) -> UUID:
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Выберите {label} из инвентаря",
+        )
+
+
+def _reserve_act_devices(
+    db: Session,
+    act: Act,
+    primary_device_id: object,
+    equipment_list: list[dict],
+) -> list[dict]:
+    requested = [(_parse_device_id(primary_device_id, "основное устройство"), "MAIN", None)]
+    for index, item in enumerate(equipment_list):
+        requested.append((
+            _parse_device_id(item.get("inventory_device_id"), f"дополнительное устройство #{index + 1}"),
+            "ADDITIONAL",
+            item,
+        ))
+
+    device_ids = [item[0] for item in requested]
+    if len(device_ids) != len(set(device_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Одно устройство нельзя добавить в акт несколько раз",
+        )
+
+    devices = (
+        db.query(InventoryDevice)
+        .filter(InventoryDevice.id.in_(device_ids))
+        .order_by(InventoryDevice.id.asc())
+        .with_for_update()
+        .all()
+    )
+    devices_by_id = {device.id: device for device in devices}
+    if len(devices_by_id) != len(device_ids):
+        raise HTTPException(status_code=404, detail="Одно из выбранных устройств не найдено")
+
+    normalized_equipment = []
+    for device_id, assignment_type, item in requested:
+        device = devices_by_id[device_id]
+        if device.status != DeviceStatus.AVAILABLE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Устройство {device.name} уже недоступно: {device.status.value}",
+            )
+        device.status = DeviceStatus.RESERVED
+        device.assigned_to = act.party2_name
+        db.add(ActDeviceAssignment(
+            act_id=act.id,
+            device_id=device.id,
+            assignment_type=assignment_type,
+            status="RESERVED",
+            recipient_name=act.party2_name,
+        ))
+        if assignment_type == "MAIN":
+            act.inventory_device_id = device.id
+            act.item_name = device.name
+            act.item_serial = device.serial_number
+        else:
+            normalized_equipment.append({
+                "inventory_device_id": str(device.id),
+                "name": device.name,
+                "serial": device.serial_number,
+                "imei": str((item or {}).get("imei", "")).strip(),
+            })
+
+    return normalized_equipment
+
+
+def _transition_act_devices(db: Session, act: Act, target_status: str) -> None:
+    assignments = (
+        db.query(ActDeviceAssignment)
+        .filter(ActDeviceAssignment.act_id == act.id)
+        .with_for_update()
+        .all()
+    )
+    if not assignments:
+        if act.item_serial:
+            device = db.query(InventoryDevice).filter(
+                InventoryDevice.serial_number == act.item_serial
+            ).with_for_update().first()
+            if device:
+                device.status = (
+                    DeviceStatus.ISSUED if target_status == "ISSUED" else DeviceStatus.AVAILABLE
+                )
+                device.assigned_to = act.party2_name if target_status == "ISSUED" else None
+        return
+
+    now = datetime.utcnow()
+    expected_status = "RESERVED" if target_status == "ISSUED" else "ISSUED"
+    for assignment in assignments:
+        if assignment.status != expected_status:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Состояние выдачи устройства не соответствует операции",
+            )
+        device = db.query(InventoryDevice).filter(
+            InventoryDevice.id == assignment.device_id
+        ).with_for_update().first()
+        if not device:
+            raise HTTPException(status_code=409, detail="Связанное устройство не найдено")
+        assignment.status = target_status
+        if target_status == "ISSUED":
+            assignment.issued_at = now
+            device.status = DeviceStatus.ISSUED
+            device.assigned_to = assignment.recipient_name
+        else:
+            assignment.returned_at = now
+            device.status = DeviceStatus.AVAILABLE
+            device.assigned_to = None
+
+
+def _require_active_template(template: Template) -> None:
+    if not template.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Выбранный шаблон отключён и недоступен для новых актов",
+        )
 
 
 def _get_selectable_participant(
@@ -304,15 +423,26 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
             name = str(item.get("name", "")).strip()
             serial = str(item.get("serial", "")).strip()
             imei = str(item.get("imei", "")).strip()
-            if not name and not serial and not imei:
+            inventory_device_id = item.get("inventory_device_id")
+            if inventory_device_id is not None:
+                inventory_device_id = str(inventory_device_id).strip() or None
+            if not name and not serial and not imei and not inventory_device_id:
                 continue
-            normalized_equipment.append({"name": name, "serial": serial, "imei": imei})
+            normalized_equipment.append({
+                "inventory_device_id": inventory_device_id,
+                "name": name,
+                "serial": serial,
+                "imei": imei,
+            })
 
         payload[EQUIPMENT_LIST_KEY] = normalized_equipment
 
     recipients = payload.get(RECIPIENTS_KEY)
     if recipients is not None:
-        payload[RECIPIENTS_KEY] = _normalize_recipients(recipients)
+        payload[RECIPIENTS_KEY] = _normalize_recipients(
+            recipients,
+            preserve_signature_state=False,
+        )
 
     for field_name in required_dynamic:
         value = payload.get(field_name)
@@ -359,7 +489,32 @@ def _can_party1_sign_issue(act: Act) -> bool:
     return bool(recipients) and all(recipient.get("signed_at") for recipient in recipients)
 
 
-def _sign_recipient(act: Act, signature_data: str, return_flow: bool = False) -> tuple[dict, str, int]:
+def _validate_party1_signer(act: Act, participant_id: object) -> None:
+    extra_data = act.extra_data_json if isinstance(act.extra_data_json, dict) else {}
+    expected_participant_id = extra_data.get(PARTY1_PARTICIPANT_ID_KEY)
+    if expected_participant_id and str(participant_id or "") != str(expected_participant_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Подпись должна принадлежать выбранному выдающему",
+        )
+
+
+def _validate_signature(signature_data: str) -> None:
+    try:
+        validate_signature_data_url(signature_data)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+
+
+def _sign_recipient(
+    act: Act,
+    signature_data: str,
+    participant_id: object = None,
+    return_flow: bool = False,
+) -> tuple[dict, str, int]:
     extra_data = dict(act.extra_data_json or {})
     recipients = _extract_recipients(extra_data, act.party2_name, act.receiver_email)
     if not recipients:
@@ -375,6 +530,13 @@ def _sign_recipient(act: Act, signature_data: str, return_flow: bool = False) ->
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Все получатели уже подписали этот этап"
+        )
+
+    expected_participant_id = recipients[pending_index].get("participant_id")
+    if expected_participant_id and str(participant_id or "") != str(expected_participant_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Сейчас ожидается подпись: {recipients[pending_index]['full_name']}",
         )
 
     relative_path, mime_type, size_bytes, sha256 = save_data_url_file(
@@ -447,6 +609,7 @@ async def create_act(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Template not found"
         )
+    _require_active_template(template)
     
     normalized_extra_data = _validate_extra_data(act_data.extra_data_json, template)
     recipients = _extract_recipients(normalized_extra_data, act_data.party2_name, act_data.receiver_email)
@@ -462,9 +625,6 @@ async def create_act(
     )
     normalized_extra_data[RECIPIENTS_KEY] = recipients
     normalized_extra_data[PARTY1_PARTICIPANT_ID_KEY] = str(party1.id)
-    inventory_category = _inventory_category_for_serial(db, act_data.item_serial)
-    if inventory_category:
-        normalized_extra_data[INVENTORY_CATEGORY_KEY] = inventory_category
 
     act_payload = act_data.model_dump()
     act_payload.pop("party1_participant_id", None)
@@ -481,8 +641,23 @@ async def create_act(
     )
     
     db.add(act)
-    db.commit()
-    db.refresh(act)
+    db.flush()
+
+    normalized_equipment = _reserve_act_devices(
+        db,
+        act,
+        act_data.inventory_device_id,
+        normalized_extra_data.get(EQUIPMENT_LIST_KEY, []),
+    )
+    if normalized_equipment:
+        normalized_extra_data[EQUIPMENT_LIST_KEY] = normalized_equipment
+    else:
+        normalized_extra_data.pop(EQUIPMENT_LIST_KEY, None)
+    inventory_category = _inventory_category_for_serial(db, act.item_serial)
+    if inventory_category:
+        normalized_extra_data[INVENTORY_CATEGORY_KEY] = inventory_category
+    act.extra_data_json = normalized_extra_data
+    db.flush()
     
     # Create initial version
     version = ActVersion(
@@ -501,6 +676,10 @@ async def create_act(
         template_code=template.code,
         use_v2=(getattr(template, "pdf_version", 2) == 2),
     )
+    record_audit(db, current_user, "ACT", act.id, "ACT_CREATED", {
+        "template": template.code,
+        "devices": 1 + len(normalized_equipment),
+    })
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     
@@ -531,7 +710,7 @@ async def update_act(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).first()
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
 
     if not act:
         raise HTTPException(
@@ -549,6 +728,20 @@ async def update_act(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Редактирование доступно только для актов в статусе DRAFT"
+        )
+
+    existing_recipients = _extract_recipients(
+        act.extra_data_json,
+        act.party2_name,
+        act.receiver_email,
+    )
+    if any(
+        recipient.get("signed_at") or recipient.get("return_signed_at")
+        for recipient in existing_recipients
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Редактирование запрещено после первой подписи",
         )
 
     incoming_extra = payload.extra_data_json or {}
@@ -575,6 +768,18 @@ async def update_act(
             detail="Нужен хотя бы один получатель"
         )
     normalized_extra_data[RECIPIENTS_KEY] = recipients
+
+    has_device_assignments = db.query(ActDeviceAssignment.id).filter(
+        ActDeviceAssignment.act_id == act.id
+    ).first() is not None
+    if has_device_assignments:
+        if payload.item_serial is not None and payload.item_serial != act.item_serial:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Зарезервированное устройство нельзя заменить. Отмените акт и создайте новый",
+            )
+        if EQUIPMENT_LIST_KEY in existing_extra:
+            normalized_extra_data[EQUIPMENT_LIST_KEY] = existing_extra[EQUIPMENT_LIST_KEY]
 
     if payload.item_name is not None:
         act.item_name = payload.item_name
@@ -607,6 +812,9 @@ async def update_act(
         template_code=act.template.code if act.template else None,
         use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
     )
+    record_audit(db, current_user, "ACT", act.id, "ACT_UPDATED", {
+        "version": act.current_version,
+    })
 
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
@@ -619,14 +827,36 @@ async def delete_act(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).first()
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
     
     if not act:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Act not found"
         )
-    
+
+    if act.status != ActStatus.DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Удалить можно только черновик без завершённой выдачи",
+        )
+    recipients = _extract_recipients(act.extra_data_json, act.party2_name, act.receiver_email)
+    if any(recipient.get("signed_at") for recipient in recipients):
+        raise HTTPException(status_code=409, detail="Нельзя удалить акт после первой подписи")
+    assignments = db.query(ActDeviceAssignment).filter(
+        ActDeviceAssignment.act_id == act.id,
+        ActDeviceAssignment.status == "RESERVED",
+    ).all()
+    for assignment in assignments:
+        device = db.query(InventoryDevice).filter(
+            InventoryDevice.id == assignment.device_id
+        ).with_for_update().first()
+        if device:
+            device.status = DeviceStatus.AVAILABLE
+            device.assigned_to = None
+
+    record_audit(db, current_user, "ACT", act.id, "ACT_DELETED")
+    db.flush()
     db.delete(act)
     db.commit()
     
@@ -640,13 +870,16 @@ async def sign_party1(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).first()
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
     
     if not act:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Act not found"
         )
+
+    _validate_party1_signer(act, signature.participant_id)
+    _validate_signature(signature.signature_data)
     
     if act.status == ActStatus.SIGNED_PARTY2 and _can_party1_sign_issue(act):
         act.status = ActStatus.COMPLETED
@@ -657,6 +890,8 @@ async def sign_party1(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Подпись стороны 1 сейчас недоступна по порядку процесса"
         )
+    if act.status == ActStatus.COMPLETED:
+        _transition_act_devices(db, act, "ISSUED")
     
     relative_path, mime_type, size_bytes, sha256 = save_data_url_file(
         signature.signature_data,
@@ -704,31 +939,17 @@ async def sign_party1(
         template_code=act.template.code if act.template else None,
         use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
     )
+    action = "ISSUE_COMPLETED" if act.status == ActStatus.COMPLETED else "RETURN_MANAGER_SIGNED"
+    record_audit(db, current_user, "ACT", act.id, action, {
+        "participant_id": str(signature.participant_id) if signature.participant_id else None,
+        "version": act.current_version,
+    })
+    if act.status == ActStatus.COMPLETED:
+        enqueue_act_emails(db, act, ISSUE_COMPLETED, pdf_asset.storage_path)
     
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)
-
-    if (
-        act.status == ActStatus.COMPLETED
-        and not act.issue_completion_email_sent
-        and pdf_asset.storage_path
-    ):
-        try:
-            email_sent = await send_act_completed_email(
-                act,
-                pdf_path=resolve_storage_path(pdf_asset.storage_path),
-            )
-            if email_sent:
-                act.issue_completion_email_sent = True
-                db.commit()
-                db.refresh(act)
-        except Exception:
-            pass
-
-    # Inventory: mark device as issued when act is completed
-    if act.status == ActStatus.COMPLETED and act.item_serial:
-        _update_device_status(db, act.item_serial, "issued", act.party2_name)
 
     return act
 
@@ -740,22 +961,33 @@ async def sign_party2(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).first()
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
     
     if not act:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Act not found"
         )
-    
+    _validate_signature(signature.signature_data)
+
     signed_recipient_name = None
 
     if act.status == ActStatus.DRAFT:
-        asset_info, signed_recipient_name, _ = _sign_recipient(act, signature.signature_data, return_flow=False)
+        asset_info, signed_recipient_name, _ = _sign_recipient(
+            act,
+            signature.signature_data,
+            participant_id=signature.participant_id,
+            return_flow=False,
+        )
         issue_recipients = _extract_recipients(act.extra_data_json, act.party2_name, act.receiver_email)
         act.status = ActStatus.SIGNED_PARTY2 if all(recipient.get("signed_at") for recipient in issue_recipients) else ActStatus.DRAFT
     elif act.status == ActStatus.RETURN_SIGNED_PARTY1:
-        asset_info, signed_recipient_name, _ = _sign_recipient(act, signature.signature_data, return_flow=True)
+        asset_info, signed_recipient_name, _ = _sign_recipient(
+            act,
+            signature.signature_data,
+            participant_id=signature.participant_id,
+            return_flow=True,
+        )
         return_recipients = _extract_recipients(act.extra_data_json, act.party2_name, act.receiver_email)
         act.status = ActStatus.RETURNED if all(recipient.get("return_signed_at") for recipient in return_recipients) else ActStatus.RETURN_SIGNED_PARTY1
     else:
@@ -763,6 +995,8 @@ async def sign_party2(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Подпись стороны 2 сейчас недоступна по порядку процесса"
         )
+    if act.status == ActStatus.RETURNED:
+        _transition_act_devices(db, act, "RETURNED")
     db.add(FileAsset(
         act_id=act.id,
         kind=(
@@ -800,32 +1034,18 @@ async def sign_party2(
         template_code=act.template.code if act.template else None,
         use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
     )
+    action = "RETURN_COMPLETED" if act.status == ActStatus.RETURNED else "ISSUE_RECIPIENT_SIGNED"
+    record_audit(db, current_user, "ACT", act.id, action, {
+        "participant_id": str(signature.participant_id) if signature.participant_id else None,
+        "recipient": signed_recipient_name,
+        "version": act.current_version,
+    })
+    if act.status == ActStatus.RETURNED:
+        enqueue_act_emails(db, act, RETURN_COMPLETED, pdf_asset.storage_path)
     
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)
-
-    if (
-        act.status == ActStatus.RETURNED
-        and not act.return_completion_email_sent
-        and pdf_asset.storage_path
-    ):
-        try:
-            email_sent = await send_return_completed_email(
-                act,
-                pdf_path=resolve_storage_path(pdf_asset.storage_path),
-            )
-            if email_sent:
-                act.return_completion_email_sent = True
-                db.commit()
-                db.refresh(act)
-        except Exception:
-            # Email delivery should not break signing flow.
-            pass
-
-    # Inventory: mark device back to available when returned
-    if act.status == ActStatus.RETURNED and act.item_serial:
-        _update_device_status(db, act.item_serial, "available")
 
     return act
 
@@ -856,7 +1076,7 @@ async def start_return_flow(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).first()
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
 
     if not act:
         raise HTTPException(
@@ -868,6 +1088,11 @@ async def start_return_flow(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Возврат можно начать только после полного завершения акта выдачи"
+        )
+    if payload.return_date < act.issue_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Дата возврата не может быть раньше даты выдачи",
         )
 
     act.return_date = payload.return_date
@@ -893,6 +1118,10 @@ async def start_return_flow(
         template_code=act.template.code if act.template else None,
         use_v2=(getattr(act.template, "pdf_version", 2) == 2) if act.template else True,
     )
+    record_audit(db, current_user, "ACT", act.id, "RETURN_STARTED", {
+        "return_date": payload.return_date.isoformat(),
+        "version": act.current_version,
+    })
 
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
@@ -1050,12 +1279,10 @@ async def send_act_notification(
             detail="Act not found"
         )
     
-    try:
-        await send_act_created_email(act)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Не удалось отправить уведомление: {str(exc)}"
-        )
-    
-    return {"message": "Уведомление отправлено получателям"}
+    queued = enqueue_act_emails(db, act, ACT_CREATED)
+    record_audit(db, current_user, "ACT", act.id, "EMAIL_ENQUEUED", {
+        "kind": ACT_CREATED,
+        "queued": queued,
+    })
+    db.commit()
+    return {"message": "Уведомления поставлены в очередь", "queued": queued}

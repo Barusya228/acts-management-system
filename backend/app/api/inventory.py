@@ -7,7 +7,8 @@ from typing import Optional
 from uuid import UUID
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
-from app.db.models import InventoryCategory, InventoryDevice, User
+from app.services.audit_service import record_audit
+from app.db.models import ActDeviceAssignment, InventoryCategory, InventoryDevice, User
 from app.schemas.schemas import (
     InventoryCategoryCreate,
     InventoryCategoryResponse,
@@ -49,7 +50,7 @@ def _require_active_category(db: Session, code: str) -> InventoryCategory:
 def list_categories(
     include_inactive: bool = Query(False),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
     query = db.query(InventoryCategory)
     if not include_inactive:
@@ -61,7 +62,7 @@ def list_categories(
 def create_category(
     data: InventoryCategoryCreate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
     name = data.name.strip()
     code = _category_code(data.code or name)
@@ -78,6 +79,10 @@ def create_category(
         is_system=False,
     )
     db.add(category)
+    db.flush()
+    record_audit(db, current_user, "INVENTORY_CATEGORY", category.id, "CATEGORY_CREATED", {
+        "code": category.code,
+    })
     try:
         db.commit()
     except IntegrityError:
@@ -92,7 +97,7 @@ def update_category(
     category_id: UUID,
     data: InventoryCategoryUpdate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
     category = db.query(InventoryCategory).filter(InventoryCategory.id == category_id).first()
     if not category:
@@ -113,6 +118,9 @@ def update_category(
         raise HTTPException(status_code=422, detail="Статус категории не может быть пустым")
     for field, value in updates.items():
         setattr(category, field, value)
+    record_audit(db, current_user, "INVENTORY_CATEGORY", category.id, "CATEGORY_UPDATED", {
+        "fields": list(updates.keys()),
+    })
     db.commit()
     db.refresh(category)
     return category
@@ -123,7 +131,7 @@ def delete_category(
     category_id: UUID,
     replacement_code: str = Query("other"),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
     category = db.query(InventoryCategory).filter(InventoryCategory.id == category_id).first()
     if not category:
@@ -142,6 +150,11 @@ def delete_category(
             InventoryDevice.category == category.code
         ).update({InventoryDevice.category: replacement.code}, synchronize_session=False)
 
+    record_audit(db, current_user, "INVENTORY_CATEGORY", category.id, "CATEGORY_DELETED", {
+        "code": category.code,
+        "reassigned_devices": devices_count,
+    })
+    db.flush()
     db.delete(category)
     db.commit()
     return None
@@ -180,7 +193,7 @@ def list_devices(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
     query = db.query(InventoryDevice)
 
@@ -208,13 +221,19 @@ def list_devices(
 def create_device(
     data: InventoryDeviceCreate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
     _require_active_category(db, data.category)
+    if data.status in {"reserved", "issued"}:
+        raise HTTPException(status_code=422, detail="Статус выдачи меняется только через акт")
     if not data.inventory_number.strip() or not data.name.strip() or not data.serial_number.strip():
         raise HTTPException(status_code=422, detail="Инвентарный номер, название и серийный номер обязательны")
     device = InventoryDevice(**data.model_dump())
     db.add(device)
+    db.flush()
+    record_audit(db, current_user, "INVENTORY_DEVICE", device.id, "DEVICE_CREATED", {
+        "serial_number": device.serial_number,
+    })
     try:
         db.commit()
     except IntegrityError:
@@ -229,7 +248,7 @@ def update_device(
     device_id: UUID,
     data: InventoryDeviceUpdate,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
     device = db.query(InventoryDevice).filter(InventoryDevice.id == device_id).first()
     if not device:
@@ -240,6 +259,15 @@ def update_device(
         raise HTTPException(status_code=422, detail="Категория не может быть пустой")
     if "status" in updates and updates["status"] is None:
         raise HTTPException(status_code=422, detail="Статус не может быть пустым")
+    if "status" in updates and updates["status"] != device.status:
+        active_assignment = db.query(ActDeviceAssignment.id).filter(
+            ActDeviceAssignment.device_id == device.id,
+            ActDeviceAssignment.status.in_(["RESERVED", "ISSUED"]),
+        ).first()
+        if active_assignment:
+            raise HTTPException(status_code=409, detail="Статус устройства управляется активным актом")
+        if updates["status"] in {"reserved", "issued"}:
+            raise HTTPException(status_code=422, detail="Статус выдачи меняется только через акт")
     for required_field in ("inventory_number", "name", "serial_number"):
         if required_field in updates and (
             updates[required_field] is None or not updates[required_field].strip()
@@ -249,6 +277,9 @@ def update_device(
         _require_active_category(db, updates["category"])
     for field, value in updates.items():
         setattr(device, field, value)
+    record_audit(db, current_user, "INVENTORY_DEVICE", device.id, "DEVICE_UPDATED", {
+        "fields": list(updates.keys()),
+    })
 
     try:
         db.commit()
@@ -263,11 +294,15 @@ def update_device(
 def delete_device(
     device_id: UUID,
     db: Session = Depends(get_db),
-    _current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_current_admin_user),
 ):
     device = db.query(InventoryDevice).filter(InventoryDevice.id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Устройство не найдено")
 
+    record_audit(db, current_user, "INVENTORY_DEVICE", device.id, "DEVICE_DELETED", {
+        "serial_number": device.serial_number,
+    })
+    db.flush()
     db.delete(device)
     db.commit()

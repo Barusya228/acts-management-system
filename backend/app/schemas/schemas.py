@@ -112,6 +112,7 @@ class ActBase(BaseModel):
 
 class ActCreate(ActBase):
     party1_participant_id: UUID4
+    inventory_device_id: UUID4
 
 
 class ActUpdate(BaseModel):
@@ -121,6 +122,7 @@ class ActUpdate(BaseModel):
 
 class ActResponse(ActBase):
     id: UUID4
+    inventory_device_id: Optional[UUID4] = None
     status: str
     issue_completion_email_sent: bool
     return_completion_email_sent: bool
@@ -141,6 +143,7 @@ class ActListResponse(BaseModel):
 # Signature schemas
 class SignatureRequest(BaseModel):
     signature_data: str  # Base64 encoded image
+    participant_id: Optional[UUID4] = None
 
 
 class ReturnStartRequest(BaseModel):
@@ -195,7 +198,7 @@ class InventoryDeviceCreate(BaseModel):
     model: Optional[str] = None
     category: str
     serial_number: str
-    status: Literal["available", "issued", "maintenance", "retired"] = "available"
+    status: Literal["available", "reserved", "issued", "maintenance", "retired"] = "available"
     location: Optional[str] = None
     notes: Optional[str] = None
 
@@ -207,7 +210,7 @@ class InventoryDeviceUpdate(BaseModel):
     model: Optional[str] = None
     category: Optional[str] = None
     serial_number: Optional[str] = None
-    status: Optional[Literal["available", "issued", "maintenance", "retired"]] = None
+    status: Optional[Literal["available", "reserved", "issued", "maintenance", "retired"]] = None
     location: Optional[str] = None
     assigned_to: Optional[str] = None
     notes: Optional[str] = None

@@ -1,10 +1,15 @@
 import base64
 import hashlib
 import mimetypes
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
 from app.core.config import settings
+from PIL import Image, ImageChops
+
+
+MAX_SIGNATURE_BYTES = 5 * 1024 * 1024
 
 
 def ensure_storage_dir(relative_dir: str) -> Path:
@@ -35,7 +40,30 @@ def decode_data_url(data_url: str) -> tuple[bytes, str, str]:
         mime_type = header[5:].split(";")[0] or mime_type
         extension = mimetypes.guess_extension(mime_type) or extension
 
-    return base64.b64decode(encoded), mime_type, extension
+    return base64.b64decode(encoded, validate=True), mime_type, extension
+
+
+def validate_signature_data_url(data_url: str) -> None:
+    if len(data_url) > 8 * 1024 * 1024:
+        raise ValueError("Подпись превышает допустимый размер")
+    content, mime_type, _extension = decode_data_url(data_url)
+    if mime_type not in {"image/png", "image/jpeg"}:
+        raise ValueError("Подпись должна быть изображением PNG или JPEG")
+    if not content or len(content) > MAX_SIGNATURE_BYTES:
+        raise ValueError("Некорректный размер подписи")
+    try:
+        image = Image.open(BytesIO(content))
+        image.verify()
+        image = Image.open(BytesIO(content)).convert("RGBA")
+    except Exception as exc:
+        raise ValueError("Файл подписи повреждён") from exc
+    if image.width > 4096 or image.height > 4096:
+        raise ValueError("Изображение подписи слишком большое")
+    rendered = Image.new("RGB", image.size, "white")
+    rendered.paste(image.convert("RGB"), mask=image.getchannel("A"))
+    white = Image.new("RGB", image.size, "white")
+    if ImageChops.difference(rendered, white).getbbox() is None:
+        raise ValueError("Подпись не может быть пустой")
 
 
 def save_data_url_file(data_url: str, relative_dir: str, filename_stem: str) -> tuple[str, str, int, str]:

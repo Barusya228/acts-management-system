@@ -366,8 +366,21 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     setError('');
 
     try {
+      const recipients = act
+        ? normalizeActRecipients(act.extra_data_json, act.party2_name, act.receiver_email)
+        : [];
+      const isReturnSignature = act?.status === 'RETURN_SIGNED_PARTY1';
+      const pendingRecipient = recipients.find(recipient =>
+        isReturnSignature ? !recipient.return_signed_at : !recipient.signed_at
+      );
+      const participantId = party === 'party1'
+        ? typeof act?.extra_data_json?.party1_participant_id === 'string'
+          ? act.extra_data_json.party1_participant_id
+          : undefined
+        : pendingRecipient?.participant_id;
       await api.post(`/api/acts/${id}/sign/${party}`, {
         signature_data: signatureData,
+        participant_id: participantId,
       });
       setSignatureData('');
       await fetchActAndVersions();
