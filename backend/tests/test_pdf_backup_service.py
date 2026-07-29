@@ -119,3 +119,7 @@ def test_backup_path_uses_category_saved_in_version_snapshot():
     )
 
     assert path.parts[:3] == ("(2026-2027)", "GENERIC_ONE", "camera")
+
+
+def test_camera_category_is_inferred_from_item_name():
+    assert pdf_backup_service._infer_inventory_category("Камера Logitech") == "camera"

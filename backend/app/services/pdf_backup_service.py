@@ -42,6 +42,8 @@ def _infer_inventory_category(item_name: str) -> str:
     name = (item_name or "").lower()
     if "удлин" in name or "extension" in name:
         return "extension"
+    if any(token in name for token in ("камер", "camera", "webcam")):
+        return "camera"
     if any(token in name for token in ("ноут", "laptop", "notebook", "macbook")):
         return "notebook"
     if any(token in name for token in ("планшет", "ipad", "tablet")):
