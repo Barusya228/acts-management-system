@@ -20,7 +20,10 @@ export default function SignaturePad({ onSave, onClear }: SignaturePadProps) {
 
   const save = () => {
     if (sigCanvas.current) {
-      if (sigCanvas.current.isEmpty()) {
+      const canvas = sigCanvas.current.getCanvas();
+      const pixels = canvas.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data;
+      const isEmpty = !pixels || !pixels.some((channel, index) => index % 4 === 3 && channel !== 0);
+      if (isEmpty) {
         setError('Поставьте подпись перед сохранением');
         return;
       }
