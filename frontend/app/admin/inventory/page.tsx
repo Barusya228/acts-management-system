@@ -60,6 +60,7 @@ export default function InventoryPage() {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -75,7 +76,7 @@ export default function InventoryPage() {
   }, [user, router]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchDevices();
-  }, [user, catFilter, statusFilter]);
+  }, [user, catFilter, statusFilter, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchCategories();
   }, [user]);
@@ -106,6 +107,20 @@ export default function InventoryPage() {
   };
 
   const handleSearch = () => fetchDevices();
+
+  const resetFilters = () => {
+    setSearch('');
+    setCatFilter('');
+    setStatusFilter('');
+    setRefreshKey(value => value + 1);
+  };
+
+  const showCategoryDevices = (categoryCode: string) => {
+    setSearch('');
+    setStatusFilter('');
+    setCatFilter(categoryCode);
+    setShowCategoryModal(false);
+  };
 
   const openCreate = () => {
     if (categories.length === 0) {
@@ -186,13 +201,14 @@ export default function InventoryPage() {
   const handleDeleteCategory = async () => {
     if (!deleteCategoryTarget) return;
     try {
-      await api.delete(`/api/inventory/categories/${deleteCategoryTarget.id}`);
+      await api.delete(`/api/inventory/categories/${deleteCategoryTarget.id}?replacement_code=other`);
       if (catFilter === deleteCategoryTarget.code) setCatFilter('');
       if (form.category === deleteCategoryTarget.code) {
         setForm(current => ({ ...current, category: '' }));
       }
       setDeleteCategoryTarget(null);
       await fetchCategories();
+      await fetchDevices();
       showToast('Категория удалена', 'success');
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Не удалось удалить категорию', 'error');
@@ -233,6 +249,12 @@ export default function InventoryPage() {
             <option value="">Все статусы</option>
             {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
+          {(search || catFilter || statusFilter) && (
+            <button type="button" onClick={resetFilters}
+              className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-200">
+              Сбросить фильтры
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -355,6 +377,10 @@ export default function InventoryPage() {
                 <span>{category.icon} <span className="font-medium text-slate-700">{category.name}</span></span>
                 <div className="flex items-center gap-2">
                   <code className="text-xs text-slate-400">{category.code}</code>
+                  <button type="button" onClick={() => showCategoryDevices(category.code)}
+                    className="rounded-lg bg-blue-50 px-2 py-1 text-xs font-medium text-blue-600 transition hover:bg-blue-100">
+                    Показать
+                  </button>
                   {!category.is_system && (
                     <button type="button" onClick={() => setDeleteCategoryTarget(category)}
                       className="rounded-lg bg-rose-50 px-2 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100">
@@ -401,7 +427,7 @@ export default function InventoryPage() {
           <p className="text-sm text-slate-500">
             Категория <span className="font-semibold text-slate-800">{deleteCategoryTarget.icon} {deleteCategoryTarget.name}</span> будет удалена.
           </p>
-          <p className="mt-2 text-xs text-slate-400">Удаление доступно только если в категории нет устройств.</p>
+          <p className="mt-2 text-xs text-slate-400">Устройства из этой категории будут автоматически перенесены в категорию «Другое».</p>
           <div className="mt-6 flex gap-3">
             <button onClick={handleDeleteCategory}
               className="flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700">

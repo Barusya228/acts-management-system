@@ -121,6 +121,7 @@ def update_category(
 @router.delete("/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_category(
     category_id: UUID,
+    replacement_code: str = Query("other"),
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_admin_user),
 ):
@@ -134,10 +135,12 @@ def delete_category(
         InventoryDevice.category == category.code
     ).count()
     if devices_count:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Категория используется устройствами: {devices_count}. Сначала перенесите их в другую категорию",
-        )
+        if replacement_code == category.code:
+            raise HTTPException(status_code=422, detail="Категория замены должна отличаться от удаляемой")
+        replacement = _require_active_category(db, replacement_code)
+        db.query(InventoryDevice).filter(
+            InventoryDevice.category == category.code
+        ).update({InventoryDevice.category: replacement.code}, synchronize_session=False)
 
     db.delete(category)
     db.commit()
