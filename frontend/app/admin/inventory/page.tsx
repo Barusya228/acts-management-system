@@ -24,16 +24,14 @@ interface Device {
   updated_at: string;
 }
 
-const categoryOptions = [
-  { value: 'notebook', label: 'Ноутбук', icon: '💻' },
-  { value: 'monitor', label: 'Монитор', icon: '🖥️' },
-  { value: 'tablet', label: 'Планшет', icon: '📱' },
-  { value: 'phone', label: 'Телефон', icon: '📱' },
-  { value: 'printer', label: 'Принтер', icon: '🖨️' },
-  { value: 'keyboard', label: 'Клавиатура', icon: '⌨️' },
-  { value: 'mouse', label: 'Мышь', icon: '🖱️' },
-  { value: 'other', label: 'Другое', icon: '📦' },
-];
+interface InventoryCategory {
+  id: string;
+  code: string;
+  name: string;
+  icon: string;
+  is_active: boolean;
+  is_system: boolean;
+}
 
 const statusOptions = [
   { value: 'available', label: 'На складе', cls: 'bg-emerald-100 text-emerald-700' },
@@ -42,8 +40,6 @@ const statusOptions = [
   { value: 'retired', label: 'Списано', cls: 'bg-gray-200 text-gray-600' },
 ];
 
-const getCategoryIcon = (c: string) => categoryOptions.find(o => o.value === c)?.icon || '📦';
-const getCategoryLabel = (c: string) => categoryOptions.find(o => o.value === c)?.label || c;
 const getStatusBadge = (s: string) => statusOptions.find(o => o.value === s)?.cls || 'bg-gray-100 text-gray-700';
 const getStatusLabel = (s: string) => statusOptions.find(o => o.value === s)?.label || s;
 
@@ -57,6 +53,8 @@ export default function InventoryPage() {
   const router = useRouter();
   const { showToast } = useToast();
   const [devices, setDevices] = useState<Device[]>([]);
+  const [categories, setCategories] = useState<InventoryCategory[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
@@ -67,6 +65,9 @@ export default function InventoryPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [categorySaving, setCategorySaving] = useState(false);
+  const [categoryForm, setCategoryForm] = useState({ name: '', code: '', icon: '📦' });
 
   useEffect(() => {
     if (user && user.role !== 'ADMIN') { router.push('/guest'); }
@@ -74,6 +75,21 @@ export default function InventoryPage() {
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchDevices();
   }, [user, catFilter, statusFilter]);
+  useEffect(() => {
+    if (user?.role === 'ADMIN') fetchCategories();
+  }, [user]);
+
+  const fetchCategories = async () => {
+    setCategoriesLoading(true);
+    try {
+      const res = await api.get('/api/inventory/categories');
+      setCategories(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setCategories([]);
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
 
   const fetchDevices = async () => {
     setLoading(true);
@@ -90,7 +106,17 @@ export default function InventoryPage() {
 
   const handleSearch = () => fetchDevices();
 
-  const openCreate = () => { setEditId(null); setForm(emptyForm); setShowModal(true); };
+  const openCreate = () => {
+    if (categories.length === 0) {
+      showToast('Сначала добавьте категорию инвентаря', 'error');
+      setShowCategoryModal(true);
+      return;
+    }
+    const initialCategory = categories.find(category => category.code === 'notebook')?.code || categories[0]?.code || '';
+    setEditId(null);
+    setForm({ ...emptyForm, category: initialCategory });
+    setShowModal(true);
+  };
   const openEdit = (d: Device) => {
     setEditId(d.id);
     setForm({ inventory_number: d.inventory_number, barcode: d.barcode || '', name: d.name, model: d.model || '', category: d.category, serial_number: d.serial_number, status: d.status, location: d.location || '', notes: d.notes || '' });
@@ -133,12 +159,48 @@ export default function InventoryPage() {
     } catch (err: any) { showToast(err.response?.data?.detail || 'Ошибка', 'error'); }
   };
 
+  const handleCreateCategory = async () => {
+    if (!categoryForm.name.trim()) {
+      showToast('Введите название категории', 'error');
+      return;
+    }
+    setCategorySaving(true);
+    try {
+      const response = await api.post('/api/inventory/categories', {
+        name: categoryForm.name.trim(),
+        code: categoryForm.code.trim() || null,
+        icon: categoryForm.icon.trim() || '📦',
+      });
+      await fetchCategories();
+      setForm(current => ({ ...current, category: response.data.code }));
+      setCategoryForm({ name: '', code: '', icon: '📦' });
+      showToast('Категория добавлена', 'success');
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Не удалось добавить категорию', 'error');
+    } finally {
+      setCategorySaving(false);
+    }
+  };
+
+  const getCategoryIcon = (code: string) => categories.find(category => category.code === code)?.icon || '📦';
+  const getCategoryLabel = (code: string) => categories.find(category => category.code === code)?.name || code;
+
   if (!user || user.role !== 'ADMIN') return null;
 
   return (
     <AdminLayout>
       <div className="mx-auto max-w-7xl">
-        <PageHeader eyebrow="Администрирование" title="Инвентарь" description="Учёт устройств: серийные номера, статусы, местоположение." />
+        <PageHeader
+          eyebrow="Администрирование"
+          title="Инвентарь"
+          description="Учёт устройств: серийные номера, статусы, местоположение."
+          actions={(
+            <button type="button" onClick={() => setShowCategoryModal(true)}
+              className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-slate-900 transition hover:bg-blue-50">
+              Категории
+            </button>
+          )}
+        />
 
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
           <input type="text" placeholder="Поиск по названию, модели, серийнику..." value={search} onChange={e => setSearch(e.target.value)}
@@ -147,7 +209,7 @@ export default function InventoryPage() {
           <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
             <option value="">Все категории</option>
-            {categoryOptions.map(o => <option key={o.value} value={o.value}>{o.icon} {o.label}</option>)}
+            {categories.map(category => <option key={category.id} value={category.code}>{category.icon} {category.name}</option>)}
           </select>
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
@@ -163,8 +225,8 @@ export default function InventoryPage() {
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <button type="button" onClick={openCreate}
-              className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-slate-400 shadow-sm transition hover:border-blue-400 hover:text-blue-500">
+            <button type="button" onClick={openCreate} disabled={categoriesLoading}
+              className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-slate-400 shadow-sm transition hover:border-blue-400 hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
               <span className="text-3xl">+</span>
               <span className="text-sm font-medium">Добавить устройство</span>
             </button>
@@ -227,7 +289,10 @@ export default function InventoryPage() {
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Категория</label>
                 <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none">
-                  {categoryOptions.map(o => <option key={o.value} value={o.value}>{o.icon} {o.label}</option>)}
+                  {editId && form.category && !categories.some(category => category.code === form.category) && (
+                    <option value={form.category} disabled>{form.category} (неактивна)</option>
+                  )}
+                  {categories.map(category => <option key={category.id} value={category.code}>{category.icon} {category.name}</option>)}
                 </select></div>
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Статус</label>
                 <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}
@@ -261,6 +326,47 @@ export default function InventoryPage() {
           <div className="mt-6 flex gap-3">
             <button onClick={handleDelete} className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-700">Удалить</button>
             <button onClick={() => setDeleteTarget(null)} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-200">Отмена</button>
+          </div>
+        </Modal>
+      )}
+
+      {showCategoryModal && (
+        <Modal onClose={() => setShowCategoryModal(false)} title="Категории инвентаря">
+          <div className="max-h-48 space-y-2 overflow-auto rounded-xl bg-slate-50 p-3">
+            {categories.map(category => (
+              <div key={category.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
+                <span>{category.icon} <span className="font-medium text-slate-700">{category.name}</span></span>
+                <code className="text-xs text-slate-400">{category.code}</code>
+              </div>
+            ))}
+          </div>
+          <div className="mt-5 space-y-3 border-t border-slate-200 pt-5">
+            <h3 className="text-sm font-bold text-slate-800">Добавить категорию</h3>
+            <div className="grid grid-cols-[72px_1fr] gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Значок</label>
+                <input value={categoryForm.icon} onChange={e => setCategoryForm({ ...categoryForm, icon: e.target.value })}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-center text-lg outline-none focus:border-blue-400" maxLength={4} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Название *</label>
+                <input value={categoryForm.name} onChange={e => setCategoryForm({ ...categoryForm, name: e.target.value })}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Камера" />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Код для backup-папки</label>
+              <input value={categoryForm.code} onChange={e => setCategoryForm({ ...categoryForm, code: e.target.value })}
+                className="w-full rounded-xl border border-gray-200 px-3 py-2 font-mono text-sm outline-none focus:border-blue-400" placeholder="camera (можно оставить пустым)" />
+              <p className="mt-1 text-xs text-slate-400">Если оставить пустым, код сформируется из названия автоматически.</p>
+            </div>
+          </div>
+          <div className="mt-5 flex gap-3">
+            <button onClick={handleCreateCategory} disabled={categorySaving}
+              className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+              {categorySaving ? 'Добавление...' : 'Добавить категорию'}
+            </button>
+            <button onClick={() => setShowCategoryModal(false)} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">Закрыть</button>
           </div>
         </Modal>
       )}

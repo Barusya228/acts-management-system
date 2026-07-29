@@ -12,7 +12,7 @@ from app.services.pdf_backup_service import (
     BACKUP_STATUS_FAILED,
     BACKUP_STATUS_SUCCESS,
     backup_pdf_after_commit,
-    is_backup_record_valid,
+    get_final_backup_stage,
 )
 
 
@@ -100,29 +100,48 @@ def sync_existing_pdf_backups(
         raise HTTPException(status_code=409, detail="Синхронизация PDF уже выполняется")
 
     try:
-        assets = db.query(FileAsset).filter(FileAsset.kind == FileAssetKind.PDF).all()
+        assets = (
+            db.query(FileAsset)
+            .filter(FileAsset.kind == FileAssetKind.PDF)
+            .order_by(FileAsset.created_at.desc(), FileAsset.id.desc())
+            .all()
+        )
         copied = 0
         failed = 0
         skipped = 0
+        candidates = {}
 
         for asset in assets:
+            version = db.query(ActVersion).filter(ActVersion.pdf_file_id == asset.id).first()
+            stage = get_final_backup_stage(version) if version else None
+            if not version or not stage:
+                skipped += 1
+                continue
+            key = (asset.act_id, stage)
+            previous = candidates.get(key)
+            if previous and previous[1].version_number >= version.version_number:
+                skipped += 1
+                continue
+            if previous:
+                skipped += 1
+            candidates[key] = (asset, version)
+
+        for asset, version in candidates.values():
             existing = db.query(PdfBackupRecord).filter(
                 PdfBackupRecord.file_asset_id == asset.id,
                 PdfBackupRecord.status == BACKUP_STATUS_SUCCESS,
             ).first()
-            if existing and is_backup_record_valid(existing):
-                skipped += 1
-                continue
-
-            version = db.query(ActVersion).filter(ActVersion.pdf_file_id == asset.id).first()
             act = db.query(Act).filter(Act.id == asset.act_id).first()
-            if not version or not act:
+            if not act:
                 skipped += 1
                 continue
 
             record = backup_pdf_after_commit(db, act, version, asset)
             if record and record.status == BACKUP_STATUS_SUCCESS:
-                copied += 1
+                if existing and record.id == existing.id:
+                    skipped += 1
+                else:
+                    copied += 1
             else:
                 failed += 1
 

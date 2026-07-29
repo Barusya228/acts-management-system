@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, UUID4
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime, date
 
 # User schemas
@@ -163,6 +163,31 @@ class ActVersionResponse(BaseModel):
 
 
 # Inventory schemas
+class InventoryCategoryCreate(BaseModel):
+    name: str
+    code: Optional[str] = None
+    icon: str = "📦"
+
+
+class InventoryCategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    icon: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class InventoryCategoryResponse(BaseModel):
+    id: UUID4
+    code: str
+    name: str
+    icon: str
+    is_active: bool
+    is_system: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class InventoryDeviceCreate(BaseModel):
     inventory_number: str
     barcode: Optional[str] = None
@@ -170,7 +195,7 @@ class InventoryDeviceCreate(BaseModel):
     model: Optional[str] = None
     category: str
     serial_number: str
-    status: str = "available"
+    status: Literal["available", "issued", "maintenance", "retired"] = "available"
     location: Optional[str] = None
     notes: Optional[str] = None
 
@@ -182,7 +207,7 @@ class InventoryDeviceUpdate(BaseModel):
     model: Optional[str] = None
     category: Optional[str] = None
     serial_number: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[Literal["available", "issued", "maintenance", "retired"]] = None
     location: Optional[str] = None
     assigned_to: Optional[str] = None
     notes: Optional[str] = None

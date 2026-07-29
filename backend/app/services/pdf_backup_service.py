@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.db.models import Act, ActVersion, FileAsset, PdfBackupRecord
+from app.db.models import Act, ActStatus, ActVersion, FileAsset, InventoryDevice, PdfBackupRecord
 from app.utils.storage import resolve_storage_path
 
 
@@ -17,6 +17,66 @@ BACKUP_STATUS_SUCCESS = "SUCCESS"
 BACKUP_STATUS_FAILED = "FAILED"
 BACKUP_STATUS_STALE = "STALE"
 BACKUP_TARGET_MARKER = ".acts-pdf-backup-target"
+FINAL_BACKUP_STAGES = {
+    ActStatus.COMPLETED.value: "issue_final",
+    ActStatus.RETURNED.value: "return_final",
+}
+
+
+def get_final_backup_stage(version: ActVersion) -> str | None:
+    snapshot = version.data_json if isinstance(version.data_json, dict) else {}
+    raw_status = snapshot.get("status")
+    status = raw_status.value if hasattr(raw_status, "value") else str(raw_status or "")
+    return FINAL_BACKUP_STAGES.get(status)
+
+
+def _safe_path_segment(value: object, fallback: str) -> str:
+    normalized = "".join(
+        character if str(character).isalnum() or character in {"-", "_"} else "_"
+        for character in str(value or "").strip()
+    ).strip("_")
+    return normalized or fallback
+
+
+def _infer_inventory_category(item_name: str) -> str:
+    name = (item_name or "").lower()
+    if "удлин" in name or "extension" in name:
+        return "extension"
+    if any(token in name for token in ("ноут", "laptop", "notebook", "macbook")):
+        return "notebook"
+    if any(token in name for token in ("планшет", "ipad", "tablet")):
+        return "tablet"
+    if any(token in name for token in ("монитор", "display", "monitor")):
+        return "monitor"
+    return "other"
+
+
+def build_backup_relative_path(
+    db: Session,
+    act: Act,
+    version: ActVersion,
+    stage: str,
+) -> Path:
+    issue_year = act.issue_date.year if act.issue_date else datetime.utcnow().year
+    period = f"({issue_year}-{issue_year + 1})"
+    template_code = _safe_path_segment(
+        act.template.code if getattr(act, "template", None) else None,
+        "UNKNOWN_TEMPLATE",
+    )
+    snapshot = version.data_json if isinstance(version.data_json, dict) else {}
+    extra_data = snapshot.get("extra_data_json") if isinstance(snapshot.get("extra_data_json"), dict) else {}
+    snapshot_category = extra_data.get("inventory_category")
+    device = None
+    if not snapshot_category and act.item_serial:
+        device = db.query(InventoryDevice).filter(
+            InventoryDevice.serial_number == act.item_serial
+        ).first()
+    raw_category = snapshot_category or (device.category if device else _infer_inventory_category(act.item_name))
+    category = _safe_path_segment(
+        raw_category.value if hasattr(raw_category, "value") else raw_category,
+        "other",
+    ).lower()
+    return Path(period, template_code, category, str(act.id), f"{stage}.pdf")
 
 
 def _file_sha256(path: Path) -> str:
@@ -50,11 +110,34 @@ def backup_pdf_asset(
     if not settings.PDF_BACKUP_ENABLED:
         return None
 
+    stage = get_final_backup_stage(version)
+    if not stage:
+        return None
+
+    try:
+        relative_path = build_backup_relative_path(db, act, version, stage)
+    except Exception as exc:
+        failed_record = PdfBackupRecord(
+            file_asset_id=file_asset.id,
+            act_id=act.id,
+            version_number=version.version_number,
+            destination=settings.PDF_BACKUP_LABEL,
+            status=BACKUP_STATUS_FAILED,
+            error_message=str(exc)[:2000],
+        )
+        db.add(failed_record)
+        db.flush()
+        return failed_record
+
     existing = db.query(PdfBackupRecord).filter(
         PdfBackupRecord.file_asset_id == file_asset.id,
         PdfBackupRecord.status == BACKUP_STATUS_SUCCESS,
     ).first()
-    if existing and is_backup_record_valid(existing):
+    if (
+        existing
+        and existing.backup_path == relative_path.as_posix()
+        and is_backup_record_valid(existing)
+    ):
         return existing
     if existing:
         existing.status = BACKUP_STATUS_STALE
@@ -73,18 +156,22 @@ def backup_pdf_asset(
         if not source_path.is_file():
             raise FileNotFoundError(f"Исходный PDF не найден: {file_asset.storage_path}")
 
-        now = datetime.utcnow()
         backup_root = Path(settings.PDF_BACKUP_PATH)
         if not backup_root.is_dir() or not (backup_root / BACKUP_TARGET_MARKER).is_file():
             raise OSError(f"Хранилище backup не подключено: отсутствует {BACKUP_TARGET_MARKER}")
-        relative_path = Path(
-            f"{now.year:04d}",
-            f"{now.month:02d}",
-            str(act.id),
-            f"act_{act.id}_v{version.version_number}_{file_asset.id}.pdf",
-        )
         destination_path = backup_root / relative_path
         destination_path.parent.mkdir(parents=True, exist_ok=True)
+
+        superseded = db.query(PdfBackupRecord).filter(
+            PdfBackupRecord.act_id == act.id,
+            PdfBackupRecord.backup_path == relative_path.as_posix(),
+            PdfBackupRecord.status == BACKUP_STATUS_SUCCESS,
+            PdfBackupRecord.file_asset_id != file_asset.id,
+        ).all()
+        for old_record in superseded:
+            old_record.status = BACKUP_STATUS_STALE
+        if superseded:
+            db.flush()
 
         temporary_path = destination_path.with_name(
             f".{destination_path.name}.{uuid.uuid4().hex}.tmp"

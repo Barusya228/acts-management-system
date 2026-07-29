@@ -54,6 +54,7 @@ RESERVED_ACT_FIELDS = {
 EQUIPMENT_LIST_KEY = "equipment_list"
 RECIPIENTS_KEY = "recipients"
 PARTY1_PARTICIPANT_ID_KEY = "party1_participant_id"
+INVENTORY_CATEGORY_KEY = "inventory_category"
 IPAD_ADVISORY_KEY = "advisory_note"
 
 
@@ -136,6 +137,15 @@ def _get_primary_recipient_email(recipients: list[dict]) -> str:
         if email:
             return email
     return ""
+
+
+def _inventory_category_for_serial(db: Session, serial_number: str | None) -> str | None:
+    if not serial_number:
+        return None
+    device = db.query(InventoryDevice).filter(
+        InventoryDevice.serial_number == serial_number
+    ).first()
+    return str(device.category) if device else None
 
 
 def _get_selectable_participant(
@@ -237,6 +247,7 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Дополнительные поля должны быть объектом (JSON)"
         )
+    payload = dict(payload)
 
     schema = template.schema_json or {}
     fields = schema.get("fields") or []
@@ -262,7 +273,11 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
         allowed_dynamic[IPAD_ADVISORY_KEY] = "string"
         required_dynamic.add(IPAD_ADVISORY_KEY)
 
-    special_keys = {EQUIPMENT_LIST_KEY, RECIPIENTS_KEY, PARTY1_PARTICIPANT_ID_KEY}
+    special_keys = {
+        EQUIPMENT_LIST_KEY,
+        RECIPIENTS_KEY,
+        PARTY1_PARTICIPANT_ID_KEY,
+    }
     unknown_keys = [key for key in payload.keys() if key not in allowed_dynamic and key not in special_keys]
     if unknown_keys:
         raise HTTPException(
@@ -447,6 +462,9 @@ async def create_act(
     )
     normalized_extra_data[RECIPIENTS_KEY] = recipients
     normalized_extra_data[PARTY1_PARTICIPANT_ID_KEY] = str(party1.id)
+    inventory_category = _inventory_category_for_serial(db, act_data.item_serial)
+    if inventory_category:
+        normalized_extra_data[INVENTORY_CATEGORY_KEY] = inventory_category
 
     act_payload = act_data.model_dump()
     act_payload.pop("party1_participant_id", None)
@@ -545,8 +563,11 @@ async def update_act(
         incoming_extra[IPAD_ADVISORY_KEY] = existing_extra.get(IPAD_ADVISORY_KEY)
     if PARTY1_PARTICIPANT_ID_KEY in existing_extra:
         incoming_extra[PARTY1_PARTICIPANT_ID_KEY] = existing_extra.get(PARTY1_PARTICIPANT_ID_KEY)
+    incoming_extra.pop(INVENTORY_CATEGORY_KEY, None)
 
     normalized_extra_data = _validate_extra_data(incoming_extra, act.template)
+    if payload.item_serial is None and INVENTORY_CATEGORY_KEY in existing_extra:
+        normalized_extra_data[INVENTORY_CATEGORY_KEY] = existing_extra[INVENTORY_CATEGORY_KEY]
     recipients = _extract_recipients(normalized_extra_data, act.party2_name, act.receiver_email)
     if not recipients:
         raise HTTPException(
@@ -559,6 +580,9 @@ async def update_act(
         act.item_name = payload.item_name
     if payload.item_serial is not None:
         act.item_serial = payload.item_serial
+        inventory_category = _inventory_category_for_serial(db, payload.item_serial)
+        if inventory_category:
+            normalized_extra_data[INVENTORY_CATEGORY_KEY] = inventory_category
 
     act.party2_name = _build_party2_summary(recipients)
     act.receiver_email = _get_primary_recipient_email(recipients)

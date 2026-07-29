@@ -76,19 +76,21 @@ def create_pdf_asset_for_version(db, act: Act, version: ActVersion, template_nam
     # Выбираем версию генератора PDF
     pdf_generator = build_act_pdf_v2 if use_v2 else build_act_pdf_bytes
 
-    recipient_signature_paths: list[str] = []
-    return_recipient_signature_paths: list[str] = []
+    recipient_signature_paths: list[str | None] = []
+    return_recipient_signature_paths: list[str | None] = []
     recipients = snapshot.get("extra_data_json", {}).get("recipients", []) if isinstance(snapshot.get("extra_data_json"), dict) else []
     if isinstance(recipients, list):
         for recipient in recipients:
             if not isinstance(recipient, dict):
                 continue
             issue_path = recipient.get("signature_file_path")
-            if isinstance(issue_path, str) and issue_path:
-                recipient_signature_paths.append(str(resolve_storage_path(issue_path)))
+            recipient_signature_paths.append(
+                str(resolve_storage_path(issue_path)) if isinstance(issue_path, str) and issue_path else None
+            )
             return_path = recipient.get("return_signature_file_path")
-            if isinstance(return_path, str) and return_path:
-                return_recipient_signature_paths.append(str(resolve_storage_path(return_path)))
+            return_recipient_signature_paths.append(
+                str(resolve_storage_path(return_path)) if isinstance(return_path, str) and return_path else None
+            )
     
     pdf_bytes = pdf_generator(
         snapshot,

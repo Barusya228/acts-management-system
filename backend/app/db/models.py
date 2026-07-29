@@ -46,16 +46,6 @@ class DeviceStatus(str, enum.Enum):
     RETIRED = "retired"
 
 
-class DeviceCategory(str, enum.Enum):
-    NOTEBOOK = "notebook"
-    MONITOR = "monitor"
-    TABLET = "tablet"
-    PHONE = "phone"
-    PRINTER = "printer"
-    KEYBOARD = "keyboard"
-    MOUSE = "mouse"
-    OTHER = "other"
-
 class User(Base):
     __tablename__ = "users"
     
@@ -208,11 +198,31 @@ class InventoryDevice(Base):
     barcode = Column(String, unique=True, nullable=True)
     name = Column(String, nullable=False)
     model = Column(String, nullable=True)
-    category = Column(SQLEnum(DeviceCategory), nullable=False)
+    category = Column(String, nullable=False)
     serial_number = Column(String, unique=True, nullable=False)
-    status = Column(SQLEnum(DeviceStatus), nullable=False, default=DeviceStatus.AVAILABLE)
+    status = Column(
+        SQLEnum(
+            DeviceStatus,
+            values_callable=lambda enum_class: [item.value for item in enum_class],
+            native_enum=False,
+        ),
+        nullable=False,
+        default=DeviceStatus.AVAILABLE,
+    )
     location = Column(String, nullable=True)
     assigned_to = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class InventoryCategory(Base):
+    __tablename__ = "inventory_categories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    icon = Column(String, nullable=False, default="📦")
+    is_active = Column(Boolean, nullable=False, default=True)
+    is_system = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

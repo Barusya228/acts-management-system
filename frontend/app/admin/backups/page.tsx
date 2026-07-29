@@ -92,7 +92,7 @@ export default function BackupsPage() {
       <PageHeader
         eyebrow="Хранение"
         title="Бэкапы PDF"
-        description="Дополнительные копии всех версий актов в Google Drive."
+        description="Финальные PDF выдачи и возврата в Google Drive."
         actions={(
           <button
             type="button"
@@ -100,7 +100,7 @@ export default function BackupsPage() {
             disabled={syncing || !data?.enabled}
             className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-slate-900 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {syncing ? 'Копирование...' : 'Скопировать существующие PDF'}
+            {syncing ? 'Копирование...' : 'Скопировать финальные PDF'}
           </button>
         )}
       />
@@ -118,14 +118,14 @@ export default function BackupsPage() {
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <SummaryCard label="Назначение" value={data.destination} hint={data.enabled ? 'Подключено' : 'Отключено'} tone={data.enabled ? 'emerald' : 'amber'} />
             <SummaryCard label="Последний успешный" value={formatDate(data.last_success_at)} hint="Проверен SHA-256" tone="blue" />
-            <SummaryCard label="Сохранено копий" value={String(data.successful)} hint="Все версии PDF" tone="emerald" />
+            <SummaryCard label="Сохранено копий" value={String(data.successful)} hint="Только выдача и возврат" tone="emerald" />
             <SummaryCard label="Ошибок" value={String(data.failed)} hint={data.failed ? 'Требуют повторной синхронизации' : 'Проблем нет'} tone={data.failed ? 'rose' : 'slate'} />
           </section>
 
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-100 px-5 py-4">
               <h2 className="font-bold text-slate-900">История копирования</h2>
-              <p className="mt-1 text-xs text-slate-500">Новые PDF копируются автоматически после создания каждой версии акта.</p>
+              <p className="mt-1 text-xs text-slate-500">Копии создаются после полного завершения выдачи и после полного возврата.</p>
             </div>
             {data.items.length === 0 ? (
               <div className="p-10 text-center text-sm text-slate-400">История пока пуста.</div>

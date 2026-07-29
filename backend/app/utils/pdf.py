@@ -223,6 +223,31 @@ def _draw_party_table(
     return table_height
 
 
+def _build_numbered_party_rows(
+    party1_name: str,
+    recipients: list[dict],
+    party1_signature_path: str | None,
+    recipient_signature_paths: list[str | None],
+    party1_role: str,
+    recipient_role: str,
+) -> list[tuple[str, str, str | None]]:
+    rows = [(
+        f"Сторона 1\n({party1_role})",
+        f"ТОО «Школа 21 века»\nв лице: {party1_name or '_' * 40}",
+        party1_signature_path,
+    )]
+    for index, recipient in enumerate(recipients, start=1):
+        recipient_details = [recipient.get("full_name") or f"Получатель {index}"]
+        if recipient.get("email"):
+            recipient_details.append(recipient["email"])
+        rows.append((
+            f"Сторона {index + 1}\n({recipient_role})",
+            "\n".join(recipient_details),
+            recipient_signature_paths[index - 1] if index - 1 < len(recipient_signature_paths) else None,
+        ))
+    return rows
+
+
 def _build_ipad_rows(act_data: dict, extra_data: dict) -> list[list[str]]:
     rows = [[
         str(act_data.get('item_name', '') or ''),
@@ -307,8 +332,8 @@ def build_act_pdf_bytes(
     issue_signature_party2_path: str | None = None,
     return_signature_party1_path: str | None = None,
     return_signature_party2_path: str | None = None,
-    issue_recipient_signature_paths: list[str] | None = None,
-    return_recipient_signature_paths: list[str] | None = None,
+    issue_recipient_signature_paths: list[str | None] | None = None,
+    return_recipient_signature_paths: list[str | None] | None = None,
 ) -> bytes:
     buffer = BytesIO()
     pdf = _NumberedReferenceCanvas(buffer, pagesize=A4)
@@ -414,8 +439,8 @@ def build_act_pdf_v2(
     issue_signature_party2_path: str | None = None,
     return_signature_party1_path: str | None = None,
     return_signature_party2_path: str | None = None,
-    issue_recipient_signature_paths: list[str] | None = None,
-    return_recipient_signature_paths: list[str] | None = None,
+    issue_recipient_signature_paths: list[str | None] | None = None,
+    return_recipient_signature_paths: list[str | None] | None = None,
 ) -> bytes:
     """
     Генерирует PDF акта приема-передачи оборудования версии 2
@@ -426,6 +451,8 @@ def build_act_pdf_v2(
     width, height = A4
     font_name = _register_font()
     bold_font_name = _resolve_bold_font_name(font_name)
+    issue_recipient_signature_paths = issue_recipient_signature_paths or []
+    return_recipient_signature_paths = return_recipient_signature_paths or []
     act_reference = _format_act_reference(str(act_data.get("id", "-")))
     pdf.set_reference_drawer(
         lambda c, page, total: _draw_page_reference(c, font_name, act_reference, page, total)
@@ -442,6 +469,28 @@ def build_act_pdf_v2(
         nonlocal y
         pdf.showPage()
         y = margin_top
+
+    def draw_paginated_party_rows(rows: list[tuple[str, str, str | None]]) -> None:
+        nonlocal y
+        remaining_rows = list(rows)
+        while remaining_rows:
+            max_rows = int((y - 60 - 24) // 52)
+            if max_rows < 1:
+                start_new_page()
+                max_rows = int((y - 60 - 24) // 52)
+            page_rows = remaining_rows[:max_rows]
+            remaining_rows = remaining_rows[max_rows:]
+            table_height = _draw_party_table(
+                pdf,
+                margin_left,
+                y,
+                font_name,
+                bold_font_name,
+                page_rows,
+            )
+            y -= table_height + 20
+            if remaining_rows:
+                start_new_page()
     
     pdf.setTitle(f"Акт приема-передачи оборудования")
     
@@ -501,36 +550,17 @@ def build_act_pdf_v2(
     y -= 25
     
     # Таблица со сторонами. Если получателей несколько, для каждого делаем отдельную строку и колонку подписи.
-    party_rows = [
-        (
-            'Сторона 1\n(Передающая сторона)',
-            f"ТОО «Школа 21 века»\nв лице: {act_data.get('party1_name', '_' * 40)}",
-            issue_signature_party1_path,
-        )
-    ]
-    for index, recipient in enumerate(normalized_recipients, start=1):
-        recipient_details = [recipient.get("full_name") or f"Получатель {index}"]
-        if recipient.get("email"):
-            recipient_details.append(recipient["email"])
-        party_rows.append((
-            'Сторона 2\n(Принимающая сторона)' if index == 1 else 'Сторона 2\n(Получатель)',
-            "\n".join(recipient_details),
-            issue_recipient_signature_paths[index - 1] if issue_recipient_signature_paths and index - 1 < len(issue_recipient_signature_paths) else None,
-        ))
-
-    parties_table_height_estimate = 24 + (52 * len(party_rows))
-    if y - parties_table_height_estimate < 100:
-        start_new_page()
-
-    parties_table_height = _draw_party_table(
-        pdf,
-        margin_left,
-        y,
-        font_name,
-        bold_font_name,
-        party_rows,
+    party_rows = _build_numbered_party_rows(
+        str(act_data.get('party1_name', '')),
+        normalized_recipients,
+        issue_signature_party1_path,
+        issue_recipient_signature_paths,
+        "Передающая сторона",
+        "Принимающая сторона",
     )
-    y -= (parties_table_height + 25)
+
+    draw_paginated_party_rows(party_rows)
+    y -= 5
     
     is_ipad_template = template_code == 'IPAD'
 
@@ -864,10 +894,15 @@ def build_act_pdf_v2(
             
             y = return_name_y - 25
         else:
-            # Для нескольких получателей подписи возврата тоже в первой таблице
-            pdf.setFont(font_name, 10)
-            pdf.drawString(margin_left, y, "Подписи сторон при возврате указаны в таблице выше.")
-            y -= 20
+            return_party_rows = _build_numbered_party_rows(
+                str(act_data.get('party1_name', '')),
+                normalized_recipients,
+                return_signature_party1_path,
+                return_recipient_signature_paths,
+                "Принимает возврат",
+                "Возвращает технику",
+            )
+            draw_paginated_party_rows(return_party_rows)
     
     pdf.save()
     return buffer.getvalue()
