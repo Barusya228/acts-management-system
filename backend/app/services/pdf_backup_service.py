@@ -24,7 +24,8 @@ FINAL_BACKUP_STAGES = {
 
 
 def get_final_backup_stage(version: ActVersion) -> str | None:
-    snapshot = version.data_json if isinstance(version.data_json, dict) else {}
+    version_data = getattr(version, "data_json", None)
+    snapshot = version_data if isinstance(version_data, dict) else {}
     raw_status = snapshot.get("status")
     status = raw_status.value if hasattr(raw_status, "value") else str(raw_status or "")
     return FINAL_BACKUP_STAGES.get(status)

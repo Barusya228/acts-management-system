@@ -428,12 +428,14 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
                 inventory_device_id = str(inventory_device_id).strip() or None
             if not name and not serial and not imei and not inventory_device_id:
                 continue
-            normalized_equipment.append({
-                "inventory_device_id": inventory_device_id,
+            normalized_item = {
                 "name": name,
                 "serial": serial,
                 "imei": imei,
-            })
+            }
+            if inventory_device_id:
+                normalized_item["inventory_device_id"] = inventory_device_id
+            normalized_equipment.append(normalized_item)
 
         payload[EQUIPMENT_LIST_KEY] = normalized_equipment
 
@@ -710,7 +712,7 @@ async def update_act(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
 
     if not act:
         raise HTTPException(
@@ -827,7 +829,7 @@ async def delete_act(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
     
     if not act:
         raise HTTPException(
@@ -870,7 +872,7 @@ async def sign_party1(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
     
     if not act:
         raise HTTPException(
@@ -961,7 +963,7 @@ async def sign_party2(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
     
     if not act:
         raise HTTPException(
@@ -1076,7 +1078,7 @@ async def start_return_flow(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
-    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
 
     if not act:
         raise HTTPException(
