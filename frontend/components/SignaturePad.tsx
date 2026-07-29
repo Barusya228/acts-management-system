@@ -11,19 +11,18 @@ interface SignaturePadProps {
 export default function SignaturePad({ onSave, onClear }: SignaturePadProps) {
   const sigCanvas = useRef<SignatureCanvas>(null);
   const [error, setError] = useState('');
+  const [hasInk, setHasInk] = useState(false);
 
   const clear = () => {
     sigCanvas.current?.clear();
+    setHasInk(false);
     setError('');
     if (onClear) onClear();
   };
 
   const save = () => {
     if (sigCanvas.current) {
-      const canvas = sigCanvas.current.getCanvas();
-      const pixels = canvas.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data;
-      const isEmpty = !pixels || !pixels.some((channel, index) => index % 4 === 3 && channel !== 0);
-      if (isEmpty) {
+      if (!hasInk) {
         setError('Поставьте подпись перед сохранением');
         return;
       }
@@ -35,7 +34,10 @@ export default function SignaturePad({ onSave, onClear }: SignaturePadProps) {
 
   return (
     <div className="border border-gray-300 rounded-lg p-4 bg-white">
-      <div className="border-2 border-dashed border-gray-300 rounded mb-4">
+      <div
+        className="border-2 border-dashed border-gray-300 rounded mb-4"
+        onPointerDown={() => setHasInk(true)}
+      >
         <SignatureCanvas
           ref={sigCanvas}
           canvasProps={{
