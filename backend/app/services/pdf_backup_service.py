@@ -66,7 +66,8 @@ def build_backup_relative_path(
         act.template.code if getattr(act, "template", None) else None,
         "UNKNOWN_TEMPLATE",
     )
-    snapshot = version.data_json if isinstance(version.data_json, dict) else {}
+    version_data = getattr(version, "data_json", None)
+    snapshot = version_data if isinstance(version_data, dict) else {}
     extra_data = snapshot.get("extra_data_json") if isinstance(snapshot.get("extra_data_json"), dict) else {}
     snapshot_category = extra_data.get("inventory_category")
     device = None
