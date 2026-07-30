@@ -36,6 +36,14 @@ interface InventoryCategory {
   is_system: boolean;
 }
 
+interface DeviceGroup {
+  name: string;
+  model: string;
+  count: number;
+}
+
+const groupKey = (group: Pick<DeviceGroup, 'name' | 'model'>) => `${group.name}\u0000${group.model}`;
+
 const statusOptions = [
   { value: 'available', label: 'Не выдан', cls: 'bg-emerald-100 text-emerald-700' },
   { value: 'assigned', label: 'Выдан под акт', cls: 'bg-amber-100 text-amber-700' },
@@ -69,6 +77,8 @@ export default function InventoryPage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loadError, setLoadError] = useState('');
+  const [groups, setGroups] = useState<DeviceGroup[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
 
   const [showModal, setShowModal] = useState(false);
@@ -89,7 +99,10 @@ export default function InventoryPage() {
   }, [user, router]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchDevices();
-  }, [user, catFilter, statusFilter, page, refreshKey]);
+  }, [user, catFilter, statusFilter, selectedGroup, page, refreshKey]);
+  useEffect(() => {
+    if (user?.role === 'ADMIN') fetchGroups();
+  }, [user, catFilter, statusFilter, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchCategories();
   }, [user]);
@@ -114,6 +127,11 @@ export default function InventoryPage() {
       if (catFilter) params.set('category', catFilter);
       if (statusFilter) params.set('status', statusFilter);
       if (search) params.set('search', search);
+      const activeGroup = groups.find(group => groupKey(group) === selectedGroup);
+      if (activeGroup) {
+        params.set('name', activeGroup.name);
+        params.set('model', activeGroup.model);
+      }
       const res = await api.get(`/api/inventory?${params.toString()}`);
       setDevices(res.data.items || []);
       setTotal(res.data.total || 0);
@@ -125,9 +143,29 @@ export default function InventoryPage() {
     finally { setLoading(false); }
   };
 
+  const fetchGroups = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (catFilter) params.set('category', catFilter);
+      if (statusFilter) params.set('status', statusFilter);
+      if (search) params.set('search', search);
+      const response = await api.get(`/api/inventory/groups?${params.toString()}`);
+      const nextGroups = Array.isArray(response.data) ? response.data : [];
+      setGroups(nextGroups);
+      if (selectedGroup && !nextGroups.some((group: DeviceGroup) => groupKey(group) === selectedGroup)) {
+        setSelectedGroup('');
+        setPage(1);
+      }
+    } catch {
+      setGroups([]);
+      setSelectedGroup('');
+    }
+  };
+
   const handleSearch = () => {
-    if (page === 1) fetchDevices();
-    else setPage(1);
+    setSelectedGroup('');
+    setPage(1);
+    setRefreshKey(value => value + 1);
   };
 
   const resetFilters = () => {
@@ -135,6 +173,7 @@ export default function InventoryPage() {
     setCatFilter('');
     setStatusFilter('');
     setPage(1);
+    setSelectedGroup('');
     setRefreshKey(value => value + 1);
   };
 
@@ -143,6 +182,7 @@ export default function InventoryPage() {
     setStatusFilter('');
     setCatFilter(categoryCode);
     setPage(1);
+    setSelectedGroup('');
     setShowCategoryModal(false);
   };
 
@@ -211,7 +251,7 @@ export default function InventoryPage() {
         showToast('Добавлено', 'success');
       }
       setShowModal(false);
-      fetchDevices();
+      setRefreshKey(value => value + 1);
     } catch (err: any) { showToast(err.response?.data?.detail || 'Ошибка', 'error'); }
     finally { setSaving(false); }
   };
@@ -245,7 +285,7 @@ export default function InventoryPage() {
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    try { await api.delete(`/api/inventory/${deleteTarget.id}`); showToast('Удалено', 'success'); setDeleteTarget(null); fetchDevices(); }
+    try { await api.delete(`/api/inventory/${deleteTarget.id}`); showToast('Удалено', 'success'); setDeleteTarget(null); setRefreshKey(value => value + 1); }
     catch (err: any) { showToast(err.response?.data?.detail || 'Ошибка', 'error'); }
   };
 
@@ -283,7 +323,9 @@ export default function InventoryPage() {
       }
       setDeleteCategoryTarget(null);
       await fetchCategories();
-      await fetchDevices();
+      setSelectedGroup('');
+      setPage(1);
+      setRefreshKey(value => value + 1);
       showToast('Категория удалена', 'success');
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Не удалось удалить категорию', 'error');
@@ -311,15 +353,15 @@ export default function InventoryPage() {
         />
 
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input type="text" placeholder="Поиск по названию, модели, серийнику..." value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" placeholder="Поиск по названию, модели, инв. номеру или штрихкоду..." value={search} onChange={e => setSearch(e.target.value)}
             className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }} />
-          <select value={catFilter} onChange={e => { setCatFilter(e.target.value); setPage(1); }}
+          <select value={catFilter} onChange={e => { setCatFilter(e.target.value); setSelectedGroup(''); setPage(1); }}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
             <option value="">Все категории</option>
             {categories.map(category => <option key={category.id} value={category.code}>{category.icon} {category.name}</option>)}
           </select>
-          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setSelectedGroup(''); setPage(1); }}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
             <option value="">Все статусы</option>
             {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -331,6 +373,31 @@ export default function InventoryPage() {
             </button>
           )}
         </div>
+
+        {groups.length > 0 && (
+          <div className="mb-5 overflow-x-auto pb-2">
+            <div className="flex min-w-max gap-2">
+              <button type="button" onClick={() => { setSelectedGroup(''); setPage(1); }}
+                className={`min-h-12 rounded-xl border px-4 text-left transition ${!selectedGroup ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-gray-200 bg-white text-slate-700 hover:border-blue-300'}`}>
+                <span className="block text-sm font-semibold">Все устройства</span>
+                <span className={`text-xs ${!selectedGroup ? 'text-blue-100' : 'text-slate-400'}`}>{groups.reduce((sum, group) => sum + group.count, 0)} шт.</span>
+              </button>
+              {groups.map(group => {
+                const key = groupKey(group);
+                const active = selectedGroup === key;
+                return (
+                  <button key={key} type="button" onClick={() => { setSelectedGroup(key); setPage(1); }}
+                    className={`min-h-12 rounded-xl border px-4 text-left transition ${active ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-gray-200 bg-white text-slate-700 hover:border-blue-300'}`}>
+                    <span className="block max-w-52 truncate text-sm font-semibold">{group.name}</span>
+                    <span className={`block max-w-52 truncate text-xs ${active ? 'text-blue-100' : 'text-slate-400'}`}>
+                      {group.model || 'Без модели'} · {group.count} шт.
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="rounded-2xl bg-white px-5 py-16 text-center shadow-sm">

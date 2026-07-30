@@ -3,6 +3,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
@@ -188,11 +189,51 @@ def list_available_devices(
     ]
 
 
+@router.get("/groups")
+def list_device_groups(
+    category: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    query = db.query(
+        InventoryDevice.name,
+        InventoryDevice.model,
+        func.count(InventoryDevice.id).label("count"),
+    )
+    if category:
+        query = query.filter(InventoryDevice.category == category)
+    if status == "assigned":
+        query = query.filter(InventoryDevice.status.in_(["reserved", "issued"]))
+    elif status:
+        query = query.filter(InventoryDevice.status == status)
+    if search:
+        value = f"%{search}%"
+        query = query.filter(
+            InventoryDevice.name.ilike(value)
+            | InventoryDevice.model.ilike(value)
+            | InventoryDevice.inventory_number.ilike(value)
+            | InventoryDevice.barcode.ilike(value)
+        )
+    rows = query.group_by(InventoryDevice.name, InventoryDevice.model).order_by(
+        func.count(InventoryDevice.id).desc(),
+        InventoryDevice.name.asc(),
+        InventoryDevice.model.asc(),
+    ).all()
+    return [
+        {"name": name, "model": model or "", "count": count}
+        for name, model, count in rows
+    ]
+
+
 @router.get("", response_model=InventoryListResponse)
 def list_devices(
     category: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
+    name: Optional[str] = Query(None),
+    model: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -215,6 +256,13 @@ def list_devices(
             | InventoryDevice.inventory_number.ilike(s)
             | InventoryDevice.assigned_to.ilike(s)
         )
+    if name:
+        query = query.filter(InventoryDevice.name == name)
+    if model is not None:
+        if model:
+            query = query.filter(InventoryDevice.model == model)
+        else:
+            query = query.filter(InventoryDevice.model.is_(None))
 
     total = query.count()
     devices = query.order_by(InventoryDevice.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
