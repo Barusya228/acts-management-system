@@ -180,6 +180,7 @@ def list_available_devices(
             "serial_number": d.serial_number,
             "category": d.category,
             "inventory_number": d.inventory_number,
+            "barcode": d.barcode or "",
         }
         for d in devices
     ]
@@ -257,6 +258,9 @@ def update_device(
         raise HTTPException(status_code=404, detail="Устройство не найдено")
 
     updates = data.model_dump(exclude_unset=True)
+    if "inventory_number" in updates and updates["inventory_number"]:
+        # New acts use the inventory number as the visible equipment identifier.
+        updates["serial_number"] = updates["inventory_number"].strip()
     if "category" in updates and updates["category"] is None:
         raise HTTPException(status_code=422, detail="Категория не может быть пустой")
     if "status" in updates and updates["status"] is None:

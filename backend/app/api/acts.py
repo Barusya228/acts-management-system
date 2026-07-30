@@ -137,7 +137,8 @@ def _inventory_category_for_serial(db: Session, serial_number: str | None) -> st
     if not serial_number:
         return None
     device = db.query(InventoryDevice).filter(
-        InventoryDevice.serial_number == serial_number
+        (InventoryDevice.serial_number == serial_number)
+        | (InventoryDevice.inventory_number == serial_number)
     ).first()
     return str(device.category) if device else None
 
@@ -204,12 +205,12 @@ def _reserve_act_devices(
         if assignment_type == "MAIN":
             act.inventory_device_id = device.id
             act.item_name = device.name
-            act.item_serial = device.serial_number
+            act.item_serial = device.inventory_number
         else:
             normalized_equipment.append({
                 "inventory_device_id": str(device.id),
                 "name": device.name,
-                "serial": device.serial_number,
+                "serial": device.inventory_number,
                 "imei": str((item or {}).get("imei", "")).strip(),
             })
 

@@ -164,8 +164,9 @@ export default function InventoryPage() {
     try {
       const payload: any = {
         inventory_number: form.inventory_number.trim(), name: form.name.trim(), category: form.category,
-        serial_number: editId ? form.serial_number : form.inventory_number.trim(), status: form.status,
+        serial_number: form.inventory_number.trim(), status: form.status,
         barcode: form.barcode.trim(), model: form.model.trim() || null,
+        notes: form.notes.trim() || null,
       };
       if (editId) {
         await api.patch(`/api/inventory/${editId}`, payload);
@@ -360,6 +361,18 @@ export default function InventoryPage() {
                   {statusOptions.filter(option => option.value !== 'assigned').map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select></div>
             </div>
+            {editId && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Заметки</label>
+                <textarea
+                  value={form.notes}
+                  onChange={e => setForm({ ...form, notes: e.target.value })}
+                  rows={3}
+                  className="w-full resize-y rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                  placeholder="Комментарий о состоянии или особенностях устройства"
+                />
+              </div>
+            )}
           </div>
           <div className="mt-6 flex gap-3">
             <button onClick={handleSubmit} disabled={saving}

@@ -16,7 +16,7 @@ interface Recipient {
 interface EquipmentItem { inventory_device_id?: string; name: string; serial: string; }
 
 interface TemplateOption { id: string; code: string; name: string; }
-interface DeviceOption { id: string; name: string; serial_number: string; inventory_number: string; }
+interface DeviceOption { id: string; name: string; serial_number: string; inventory_number: string; barcode: string; }
 interface ParticipantOption { id: string; full_name: string; kind: string; email?: string | null; }
 
 function CreateActForm() {
@@ -190,7 +190,7 @@ function CreateActForm() {
                 <select value={deviceSerial} onChange={e => handleDeviceSelect(e.target.value)}
                   className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400">
                   <option value="">Не выбрано</option>
-                  {devices.map(d => <option key={d.id} value={d.serial_number}>{d.name} — {d.serial_number}</option>)}
+                  {devices.map(d => <option key={d.id} value={d.serial_number}>{d.name} — Инв: {d.inventory_number} — ШК: {d.barcode}</option>)}
                 </select>
               ) : (
                 <input type="text" disabled className="w-full rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 text-sm text-slate-400" value="Нет доступных" />
@@ -208,7 +208,7 @@ function CreateActForm() {
                         className="flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-400">
                         <option value="">Выберите устройство</option>
                         {devices.filter(device => device.id !== selectedDevice?.id && !equipment.some((selected, selectedIndex) => selectedIndex !== i && selected.inventory_device_id === device.id)).map(device => (
-                          <option key={device.id} value={device.id}>{device.name} — {device.serial_number}</option>
+                          <option key={device.id} value={device.id}>{device.name} — Инв: {device.inventory_number} — ШК: {device.barcode}</option>
                         ))}
                       </select>
                       <button type="button" onClick={() => removeEquipment(i)}
@@ -321,7 +321,7 @@ function CreateActForm() {
                 <div>
                   <dt className="text-xs text-slate-400">Устройство</dt>
                   <dd className="text-sm font-semibold text-slate-800">{selectedDevice?.name || '—'}</dd>
-                  {selectedDevice && <dd className="text-xs text-slate-400">SN: {selectedDevice.serial_number}</dd>}
+                  {selectedDevice && <dd className="text-xs text-slate-400">Инв: {selectedDevice.inventory_number} · ШК: {selectedDevice.barcode}</dd>}
                 </div>
                 {equipment.filter(e => e.name.trim()).length > 0 && (
                   <div>

@@ -72,7 +72,7 @@ function ActCreatePageContent() {
   const [party1ParticipantId, setParty1ParticipantId] = useState('');
   const [extraData, setExtraData] = useState<Record<string, string>>({});
   const [equipmentItems, setEquipmentItems] = useState<EquipmentItem[]>([]);
-  const [availableDevices, setAvailableDevices] = useState<{ id: string; name: string; serial_number: string; inventory_number: string; category: string }[]>([]);
+  const [availableDevices, setAvailableDevices] = useState<{ id: string; name: string; serial_number: string; inventory_number: string; barcode: string; category: string }[]>([]);
   const [selectedDeviceSerial, setSelectedDeviceSerial] = useState('');
   const [recipients, setRecipients] = useState<EditableRecipient[]>([{ full_name: '', email: '' }]);
   const [formData, setFormData] = useState<ActFormData>({
@@ -204,7 +204,12 @@ function ActCreatePageContent() {
 
       const normalizedEquipment = equipmentItems
         .map((item) => {
-          const device = availableDevices.find(candidate => candidate.serial_number === item.serial.trim());
+          const identifier = item.serial.trim();
+          const device = availableDevices.find(candidate =>
+            candidate.serial_number === identifier ||
+            candidate.inventory_number === identifier ||
+            candidate.barcode === identifier
+          );
           return {
             inventory_device_id: device?.id,
             name: device?.name || item.name.trim(),
@@ -390,7 +395,8 @@ function ActCreatePageContent() {
                           {formData.item_name}
                         </p>
                         <p className="text-xs text-slate-500">
-                          SN: {formData.item_serial}
+                          Инв: {availableDevices.find(device => device.serial_number === selectedDeviceSerial)?.inventory_number}
+                          {' · '}ШК: {availableDevices.find(device => device.serial_number === selectedDeviceSerial)?.barcode}
                         </p>
                       </div>
                     </div>
@@ -415,7 +421,7 @@ function ActCreatePageContent() {
                       <option value="">Выбрать устройство...</option>
                       {availableDevices.map(d => (
                         <option key={d.id} value={d.serial_number}>
-                          {d.name} — SN: {d.serial_number}
+                          {d.name} — Инв: {d.inventory_number} — ШК: {d.barcode}
                         </option>
                       ))}
                     </select>
