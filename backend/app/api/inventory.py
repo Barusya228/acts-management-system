@@ -220,6 +220,11 @@ def list_available_devices(
         .order_by(InventoryDevice.category, InventoryDevice.name)
         .all()
     )
+    category_codes = {device.category for device in devices}
+    categories = db.query(InventoryCategory).filter(
+        InventoryCategory.code.in_(category_codes)
+    ).all() if category_codes else []
+    categories_by_code = {category.code: category for category in categories}
     return [
         {
             "id": str(d.id),
@@ -227,6 +232,8 @@ def list_available_devices(
             "model": d.model or "",
             "serial_number": d.serial_number,
             "category": d.category,
+            "category_name": categories_by_code[d.category].name if d.category in categories_by_code else d.category,
+            "category_icon": categories_by_code[d.category].icon if d.category in categories_by_code else "📦",
             "inventory_number": d.inventory_number,
             "barcode": d.barcode or "",
         }

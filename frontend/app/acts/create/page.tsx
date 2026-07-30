@@ -17,7 +17,7 @@ interface EquipmentItem { inventory_device_id?: string; name: string; serial: st
 interface AccessoryItem { name: string; model: string; quantity: number; note: string; requires_return: boolean; }
 
 interface TemplateOption { id: string; code: string; name: string; }
-interface DeviceOption { id: string; name: string; model?: string; category: string; serial_number: string; inventory_number: string; barcode: string; }
+interface DeviceOption { id: string; name: string; model?: string; category: string; category_name: string; category_icon: string; serial_number: string; inventory_number: string; barcode: string; }
 interface ParticipantOption { id: string; full_name: string; kind: string; email?: string | null; }
 
 function CreateActForm() {
@@ -140,7 +140,16 @@ function CreateActForm() {
     groups.set(key, current);
     return groups;
   }, new Map<string, { key: string; name: string; model: string; devices: DeviceOption[] }>()).values());
-  const deviceCategories = Array.from(new Set(devices.map(device => device.category))).sort();
+  const deviceCategories = Array.from(devices.reduce((categories, device) => {
+    if (!categories.has(device.category)) {
+      categories.set(device.category, {
+        code: device.category,
+        name: device.category_name || device.category,
+        icon: device.category_icon || '📦',
+      });
+    }
+    return categories;
+  }, new Map<string, { code: string; name: string; icon: string }>()).values()).sort((left, right) => left.name.localeCompare(right.name, 'ru'));
 
   const updateRecipient = (i: number, field: 'full_name' | 'email', value: string) => {
     setRecipients(prev => prev.map((r, idx) => idx === i
@@ -481,8 +490,8 @@ function CreateActForm() {
                 <button type="button" onClick={() => setDeviceCategory('')}
                   className={`min-h-10 shrink-0 rounded-lg px-4 text-sm font-medium ${!deviceCategory ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>Все</button>
                 {deviceCategories.map(category => (
-                  <button key={category} type="button" onClick={() => setDeviceCategory(category)}
-                    className={`min-h-10 shrink-0 rounded-lg px-4 text-sm font-medium ${deviceCategory === category ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{category}</button>
+                  <button key={category.code} type="button" onClick={() => setDeviceCategory(category.code)}
+                    className={`min-h-10 shrink-0 rounded-lg px-4 text-sm font-medium ${deviceCategory === category.code ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{category.icon} {category.name}</button>
                 ))}
               </div>
             </div>
