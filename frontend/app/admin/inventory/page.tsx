@@ -76,6 +76,7 @@ export default function InventoryPage() {
   const [form, setForm] = useState(emptyForm);
   const [bulkMode, setBulkMode] = useState(false);
   const [bulkRows, setBulkRows] = useState([{ ...emptyBulkRow }]);
+  const [bulkPaste, setBulkPaste] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [categorySaving, setCategorySaving] = useState(false);
@@ -155,6 +156,7 @@ export default function InventoryPage() {
     setEditId(null);
     setBulkMode(false);
     setBulkRows([{ ...emptyBulkRow }]);
+    setBulkPaste('');
     setForm({ ...emptyForm, category: initialCategory });
     setShowModal(true);
   };
@@ -216,6 +218,29 @@ export default function InventoryPage() {
 
   const updateBulkRow = (index: number, field: 'inventory_number' | 'barcode', value: string) => {
     setBulkRows(rows => rows.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row));
+  };
+
+  const parseBulkPaste = () => {
+    const rows = bulkPaste
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => line.split(/[\s;,]+/).filter(Boolean))
+      .filter(parts => parts.length >= 2)
+      .map(parts => {
+        const first = parts[0];
+        const second = parts[1];
+        const inventoryFirst = first.startsWith('200') && first.length > second.length;
+        return inventoryFirst
+          ? { inventory_number: first, barcode: second }
+          : { inventory_number: second, barcode: first };
+      });
+    if (rows.length === 0) {
+      showToast('Не удалось распознать строки. Используйте формат: штрихкод и инвентарный номер', 'error');
+      return;
+    }
+    setBulkRows(rows);
+    showToast(`Распознано устройств: ${rows.length}`, 'success');
   };
 
   const handleDelete = async () => {
@@ -414,6 +439,21 @@ export default function InventoryPage() {
             </div>
             {bulkMode && !editId && (
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-3">
+                  <label className="mb-1 block text-sm font-semibold text-slate-700">Вставить список</label>
+                  <p className="mb-2 text-xs text-slate-500">Одна строка — одно устройство: сначала штрихкод, затем инвентарный номер.</p>
+                  <textarea
+                    value={bulkPaste}
+                    onChange={event => setBulkPaste(event.target.value)}
+                    rows={6}
+                    className="w-full resize-y rounded-lg border border-blue-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-blue-400"
+                    placeholder={'000018869\t2000000188690\n000018870\t2000000188706'}
+                  />
+                  <button type="button" onClick={parseBulkPaste}
+                    className="mt-2 min-h-10 w-full rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700">
+                    Распознать список
+                  </button>
+                </div>
                 <div className="mb-2 flex items-center justify-between">
                   <div>
                     <p className="text-sm font-semibold text-slate-700">Идентификаторы устройств</p>
