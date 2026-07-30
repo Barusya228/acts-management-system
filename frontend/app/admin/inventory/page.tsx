@@ -52,6 +52,8 @@ const emptyForm = {
   serial_number: '', status: 'available', location: '', notes: '',
 };
 
+const emptyBulkRow = { inventory_number: '', barcode: '' };
+
 export default function InventoryPage() {
   const { user } = useAuth();
   const router = useRouter();
@@ -72,6 +74,8 @@ export default function InventoryPage() {
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkRows, setBulkRows] = useState([{ ...emptyBulkRow }]);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [categorySaving, setCategorySaving] = useState(false);
@@ -149,19 +153,48 @@ export default function InventoryPage() {
     }
     const initialCategory = categories.find(category => category.code === 'notebook')?.code || categories[0]?.code || '';
     setEditId(null);
+    setBulkMode(false);
+    setBulkRows([{ ...emptyBulkRow }]);
     setForm({ ...emptyForm, category: initialCategory });
     setShowModal(true);
   };
   const openEdit = (d: Device) => {
     setEditId(d.id);
+    setBulkMode(false);
     setForm({ inventory_number: d.inventory_number, barcode: d.barcode || '', name: d.name, model: d.model || '', category: d.category, serial_number: d.serial_number, status: d.status, location: d.location || '', notes: d.notes || '' });
     setShowModal(true);
   };
 
   const handleSubmit = async () => {
-    if (!form.inventory_number.trim() || !form.barcode.trim() || !form.name.trim()) { showToast('Инв. номер, штрихкод и название обязательны', 'error'); return; }
+    if (!form.name.trim()) { showToast('Название обязательно', 'error'); return; }
+    if (bulkMode && !editId) {
+      if (bulkRows.some(row => !row.inventory_number.trim() || !row.barcode.trim())) {
+        showToast('Заполните инвентарный номер и штрихкод в каждой строке', 'error');
+        return;
+      }
+    } else if (!form.inventory_number.trim() || !form.barcode.trim()) {
+      showToast('Инв. номер и штрихкод обязательны', 'error');
+      return;
+    }
     setSaving(true);
     try {
+      if (bulkMode && !editId) {
+        const response = await api.post('/api/inventory/bulk', {
+          name: form.name.trim(),
+          model: form.model.trim() || null,
+          category: form.category,
+          status: form.status,
+          devices: bulkRows.map(row => ({
+            inventory_number: row.inventory_number.trim(),
+            barcode: row.barcode.trim(),
+          })),
+        });
+        showToast(`Добавлено устройств: ${response.data.created}`, 'success');
+        setShowModal(false);
+        setPage(1);
+        setRefreshKey(value => value + 1);
+        return;
+      }
       const payload: any = {
         inventory_number: form.inventory_number.trim(), name: form.name.trim(), category: form.category,
         serial_number: form.inventory_number.trim(), status: form.status,
@@ -179,6 +212,10 @@ export default function InventoryPage() {
       fetchDevices();
     } catch (err: any) { showToast(err.response?.data?.detail || 'Ошибка', 'error'); }
     finally { setSaving(false); }
+  };
+
+  const updateBulkRow = (index: number, field: 'inventory_number' | 'barcode', value: string) => {
+    setBulkRows(rows => rows.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row));
   };
 
   const handleDelete = async () => {
@@ -322,16 +359,30 @@ export default function InventoryPage() {
       </div>
 
       {showModal && (
-        <Modal onClose={() => setShowModal(false)} title={editId ? 'Редактировать устройство' : 'Добавить устройство'}>
+        <Modal onClose={() => setShowModal(false)} title={editId ? 'Редактировать устройство' : bulkMode ? 'Добавить несколько устройств' : 'Добавить устройство'}>
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            {!editId && (
+              <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+                <button type="button" onClick={() => setBulkMode(false)}
+                  className={`min-h-10 rounded-lg px-3 text-sm font-medium transition ${!bulkMode ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                  Одно устройство
+                </button>
+                <button type="button" onClick={() => setBulkMode(true)}
+                  className={`min-h-10 rounded-lg px-3 text-sm font-medium transition ${bulkMode ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                  Несколько устройств
+                </button>
+              </div>
+            )}
+            {!bulkMode && (
+              <div className="grid grid-cols-2 gap-3">
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Инв. номер *</label>
                 <input value={form.inventory_number} onChange={e => setForm({ ...form, inventory_number: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="2000000012345" /></div>
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Штрихкод *</label>
                 <input value={form.barcode} onChange={e => setForm({ ...form, barcode: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="1234" /></div>
-            </div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Название *</label>
                 <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
@@ -361,6 +412,34 @@ export default function InventoryPage() {
                   {statusOptions.filter(option => option.value !== 'assigned').map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select></div>
             </div>
+            {bulkMode && !editId && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-700">Идентификаторы устройств</p>
+                    <p className="text-xs text-slate-400">Название, модель, категория и статус применятся ко всем строкам.</p>
+                  </div>
+                  <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700">{bulkRows.length}</span>
+                </div>
+                <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                  {bulkRows.map((row, index) => (
+                    <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                      <input value={row.inventory_number} onChange={e => updateBulkRow(index, 'inventory_number', e.target.value)}
+                        className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Инв. номер" />
+                      <input value={row.barcode} onChange={e => updateBulkRow(index, 'barcode', e.target.value)}
+                        className="min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Штрихкод" />
+                      <button type="button" disabled={bulkRows.length === 1}
+                        onClick={() => setBulkRows(rows => rows.filter((_, rowIndex) => rowIndex !== index))}
+                        className="min-h-10 rounded-lg px-3 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-30">✕</button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={() => setBulkRows(rows => [...rows, { ...emptyBulkRow }])}
+                  className="mt-3 min-h-10 w-full rounded-lg border border-dashed border-blue-300 text-sm font-medium text-blue-600 transition hover:bg-blue-50">
+                  + Добавить строку
+                </button>
+              </div>
+            )}
             {editId && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">Заметки</label>
@@ -376,7 +455,7 @@ export default function InventoryPage() {
           </div>
           <div className="mt-6 flex gap-3">
             <button onClick={handleSubmit} disabled={saving}
-              className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50">{saving ? 'Сохранение...' : editId ? 'Сохранить' : 'Добавить'}</button>
+              className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50">{saving ? 'Сохранение...' : editId ? 'Сохранить' : bulkMode ? `Добавить ${bulkRows.length}` : 'Добавить'}</button>
             <button onClick={() => setShowModal(false)} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-200">Отмена</button>
           </div>
         </Modal>

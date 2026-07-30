@@ -203,6 +203,19 @@ class InventoryDeviceCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class InventoryBulkItem(BaseModel):
+    inventory_number: str
+    barcode: str
+
+
+class InventoryBulkCreate(BaseModel):
+    name: str
+    model: Optional[str] = None
+    category: str
+    status: Literal["available", "maintenance", "retired"] = "available"
+    devices: list[InventoryBulkItem]
+
+
 class InventoryDeviceUpdate(BaseModel):
     inventory_number: Optional[str] = None
     barcode: Optional[str] = None

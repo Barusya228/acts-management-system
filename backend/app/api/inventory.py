@@ -1,4 +1,5 @@
 import re
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +14,7 @@ from app.schemas.schemas import (
     InventoryCategoryCreate,
     InventoryCategoryResponse,
     InventoryCategoryUpdate,
+    InventoryBulkCreate,
     InventoryDeviceCreate,
     InventoryDeviceUpdate,
     InventoryDeviceResponse,
@@ -244,6 +246,82 @@ def create_device(
         raise HTTPException(status_code=409, detail="Инвентарный номер, штрихкод или серийный номер уже используется")
     db.refresh(device)
     return device
+
+
+@router.post("/bulk", status_code=status.HTTP_201_CREATED)
+def create_devices_bulk(
+    data: InventoryBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    _require_active_category(db, data.category)
+    name = data.name.strip()
+    model = data.model.strip() if data.model else None
+    if not name:
+        raise HTTPException(status_code=422, detail="Название устройства обязательно")
+    if not data.devices:
+        raise HTTPException(status_code=422, detail="Добавьте хотя бы одно устройство")
+
+    rows = []
+    inventory_numbers = set()
+    barcodes = set()
+    for index, item in enumerate(data.devices):
+        inventory_number = item.inventory_number.strip()
+        barcode = item.barcode.strip()
+        if not inventory_number or not barcode:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Строка #{index + 1}: инвентарный номер и штрихкод обязательны",
+            )
+        if inventory_number in inventory_numbers or barcode in barcodes:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Строка #{index + 1}: инвентарный номер или штрихкод повторяется в списке",
+            )
+        inventory_numbers.add(inventory_number)
+        barcodes.add(barcode)
+        rows.append((inventory_number, barcode))
+
+    conflicts = db.query(InventoryDevice).filter(
+        (InventoryDevice.inventory_number.in_(inventory_numbers))
+        | (InventoryDevice.serial_number.in_(inventory_numbers))
+        | (InventoryDevice.barcode.in_(barcodes))
+    ).all()
+    if conflicts:
+        identifiers = ", ".join(
+            f"{device.inventory_number}/{device.barcode or 'без ШК'}"
+            for device in conflicts
+        )
+        raise HTTPException(status_code=409, detail=f"Устройства уже существуют: {identifiers}")
+
+    created = []
+    for inventory_number, barcode in rows:
+        device = InventoryDevice(
+            id=uuid.uuid4(),
+            inventory_number=inventory_number,
+            barcode=barcode,
+            serial_number=inventory_number,
+            name=name,
+            model=model,
+            category=data.category,
+            status=data.status,
+        )
+        db.add(device)
+        record_audit(db, current_user, "INVENTORY_DEVICE", device.id, "DEVICE_CREATED", {
+            "source": "bulk",
+            "inventory_number": inventory_number,
+        })
+        created.append(device)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Инвентарный номер или штрихкод уже используется")
+    return {
+        "created": len(created),
+        "device_ids": [str(device.id) for device in created],
+    }
 
 
 @router.patch("/{device_id}", response_model=InventoryDeviceResponse)
