@@ -640,6 +640,44 @@ def build_act_pdf_v2(
 
         table.drawOn(pdf, margin_left, y - table_height)
         y -= (table_height + 20)
+
+    accessories = extra_data.get("accessories", [])
+    if isinstance(accessories, list) and accessories:
+        accessory_data = [['№', 'Мелкая техника', 'Модель', 'Кол-во', 'Заметка', 'Возврат']]
+        for index, item in enumerate(accessories, start=1):
+            if not isinstance(item, dict):
+                continue
+            accessory_data.append([
+                str(index),
+                str(item.get('name', '') or '—'),
+                str(item.get('model', '') or '—'),
+                str(item.get('quantity', 1)),
+                str(item.get('note', '') or '—'),
+                'Да' if item.get('requires_return', True) else 'Нет',
+            ])
+        accessory_table = Table(accessory_data, colWidths=[28, 115, 90, 48, 160, 50])
+        accessory_table.setStyle(TableStyle([
+            ('FONT', (0, 0), (-1, -1), font_name, 8),
+            ('FONT', (0, 0), (-1, 0), bold_font_name, 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+            ('ALIGN', (3, 1), (3, -1), 'CENTER'),
+            ('ALIGN', (5, 1), (5, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        _, accessory_height = accessory_table.wrap(0, 0)
+        if y - accessory_height < 100:
+            start_new_page()
+        pdf.setFont(bold_font_name, 10)
+        pdf.drawString(margin_left, y, "Мелкая техника (добавлена вручную)")
+        y -= 15
+        accessory_table.drawOn(pdf, margin_left, y - accessory_height)
+        y -= accessory_height + 20
     
     # Пункт 2
     pdf.setFont(font_name, 11)

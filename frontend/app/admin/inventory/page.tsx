@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import AdminLayout from '@/components/AdminLayout';
 import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
@@ -42,6 +43,20 @@ interface DeviceGroup {
   count: number;
 }
 
+interface ManualAccessory {
+  id: string;
+  act_id: string;
+  act_reference: string;
+  name: string;
+  model?: string | null;
+  quantity: number;
+  note?: string | null;
+  requires_return: boolean;
+  status: string;
+  recipient_name: string;
+  issue_date: string;
+}
+
 const groupKey = (group: Pick<DeviceGroup, 'name' | 'model'>) => `${group.name}\u0000${group.model}`;
 
 const statusOptions = [
@@ -80,6 +95,9 @@ export default function InventoryPage() {
   const [groups, setGroups] = useState<DeviceGroup[]>([]);
   const [selectedGroup, setSelectedGroup] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [inventoryView, setInventoryView] = useState<'devices' | 'accessories'>('devices');
+  const [manualAccessories, setManualAccessories] = useState<ManualAccessory[]>([]);
+  const [manualTotal, setManualTotal] = useState(0);
 
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -98,8 +116,11 @@ export default function InventoryPage() {
     if (user && user.role !== 'ADMIN') { router.push('/guest'); }
   }, [user, router]);
   useEffect(() => {
-    if (user?.role === 'ADMIN') fetchDevices();
-  }, [user, catFilter, statusFilter, selectedGroup, page, refreshKey]);
+    if (user?.role === 'ADMIN') {
+      if (inventoryView === 'devices') fetchDevices();
+      else fetchManualAccessories();
+    }
+  }, [user, inventoryView, catFilter, statusFilter, selectedGroup, page, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchGroups();
   }, [user, catFilter, statusFilter, refreshKey]);
@@ -162,11 +183,36 @@ export default function InventoryPage() {
     }
   };
 
+  const fetchManualAccessories = async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const params = new URLSearchParams({ page: String(page), page_size: '24' });
+      if (search) params.set('search', search);
+      const response = await api.get(`/api/inventory/accessories?${params.toString()}`);
+      setManualAccessories(response.data.items || []);
+      setManualTotal(response.data.total || 0);
+    } catch {
+      setManualAccessories([]);
+      setManualTotal(0);
+      setLoadError('Не удалось загрузить ручные позиции');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSearch = () => {
     setSelectedGroup('');
     setPage(1);
     setRefreshKey(value => value + 1);
   };
+
+  const accessoryStatus = (status: string) => ({
+    RESERVED: { label: 'Зарезервировано', cls: 'bg-violet-100 text-violet-700' },
+    ISSUED: { label: 'Выдано', cls: 'bg-amber-100 text-amber-700' },
+    RETURNED: { label: 'Возвращено', cls: 'bg-emerald-100 text-emerald-700' },
+    NO_RETURN_REQUIRED: { label: 'Возврат не требуется', cls: 'bg-blue-100 text-blue-700' },
+  } as Record<string, { label: string; cls: string }>)[status] || { label: status, cls: 'bg-gray-100 text-gray-700' };
 
   const resetFilters = () => {
     setSearch('');
@@ -352,20 +398,25 @@ export default function InventoryPage() {
           )}
         />
 
+        <div className="mb-5 grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+          <button type="button" onClick={() => { setInventoryView('devices'); setPage(1); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'devices' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Инвентарные устройства</button>
+          <button type="button" onClick={() => { setInventoryView('accessories'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'accessories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Мелкая техника · вручную</button>
+        </div>
+
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input type="text" placeholder="Поиск по названию, модели, инв. номеру или штрихкоду..." value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" placeholder={inventoryView === 'devices' ? 'Поиск по названию, модели, инв. номеру или штрихкоду...' : 'Поиск по названию, модели, заметке или получателю...'} value={search} onChange={e => setSearch(e.target.value)}
             className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }} />
-          <select value={catFilter} onChange={e => { setCatFilter(e.target.value); setSelectedGroup(''); setPage(1); }}
+          {inventoryView === 'devices' && <select value={catFilter} onChange={e => { setCatFilter(e.target.value); setSelectedGroup(''); setPage(1); }}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
             <option value="">Все категории</option>
             {categories.map(category => <option key={category.id} value={category.code}>{category.icon} {category.name}</option>)}
-          </select>
-          <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setSelectedGroup(''); setPage(1); }}
+          </select>}
+          {inventoryView === 'devices' && <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setSelectedGroup(''); setPage(1); }}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
             <option value="">Все статусы</option>
             {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          </select>}
           {(search || catFilter || statusFilter) && (
             <button type="button" onClick={resetFilters}
               className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-200">
@@ -374,7 +425,7 @@ export default function InventoryPage() {
           )}
         </div>
 
-        {groups.length > 0 && (
+        {inventoryView === 'devices' && groups.length > 0 && (
           <div className="mb-5 overflow-x-auto pb-2">
             <div className="flex min-w-max gap-2">
               <button type="button" onClick={() => { setSelectedGroup(''); setPage(1); }}
@@ -406,6 +457,40 @@ export default function InventoryPage() {
           </div>
         ) : loadError ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{loadError}</div>
+        ) : inventoryView === 'accessories' ? (
+          manualAccessories.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
+              <p className="font-semibold text-slate-700">Ручные позиции не найдены</p>
+              <p className="mt-1 text-sm text-slate-400">Они появятся после создания акта с мелкой техникой.</p>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {manualAccessories.map(item => {
+                const statusMeta = accessoryStatus(item.status);
+                return (
+                  <div key={item.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-bold text-slate-800">{item.name}</p>
+                        <p className="truncate text-xs text-slate-500">{item.model || 'Без модели'} · {item.quantity} шт.</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700">Ручная позиция</span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusMeta.cls}`}>{statusMeta.label}</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">{item.requires_return ? 'С возвратом' : 'Без возврата'}</span>
+                    </div>
+                    <dl className="mt-4 space-y-2 text-sm">
+                      <div><dt className="text-xs text-slate-400">Получатель</dt><dd className="font-semibold text-slate-800">{item.recipient_name}</dd></div>
+                      <div><dt className="text-xs text-slate-400">Дата выдачи</dt><dd className="text-slate-700">{new Date(item.issue_date).toLocaleDateString('ru-RU')}</dd></div>
+                      {item.note && <div><dt className="text-xs text-slate-400">Заметка</dt><dd className="text-slate-700">{item.note}</dd></div>}
+                    </dl>
+                    <Link href={`/admin/acts/${item.act_id}`} className="mt-4 flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-4 text-sm font-bold text-white">Открыть {item.act_reference}</Link>
+                  </div>
+                );
+              })}
+            </div>
+          )
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <button type="button" onClick={openCreate} disabled={categoriesLoading}
@@ -439,12 +524,12 @@ export default function InventoryPage() {
             ))}
           </div>
         )}
-        {total > 24 && !loading && !loadError && (
+        {(inventoryView === 'devices' ? total : manualTotal) > 24 && !loading && !loadError && (
           <div className="mt-5 flex items-center justify-between rounded-xl bg-white px-4 py-3 ring-1 ring-gray-100">
-            <span className="text-sm text-slate-500">Страница {page} из {Math.ceil(total / 24)} · всего {total}</span>
+            <span className="text-sm text-slate-500">Страница {page} из {Math.ceil((inventoryView === 'devices' ? total : manualTotal) / 24)} · всего {inventoryView === 'devices' ? total : manualTotal}</span>
             <div className="flex gap-2">
               <button type="button" disabled={page === 1} onClick={() => setPage(value => value - 1)} className="min-h-11 rounded-lg border px-4 text-sm disabled:opacity-40">Назад</button>
-              <button type="button" disabled={page >= Math.ceil(total / 24)} onClick={() => setPage(value => value + 1)} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm text-white disabled:opacity-40">Далее</button>
+              <button type="button" disabled={page >= Math.ceil((inventoryView === 'devices' ? total : manualTotal) / 24)} onClick={() => setPage(value => value + 1)} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm text-white disabled:opacity-40">Далее</button>
             </div>
           </div>
         )}

@@ -129,6 +129,7 @@ class Act(Base):
     versions = relationship("ActVersion", back_populates="act", cascade="all, delete-orphan")
     file_assets = relationship("FileAsset", back_populates="act", cascade="all, delete-orphan")
     device_assignments = relationship("ActDeviceAssignment", back_populates="act", cascade="all, delete-orphan")
+    accessories = relationship("ActAccessory", back_populates="act", cascade="all, delete-orphan")
 
 class ActVersion(Base):
     __tablename__ = "act_versions"
@@ -272,6 +273,25 @@ class ActDeviceAssignment(Base):
 
     act = relationship("Act", back_populates="device_assignments")
     device = relationship("InventoryDevice", back_populates="assignments")
+
+
+class ActAccessory(Base):
+    __tablename__ = "act_accessories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    model = Column(String, nullable=True)
+    quantity = Column(Integer, nullable=False)
+    note = Column(Text, nullable=True)
+    requires_return = Column(Boolean, nullable=False, default=True)
+    status = Column(String, nullable=False, default="RESERVED", index=True)
+    recipient_name = Column(String, nullable=False, index=True)
+    reserved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    issued_at = Column(DateTime, nullable=True)
+    returned_at = Column(DateTime, nullable=True)
+
+    act = relationship("Act", back_populates="accessories")
 
 
 class InventoryCategory(Base):

@@ -4,7 +4,21 @@ from app.utils.storage import save_bytes, resolve_storage_path
 
 
 def build_act_snapshot(act: Act) -> dict:
-    base_extra = act.extra_data_json or {}
+    base_extra = dict(act.extra_data_json or {})
+    if getattr(act, "accessories", None):
+        base_extra["accessories"] = [
+            {
+                "id": str(item.id),
+                "name": item.name,
+                "model": item.model,
+                "quantity": item.quantity,
+                "note": item.note,
+                "requires_return": item.requires_return,
+                "status": item.status,
+                "recipient_name": item.recipient_name,
+            }
+            for item in act.accessories
+        ]
     return {
         "id": str(act.id),
         "template_id": str(act.template_id),

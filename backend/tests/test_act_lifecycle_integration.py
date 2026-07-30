@@ -14,6 +14,7 @@ from app.api.acts import create_act, sign_party1, sign_party2, start_return_flow
 from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
     ActDeviceAssignment,
+    ActAccessory,
     DeviceStatus,
     InventoryDevice,
     Participant,
@@ -100,6 +101,12 @@ async def _create(lifecycle_data):
                 "participant_id": str(recipient.id),
                 "full_name": recipient.full_name,
                 "email": recipient.email,
+            }], "accessories": [{
+                "name": "Мышь Logitech",
+                "model": "M185",
+                "quantity": 1,
+                "note": "Тестовая позиция",
+                "requires_return": True,
             }]},
         ),
         BackgroundTasks(),
@@ -114,12 +121,16 @@ async def test_full_issue_and_return_lifecycle(lifecycle_data):
     act = await _create(lifecycle_data)
     db.refresh(device)
     assert device.status == DeviceStatus.RESERVED
+    accessory = db.query(ActAccessory).filter(ActAccessory.act_id == act.id).one()
+    assert accessory.status == "RESERVED"
 
     await sign_party2(act.id, SignatureRequest(signature_data=_signature(), participant_id=recipient.id), BackgroundTasks(), db, user)
     await sign_party1(act.id, SignatureRequest(signature_data=_signature(), participant_id=manager.id), BackgroundTasks(), db, user)
     db.refresh(device)
     assert device.status == DeviceStatus.ISSUED
     assert device.assigned_to == recipient.full_name
+    db.refresh(accessory)
+    assert accessory.status == "ISSUED"
 
     await start_return_flow(act.id, ReturnStartRequest(return_date=date.today()), BackgroundTasks(), db, user)
     await sign_party1(act.id, SignatureRequest(signature_data=_signature(), participant_id=manager.id), BackgroundTasks(), db, user)
@@ -130,6 +141,8 @@ async def test_full_issue_and_return_lifecycle(lifecycle_data):
     assert assignment.status == "RETURNED"
     assert device.status == DeviceStatus.AVAILABLE
     assert device.assigned_to is None
+    db.refresh(accessory)
+    assert accessory.status == "RETURNED"
 
 
 def _parallel_sign(act_id, participant_id, user, party):

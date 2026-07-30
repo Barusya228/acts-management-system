@@ -10,7 +10,7 @@ from uuid import UUID
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
 from app.services.audit_service import record_audit
-from app.db.models import ActDeviceAssignment, InventoryCategory, InventoryDevice, User
+from app.db.models import Act, ActAccessory, ActDeviceAssignment, InventoryCategory, InventoryDevice, User
 from app.schemas.schemas import (
     InventoryCategoryCreate,
     InventoryCategoryResponse,
@@ -32,6 +32,51 @@ CYRILLIC_TRANSLITERATION = str.maketrans({
     "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch",
     "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
 })
+
+
+@router.get("/accessories")
+def list_manual_accessories(
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    query = db.query(ActAccessory, Act).join(Act, Act.id == ActAccessory.act_id)
+    if status:
+        query = query.filter(ActAccessory.status == status)
+    if search:
+        value = f"%{search}%"
+        query = query.filter(
+            ActAccessory.name.ilike(value)
+            | ActAccessory.model.ilike(value)
+            | ActAccessory.note.ilike(value)
+            | ActAccessory.recipient_name.ilike(value)
+        )
+    total = query.count()
+    rows = query.order_by(ActAccessory.reserved_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": [{
+            "id": str(accessory.id),
+            "act_id": str(accessory.act_id),
+            "act_reference": f"ACT-{str(accessory.act_id).split('-')[0].upper()}",
+            "name": accessory.name,
+            "model": accessory.model,
+            "quantity": accessory.quantity,
+            "note": accessory.note,
+            "requires_return": accessory.requires_return,
+            "status": accessory.status,
+            "recipient_name": accessory.recipient_name,
+            "issue_date": act.issue_date.isoformat(),
+            "reserved_at": accessory.reserved_at.isoformat(),
+            "issued_at": accessory.issued_at.isoformat() if accessory.issued_at else None,
+            "returned_at": accessory.returned_at.isoformat() if accessory.returned_at else None,
+        } for accessory, act in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 def _category_code(value: str) -> str:

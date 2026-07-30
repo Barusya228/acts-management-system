@@ -16,6 +16,7 @@ from app.db.models import (
     FileAssetKind,
     InventoryDevice,
     ActDeviceAssignment,
+    ActAccessory,
     DeviceStatus,
     Participant,
     ParticipantEmploymentStatus,
@@ -46,6 +47,7 @@ RESERVED_ACT_FIELDS = {
 }
 
 EQUIPMENT_LIST_KEY = "equipment_list"
+ACCESSORIES_KEY = "accessories"
 RECIPIENTS_KEY = "recipients"
 PARTY1_PARTICIPANT_ID_KEY = "party1_participant_id"
 INVENTORY_CATEGORY_KEY = "inventory_category"
@@ -268,6 +270,54 @@ def _require_active_template(template: Template) -> None:
         )
 
 
+def _normalize_accessories(value: object) -> list[dict]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise HTTPException(status_code=422, detail=f"Поле '{ACCESSORIES_KEY}' должно быть массивом")
+    normalized = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=422, detail=f"Мелкая техника #{index + 1} заполнена неверно")
+        name = str(item.get("name", "")).strip()
+        model = str(item.get("model", "")).strip()
+        note = str(item.get("note", "")).strip()
+        try:
+            quantity = int(item.get("quantity", 1))
+        except (TypeError, ValueError):
+            quantity = 0
+        if not name or quantity < 1:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Мелкая техника #{index + 1}: укажите название и количество больше нуля",
+            )
+        normalized.append({
+            "name": name,
+            "model": model or None,
+            "quantity": quantity,
+            "note": note or None,
+            "requires_return": bool(item.get("requires_return", True)),
+        })
+    return normalized
+
+
+def _transition_act_accessories(db: Session, act: Act, target_status: str) -> None:
+    accessories = db.query(ActAccessory).filter(ActAccessory.act_id == act.id).with_for_update().all()
+    now = datetime.utcnow()
+    expected = "RESERVED" if target_status == "ISSUED" else "ISSUED"
+    for accessory in accessories:
+        if target_status == "RETURNED" and not accessory.requires_return:
+            accessory.status = "NO_RETURN_REQUIRED"
+            continue
+        if accessory.status != expected:
+            raise HTTPException(status_code=409, detail="Состояние мелкой техники не соответствует операции")
+        accessory.status = target_status
+        if target_status == "ISSUED":
+            accessory.issued_at = now
+        else:
+            accessory.returned_at = now
+
+
 def _get_selectable_participant(
     db: Session,
     participant_id: object,
@@ -395,6 +445,7 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
 
     special_keys = {
         EQUIPMENT_LIST_KEY,
+        ACCESSORIES_KEY,
         RECIPIENTS_KEY,
         PARTY1_PARTICIPANT_ID_KEY,
     }
@@ -446,6 +497,8 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
             recipients,
             preserve_signature_state=False,
         )
+    if ACCESSORIES_KEY in payload:
+        payload[ACCESSORIES_KEY] = _normalize_accessories(payload[ACCESSORIES_KEY])
 
     for field_name in required_dynamic:
         value = payload.get(field_name)
@@ -471,6 +524,8 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
             normalized[key] = payload[key]
     if EQUIPMENT_LIST_KEY in payload:
         normalized[EQUIPMENT_LIST_KEY] = payload[EQUIPMENT_LIST_KEY]
+    if ACCESSORIES_KEY in payload:
+        normalized[ACCESSORIES_KEY] = payload[ACCESSORIES_KEY]
     if RECIPIENTS_KEY in payload:
         normalized[RECIPIENTS_KEY] = payload[RECIPIENTS_KEY]
     if PARTY1_PARTICIPANT_ID_KEY in payload:
@@ -652,6 +707,18 @@ async def create_act(
         act_data.inventory_device_id,
         normalized_extra_data.get(EQUIPMENT_LIST_KEY, []),
     )
+    accessories = normalized_extra_data.get(ACCESSORIES_KEY, [])
+    for item in accessories:
+        db.add(ActAccessory(
+            act_id=act.id,
+            name=item["name"],
+            model=item.get("model"),
+            quantity=item["quantity"],
+            note=item.get("note"),
+            requires_return=item["requires_return"],
+            status="RESERVED",
+            recipient_name=act.party2_name,
+        ))
     if normalized_equipment:
         normalized_extra_data[EQUIPMENT_LIST_KEY] = normalized_equipment
     else:
@@ -783,6 +850,8 @@ async def update_act(
             )
         if EQUIPMENT_LIST_KEY in existing_extra:
             normalized_extra_data[EQUIPMENT_LIST_KEY] = existing_extra[EQUIPMENT_LIST_KEY]
+        if ACCESSORIES_KEY in existing_extra:
+            normalized_extra_data[ACCESSORIES_KEY] = existing_extra[ACCESSORIES_KEY]
 
     if payload.item_name is not None:
         act.item_name = payload.item_name
@@ -895,6 +964,7 @@ async def sign_party1(
         )
     if act.status == ActStatus.COMPLETED:
         _transition_act_devices(db, act, "ISSUED")
+        _transition_act_accessories(db, act, "ISSUED")
     
     relative_path, mime_type, size_bytes, sha256 = save_data_url_file(
         signature.signature_data,
@@ -1000,6 +1070,7 @@ async def sign_party2(
         )
     if act.status == ActStatus.RETURNED:
         _transition_act_devices(db, act, "RETURNED")
+        _transition_act_accessories(db, act, "RETURNED")
     db.add(FileAsset(
         act_id=act.id,
         kind=(

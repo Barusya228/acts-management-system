@@ -14,9 +14,10 @@ interface Recipient {
 }
 
 interface EquipmentItem { inventory_device_id?: string; name: string; serial: string; }
+interface AccessoryItem { name: string; model: string; quantity: number; note: string; requires_return: boolean; }
 
 interface TemplateOption { id: string; code: string; name: string; }
-interface DeviceOption { id: string; name: string; serial_number: string; inventory_number: string; barcode: string; }
+interface DeviceOption { id: string; name: string; model?: string; category: string; serial_number: string; inventory_number: string; barcode: string; }
 interface ParticipantOption { id: string; full_name: string; kind: string; email?: string | null; }
 
 function CreateActForm() {
@@ -39,8 +40,16 @@ function CreateActForm() {
   const [recipients, setRecipients] = useState<Recipient[]>([{ full_name: '', email: '' }]);
   const [focusedRecipient, setFocusedRecipient] = useState(-1);
   const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
+  const [accessories, setAccessories] = useState<AccessoryItem[]>([]);
   const [advisoryNote, setAdvisoryNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [devicePickerOpen, setDevicePickerOpen] = useState(false);
+  const [devicePickerTarget, setDevicePickerTarget] = useState<'main' | number>('main');
+  const [deviceSearch, setDeviceSearch] = useState('');
+  const [deviceCategory, setDeviceCategory] = useState('');
+  const [expandedDeviceGroup, setExpandedDeviceGroup] = useState('');
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  const [devicesError, setDevicesError] = useState('');
 
   const employees = participants.filter(p => p.kind === 'EMPLOYEE' || p.kind === 'BOTH');
   const currentQuery = focusedRecipient >= 0 ? (recipients[focusedRecipient]?.full_name || '').trim() : '';
@@ -78,12 +87,60 @@ function CreateActForm() {
           setTemplateId(list[0].id);
         }
       }).catch(() => {});
-      api.get('/api/inventory/available').then(r => setDevices(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+      setDevicesLoading(true);
+      setDevicesError('');
+      api.get('/api/inventory/available')
+        .then(r => setDevices(Array.isArray(r.data) ? r.data : []))
+        .catch(() => {
+          setDevices([]);
+          setDevicesError('Не удалось загрузить доступные устройства');
+        })
+        .finally(() => setDevicesLoading(false));
       api.get('/api/participants?is_active=true').then(r => setParticipants(Array.isArray(r.data) ? r.data : [])).catch(() => {});
     }
   }, [user, templateId]);
 
   const handleDeviceSelect = (serial: string) => setDeviceSerial(serial);
+
+  const openDevicePicker = (target: 'main' | number) => {
+    setDevicePickerTarget(target);
+    setDeviceSearch('');
+    setDeviceCategory('');
+    setExpandedDeviceGroup('');
+    setDevicePickerOpen(true);
+  };
+
+  const chooseDevice = (device: DeviceOption) => {
+    if (devicePickerTarget === 'main') {
+      handleDeviceSelect(device.serial_number);
+    } else {
+      updateEquipmentDevice(devicePickerTarget, device.id);
+    }
+    setDevicePickerOpen(false);
+  };
+
+  const selectedDeviceIds = new Set([
+    ...(devicePickerTarget === 'main' ? [] : [selectedDevice?.id]),
+    ...equipment
+      .filter((_, index) => devicePickerTarget !== index)
+      .map(item => item.inventory_device_id),
+  ].filter((id): id is string => Boolean(id)));
+  const normalizedDeviceSearch = deviceSearch.trim().toLowerCase();
+  const visibleDevices = devices.filter(device => {
+    if (selectedDeviceIds.has(device.id)) return false;
+    if (deviceCategory && device.category !== deviceCategory) return false;
+    if (!normalizedDeviceSearch) return true;
+    return [device.name, device.model, device.inventory_number, device.barcode]
+      .some(value => String(value || '').toLowerCase().includes(normalizedDeviceSearch));
+  });
+  const deviceGroups = Array.from(visibleDevices.reduce((groups, device) => {
+    const key = `${device.name}\u0000${device.model || ''}`;
+    const current = groups.get(key) || { key, name: device.name, model: device.model || '', devices: [] as DeviceOption[] };
+    current.devices.push(device);
+    groups.set(key, current);
+    return groups;
+  }, new Map<string, { key: string; name: string; model: string; devices: DeviceOption[] }>()).values());
+  const deviceCategories = Array.from(new Set(devices.map(device => device.category))).sort();
 
   const updateRecipient = (i: number, field: 'full_name' | 'email', value: string) => {
     setRecipients(prev => prev.map((r, idx) => idx === i
@@ -103,9 +160,12 @@ function CreateActForm() {
     setEquipment(prev => prev.map((item, idx) => idx === i ? {
       inventory_device_id: device?.id,
       name: device?.name || '',
-      serial: device?.serial_number || '',
+      serial: device?.inventory_number || '',
     } : item));
   };
+  const addAccessory = () => setAccessories(items => [...items, { name: '', model: '', quantity: 1, note: '', requires_return: true }]);
+  const updateAccessory = (index: number, patch: Partial<AccessoryItem>) => setAccessories(items => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  const removeAccessory = (index: number) => setAccessories(items => items.filter((_, itemIndex) => itemIndex !== index));
 
   const handleSubmit = async () => {
     if (!templateId) { showToast('Выберите шаблон', 'error'); return; }
@@ -114,6 +174,7 @@ function CreateActForm() {
     const normalized = recipients.filter(r => r.full_name.trim() && r.email.trim());
     if (normalized.length === 0) { showToast('Добавьте получателя', 'error'); return; }
     if (normalized.some(r => !r.participant_id)) { showToast('Выберите каждого получателя из справочника', 'error'); return; }
+    if (accessories.some(item => !item.name.trim() || item.quantity < 1)) { showToast('Заполните название и количество мелкой техники', 'error'); return; }
 
     setSaving(true);
     try {
@@ -135,6 +196,7 @@ function CreateActForm() {
           recipients: normalized.map(r => ({ participant_id: r.participant_id, full_name: r.full_name, email: r.email })),
           ...(advisoryNote.trim() ? { advisory_note: advisoryNote.trim() } : {}),
           ...(equipment.length > 0 ? { equipment_list: equipment.filter(e => e.inventory_device_id) } : {}),
+          ...(accessories.length > 0 ? { accessories: accessories.map(item => ({ ...item, name: item.name.trim(), model: item.model.trim(), note: item.note.trim() })) } : {}),
         },
       });
       showToast('Акт создан', 'success');
@@ -182,46 +244,83 @@ function CreateActForm() {
             <p className="mt-0.5 text-sm font-bold text-slate-800">{selectedTemplate?.name || '—'}</p>
           </div>
 
-          {/* Device + Additional equipment row */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-3 rounded-xl border border-gray-200 bg-white p-4">
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">📦 Устройство</label>
-              {devices.length > 0 ? (
-                <select value={deviceSerial} onChange={e => handleDeviceSelect(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400">
-                  <option value="">Не выбрано</option>
-                  {devices.map(d => <option key={d.id} value={d.serial_number}>{d.name} — Инв: {d.inventory_number} — ШК: {d.barcode}</option>)}
-                </select>
+              <label className="mb-2 block text-xs font-medium text-slate-500">Основное устройство</label>
+              {selectedDevice ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-blue-50 p-3 ring-1 ring-blue-200">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-slate-800">{selectedDevice.name}</p>
+                    {selectedDevice.model && <p className="truncate text-xs text-slate-500">{selectedDevice.model}</p>}
+                    <p className="mt-1 text-xs text-blue-700">Инв: {selectedDevice.inventory_number} · ШК: {selectedDevice.barcode}</p>
+                  </div>
+                  <button type="button" onClick={() => openDevicePicker('main')} className="min-h-11 shrink-0 rounded-lg bg-white px-3 text-sm font-semibold text-blue-700 shadow-sm">Заменить</button>
+                </div>
               ) : (
-                <input type="text" disabled className="w-full rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5 text-sm text-slate-400" value="Нет доступных" />
+                <button type="button" disabled={devicesLoading || devices.length === 0} onClick={() => openDevicePicker('main')}
+                  className="min-h-14 w-full rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 text-sm font-semibold text-blue-700 disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400">
+                  {devicesLoading ? 'Загрузка устройств...' : devicesError || (devices.length ? 'Найти или отсканировать устройство' : 'Нет доступных устройств')}
+                </button>
               )}
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">🖥️ Доп. устройства</label>
+            <div className="border-t border-gray-100 pt-3">
+              <label className="mb-2 block text-xs font-medium text-slate-500">Дополнительные устройства</label>
               {equipment.length === 0 ? (
-                <p className="text-xs text-slate-400 py-2">Нет дополнительных</p>
+                <p className="py-2 text-xs text-slate-400">Не добавлены</p>
               ) : (
-                <div className="space-y-1.5 mb-2">
+                <div className="mb-2 space-y-2">
                   {equipment.map((item, i) => (
-                    <div key={i} className="flex items-center gap-1.5">
-                      <select value={item.inventory_device_id || ''} onChange={e => updateEquipmentDevice(i, e.target.value)}
-                        className="flex-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-400">
-                        <option value="">Выберите устройство</option>
-                        {devices.filter(device => device.id !== selectedDevice?.id && !equipment.some((selected, selectedIndex) => selectedIndex !== i && selected.inventory_device_id === device.id)).map(device => (
-                          <option key={device.id} value={device.id}>{device.name} — Инв: {device.inventory_number} — ШК: {device.barcode}</option>
-                        ))}
-                      </select>
+                    <div key={i} className="flex min-h-12 items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                      <button type="button" onClick={() => openDevicePicker(i)} className="min-w-0 flex-1 text-left">
+                        <span className="block truncate text-sm font-semibold text-slate-700">{item.name || 'Выберите устройство'}</span>
+                        {item.inventory_device_id && <span className="block truncate text-xs text-slate-400">Инв: {item.serial}</span>}
+                      </button>
                       <button type="button" onClick={() => removeEquipment(i)}
-                        className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500 text-xs">✕</button>
+                        className="min-h-11 rounded-lg px-3 text-slate-400 hover:bg-red-50 hover:text-red-500">✕</button>
                     </div>
                   ))}
                 </div>
               )}
-              <button type="button" onClick={addEquipment}
-                className="rounded-lg border border-dashed border-slate-300 px-2 py-1.5 text-xs text-slate-500 hover:border-blue-400 hover:text-blue-500">
+              <button type="button" onClick={() => { const nextIndex = equipment.length; addEquipment(); openDevicePicker(nextIndex); }}
+                className="min-h-11 rounded-lg border border-dashed border-slate-300 px-4 text-sm text-slate-500 hover:border-blue-400 hover:text-blue-500">
                 + Добавить
               </button>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-slate-800">Мелкая техника</p>
+                <p className="text-xs text-slate-400">Добавляется вручную без инвентарного номера и штрихкода.</p>
+              </div>
+              <button type="button" onClick={addAccessory} className="min-h-11 rounded-lg bg-slate-100 px-4 text-sm font-semibold text-slate-700">+ Добавить</button>
+            </div>
+            {accessories.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-gray-200 py-6 text-center text-sm text-slate-400">Мелкая техника не добавлена</div>
+            ) : (
+              <div className="space-y-3">
+                {accessories.map((item, index) => (
+                  <div key={index} className="rounded-xl bg-slate-50 p-3 ring-1 ring-gray-100">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <input value={item.name} onChange={event => updateAccessory(index, { name: event.target.value })} placeholder="Название *" className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-blue-400" />
+                      <input value={item.model} onChange={event => updateAccessory(index, { model: event.target.value })} placeholder="Модель" className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-blue-400" />
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-[120px_1fr]">
+                      <input type="number" min="1" value={item.quantity} onChange={event => updateAccessory(index, { quantity: Number(event.target.value) })} className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-blue-400" aria-label="Количество" />
+                      <input value={item.note} onChange={event => updateAccessory(index, { note: event.target.value })} placeholder="Заметка" className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-blue-400" />
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <label className="flex min-h-11 items-center gap-2 text-sm text-slate-600">
+                        <input type="checkbox" checked={item.requires_return} onChange={event => updateAccessory(index, { requires_return: event.target.checked })} className="h-5 w-5 rounded border-gray-300" />
+                        Требуется возврат
+                      </label>
+                      <button type="button" onClick={() => removeAccessory(index)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-red-600 hover:bg-red-50">Удалить</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Party1 + Date */}
@@ -331,6 +430,14 @@ function CreateActForm() {
                     ))}
                   </div>
                 )}
+                {accessories.length > 0 && (
+                  <div>
+                    <dt className="text-xs text-slate-400">Мелкая техника</dt>
+                    {accessories.map((item, index) => (
+                      <dd key={index} className="text-sm text-slate-700">• {item.name || 'Без названия'}{item.model ? ` · ${item.model}` : ''} · {item.quantity} шт.</dd>
+                    ))}
+                  </div>
+                )}
                 <div>
                   <dt className="text-xs text-slate-400">Выдаёт</dt>
                   <dd className="text-sm font-semibold text-slate-800">{party1 || '—'}</dd>
@@ -356,6 +463,69 @@ function CreateActForm() {
           </div>
         </div>
       </div>
+      {devicePickerOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/45 p-0 sm:p-4">
+          <div className="mx-auto flex h-full max-w-4xl flex-col bg-slate-50 shadow-2xl sm:rounded-2xl">
+            <div className="border-b border-gray-200 bg-white p-4 sm:rounded-t-2xl">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Выбор устройства</p>
+                  <h2 className="text-lg font-bold text-slate-900">Найдите модель или отсканируйте штрихкод</h2>
+                </div>
+                <button type="button" onClick={() => setDevicePickerOpen(false)} className="min-h-11 rounded-xl bg-slate-100 px-4 text-sm font-semibold text-slate-600">Закрыть</button>
+              </div>
+              <input autoFocus value={deviceSearch} onChange={event => { setDeviceSearch(event.target.value); setExpandedDeviceGroup(''); }}
+                className="min-h-12 w-full rounded-xl border border-gray-200 px-4 text-base outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                placeholder="Штрихкод, инвентарный номер, название или модель" />
+              <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                <button type="button" onClick={() => setDeviceCategory('')}
+                  className={`min-h-10 shrink-0 rounded-lg px-4 text-sm font-medium ${!deviceCategory ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>Все</button>
+                {deviceCategories.map(category => (
+                  <button key={category} type="button" onClick={() => setDeviceCategory(category)}
+                    className={`min-h-10 shrink-0 rounded-lg px-4 text-sm font-medium ${deviceCategory === category ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{category}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {deviceGroups.length === 0 ? (
+                <div className="py-16 text-center text-sm text-slate-500">Доступные устройства не найдены</div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {deviceGroups.map(group => {
+                    const expanded = expandedDeviceGroup === group.key || group.devices.length === 1;
+                    return (
+                      <div key={group.key} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+                        <button type="button" onClick={() => setExpandedDeviceGroup(expandedDeviceGroup === group.key ? '' : group.key)}
+                          className="flex min-h-20 w-full items-center justify-between gap-3 p-4 text-left">
+                          <div className="min-w-0">
+                            <p className="truncate font-bold text-slate-900">{group.name}</p>
+                            <p className="truncate text-sm text-slate-500">{group.model || 'Без модели'}</p>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-700">Доступно {group.devices.length}</span>
+                        </button>
+                        {expanded && (
+                          <div className="space-y-2 border-t border-gray-100 bg-slate-50 p-3">
+                      {group.devices.map(device => (
+                              <button key={device.id} type="button" onClick={() => chooseDevice(device)}
+                                className="flex min-h-14 w-full items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-left ring-1 ring-gray-200 transition hover:ring-blue-400">
+                                <span className="min-w-0">
+                                  <span className="block truncate text-sm font-semibold text-slate-800">Инв: {device.inventory_number}</span>
+                                  <span className="block truncate text-xs text-slate-500">ШК: {device.barcode}</span>
+                                </span>
+                                <span className="shrink-0 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white">Выбрать</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
