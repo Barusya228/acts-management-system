@@ -26,7 +26,7 @@ interface Template {
   is_active: boolean;
 }
 
-export default function GuestActsGrid() {
+export default function GuestActsGrid({ adminMode = false }: { adminMode?: boolean }) {
   const router = useRouter();
   const [acts, setActs] = useState<Act[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -62,6 +62,10 @@ export default function GuestActsGrid() {
   };
 
   const getTemplateUrl = (code: string) => {
+    if (adminMode) {
+      if (code === 'IPAD') return '/acts/create/ipad';
+      return `/admin/acts/create?code=${code}`;
+    }
     const map: Record<string, string> = {
       GENERIC_ONE: '/acts/create/one',
       GENERIC_MULTI: '/acts/create/multi',
@@ -69,6 +73,8 @@ export default function GuestActsGrid() {
     };
     return map[code] || `/acts/create?code=${code}`;
   };
+
+  const getActUrl = (actId: string) => adminMode ? `/admin/acts/${actId}` : `/acts/${actId}`;
 
   const fetchActs = async () => {
     setLoading(true);
@@ -213,7 +219,7 @@ export default function GuestActsGrid() {
               <button
                 key={act.id}
                 type="button"
-                onClick={() => router.push(`/acts/${act.id}`)}
+                onClick={() => router.push(getActUrl(act.id))}
                 className="group rounded-2xl border border-amber-200 bg-white p-4 text-left shadow-sm transition hover:border-amber-400 hover:shadow-md"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -288,7 +294,7 @@ export default function GuestActsGrid() {
               <button
                 key={act.id}
                 type="button"
-                onClick={() => router.push(`/acts/${act.id}`)}
+                onClick={() => router.push(getActUrl(act.id))}
                 className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md"
               >
                 <div className="flex items-start justify-between gap-3">
