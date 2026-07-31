@@ -24,6 +24,7 @@ export default function CreateIpad() {
   const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
   const [issuerId, setIssuerId] = useState('');
   const [responsibleIds, setResponsibleIds] = useState<string[]>([]);
+  const [responsibleSearch, setResponsibleSearch] = useState('');
   const [students, setStudents] = useState<StudentRow[]>([emptyStudent()]);
   const [saving, setSaving] = useState(false);
 
@@ -40,6 +41,10 @@ export default function CreateIpad() {
 
   const managers = participants.filter(item => item.kind === 'IT_MANAGER' || item.kind === 'BOTH');
   const responsibles = participants.filter(item => item.kind === 'EMPLOYEE' || item.kind === 'BOTH');
+  const selectedResponsibles = responsibleIds.map(id => responsibles.find(item => item.id === id)).filter((item): item is Participant => Boolean(item));
+  const responsibleSuggestions = responsibleSearch.trim().length >= 2
+    ? responsibles.filter(item => !responsibleIds.includes(item.id) && item.full_name.toLowerCase().includes(responsibleSearch.trim().toLowerCase())).slice(0, 6)
+    : [];
   const updateStudent = (index: number, patch: Partial<StudentRow>) => setStudents(rows => rows.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
 
   const submit = async () => {
@@ -82,7 +87,17 @@ export default function CreateIpad() {
           <label className="text-sm font-semibold">Дата выдачи *<input type="date" value={issueDate} onChange={event => setIssueDate(event.target.value)} className="mt-1 min-h-12 w-full rounded-xl border px-3 font-normal" /></label>
           <label className="text-sm font-semibold">Выдающий IT *<select value={issuerId} onChange={event => setIssuerId(event.target.value)} className="mt-1 min-h-12 w-full rounded-xl border px-3 font-normal"><option value="">Выберите</option>{managers.map(item => <option key={item.id} value={item.id}>{item.full_name}</option>)}</select></label>
         </section>
-        <section className="rounded-2xl bg-white p-5 shadow-sm"><h3 className="font-bold">Ответственные лица и подписанты</h3><p className="mb-3 text-sm text-slate-500">Каждый выбранный ответственный подписывает акт, затем его подтверждает IT.</p><div className="grid gap-2 sm:grid-cols-2">{responsibles.map(item => <label key={item.id} className={`flex min-h-12 items-center gap-3 rounded-xl border px-3 ${responsibleIds.includes(item.id) ? 'border-blue-400 bg-blue-50' : 'bg-white'}`}><input type="checkbox" checked={responsibleIds.includes(item.id)} onChange={event => setResponsibleIds(ids => event.target.checked ? [...ids, item.id] : ids.filter(id => id !== item.id))} className="h-5 w-5" /><span><span className="block text-sm font-semibold">{item.full_name}</span><span className="text-xs text-slate-400">{item.email || 'Нет email'}</span></span></label>)}</div></section>
+        <section className="rounded-2xl bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div><h3 className="font-bold">Ответственные лица и подписанты</h3><p className="text-sm text-slate-500">Подписывают выбранные ответственные, затем IT.</p></div>
+            <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">Выбрано: {responsibleIds.length}</span>
+          </div>
+          {selectedResponsibles.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{selectedResponsibles.map(item => <span key={item.id} className="inline-flex min-h-9 items-center gap-2 rounded-full bg-slate-100 pl-3 pr-1 text-sm font-semibold text-slate-700">{item.full_name}<button type="button" onClick={() => setResponsibleIds(ids => ids.filter(id => id !== item.id))} className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button></span>)}</div>}
+          <div className="relative mt-3">
+            <input value={responsibleSearch} onChange={event => setResponsibleSearch(event.target.value)} placeholder="Найти ответственного по ФИО..." className="min-h-11 w-full rounded-xl border border-gray-200 px-3 text-sm outline-none focus:border-blue-400" />
+            {responsibleSuggestions.length > 0 && <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-xl">{responsibleSuggestions.map(item => <button key={item.id} type="button" onClick={() => { setResponsibleIds(ids => [...ids, item.id]); setResponsibleSearch(''); }} className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-blue-50"><span className="text-sm font-semibold text-slate-700">{item.full_name}</span><span className="text-xs text-slate-400">{item.email || 'Нет email'}</span></button>)}</div>}
+          </div>
+        </section>
         <section className="rounded-2xl bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Ученики и закреплённые iPad</h3><p className="text-sm text-slate-500">{students.filter(item => item.student_name && item.ipad_tag).length} из {students.length} назначено</p></div><button type="button" onClick={() => setStudents(rows => [...rows, emptyStudent()])} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">+ Ученик</button></div>
           <div className="space-y-3">{students.map((item, index) => <div key={index} className="rounded-2xl bg-slate-50 p-4 ring-1 ring-gray-100"><div className="mb-2 flex justify-between"><span className="text-xs font-bold uppercase text-slate-400">Ученик {index + 1}</span><button type="button" disabled={students.length === 1} onClick={() => setStudents(rows => rows.filter((_, rowIndex) => rowIndex !== index))} className="text-sm text-red-600 disabled:opacity-30">Удалить</button></div><div className="grid gap-2 md:grid-cols-3"><input value={item.student_name} onChange={event => updateStudent(index, { student_name: event.target.value })} placeholder="ФИО ученика *" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.ipad_tag} onChange={event => updateStudent(index, { ipad_tag: event.target.value })} placeholder="iPad Tag *" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.ipad_model} onChange={event => updateStudent(index, { ipad_model: event.target.value })} placeholder="Модель" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.serial_number} onChange={event => updateStudent(index, { serial_number: event.target.value })} placeholder="Serial" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.imei} onChange={event => updateStudent(index, { imei: event.target.value })} placeholder="IMEI" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.note} onChange={event => updateStudent(index, { note: event.target.value })} placeholder="Заметка" className="min-h-11 rounded-xl border bg-white px-3" /></div></div>)}</div>
