@@ -9,9 +9,10 @@ import { useToast } from '@/contexts/ToastContext';
 
 interface Participant { id: string; full_name: string; email?: string | null; kind: string; }
 interface Template { id: string; code: string; name: string; }
-interface StudentRow { student_name: string; ipad_name: string; ipad_model: string; ipad_tag: string; serial_number: string; imei: string; note: string; }
+interface IpadDevice { id: string; device_name: string; model?: string; tag: string; serial_number: string; }
+interface StudentRow { student_name: string; ipad_device_id: string; note: string; }
 
-const emptyStudent = (): StudentRow => ({ student_name: '', ipad_name: 'iPad', ipad_model: '', ipad_tag: '', serial_number: '', imei: '', note: '' });
+const emptyStudent = (): StudentRow => ({ student_name: '', ipad_device_id: '', note: '' });
 
 export default function CreateIpad() {
   const { user, loading, loginAsGuest } = useAuth();
@@ -26,15 +27,17 @@ export default function CreateIpad() {
   const [responsibleIds, setResponsibleIds] = useState<string[]>([]);
   const [responsibleSearch, setResponsibleSearch] = useState('');
   const [students, setStudents] = useState<StudentRow[]>([emptyStudent()]);
+  const [ipads, setIpads] = useState<IpadDevice[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { if (!loading && !user) loginAsGuest(); }, [loading, user, loginAsGuest]);
   useEffect(() => {
     if (!user) return;
-    Promise.all([api.get('/api/templates?is_active=true'), api.get('/api/participants?is_active=true')])
-      .then(([templatesResponse, participantsResponse]) => {
+    Promise.all([api.get('/api/templates?is_active=true'), api.get('/api/participants?is_active=true'), api.get('/api/ipad-inventory/available')])
+      .then(([templatesResponse, participantsResponse, ipadsResponse]) => {
         setTemplate((templatesResponse.data || []).find((item: Template) => item.code === 'IPAD') || null);
         setParticipants(Array.isArray(participantsResponse.data) ? participantsResponse.data : []);
+        setIpads(Array.isArray(ipadsResponse.data) ? ipadsResponse.data : []);
       })
       .catch(() => showToast('Не удалось загрузить справочники', 'error'));
   }, [user, showToast]);
@@ -51,8 +54,8 @@ export default function CreateIpad() {
     if (!template || !advisoryGroup.trim() || !academicYear.trim() || !issuerId || responsibleIds.length === 0) {
       showToast('Заполните advisory, учебный год, выдающего и ответственных', 'error'); return;
     }
-    if (students.some(item => !item.student_name.trim() || !item.ipad_tag.trim())) {
-      showToast('У каждого ученика должны быть ФИО и iPad Tag', 'error'); return;
+    if (students.some(item => !item.student_name.trim() || !item.ipad_device_id)) {
+      showToast('У каждого ученика должны быть ФИО и выбранный iPad', 'error'); return;
     }
     setSaving(true);
     try {
@@ -63,7 +66,7 @@ export default function CreateIpad() {
         issue_date: issueDate,
         issuer_participant_id: issuerId,
         responsible_participant_ids: responsibleIds,
-        students: students.map(item => ({ ...item, student_name: item.student_name.trim(), ipad_tag: item.ipad_tag.trim() })),
+        students: students.map(item => ({ ...item, student_name: item.student_name.trim() })),
       });
       showToast('iPad-акт создан и комплект зарезервирован', 'success');
       router.push(`/acts/ipad/${response.data.id}`);
@@ -99,8 +102,8 @@ export default function CreateIpad() {
           </div>
         </section>
         <section className="rounded-2xl bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Ученики и закреплённые iPad</h3><p className="text-sm text-slate-500">{students.filter(item => item.student_name && item.ipad_tag).length} из {students.length} назначено</p></div><button type="button" onClick={() => setStudents(rows => [...rows, emptyStudent()])} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">+ Ученик</button></div>
-          <div className="space-y-3">{students.map((item, index) => <div key={index} className="rounded-2xl bg-slate-50 p-4 ring-1 ring-gray-100"><div className="mb-2 flex justify-between"><span className="text-xs font-bold uppercase text-slate-400">Ученик {index + 1}</span><button type="button" disabled={students.length === 1} onClick={() => setStudents(rows => rows.filter((_, rowIndex) => rowIndex !== index))} className="text-sm text-red-600 disabled:opacity-30">Удалить</button></div><div className="grid gap-2 md:grid-cols-3"><input value={item.student_name} onChange={event => updateStudent(index, { student_name: event.target.value })} placeholder="ФИО ученика *" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.ipad_tag} onChange={event => updateStudent(index, { ipad_tag: event.target.value })} placeholder="iPad Tag *" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.ipad_model} onChange={event => updateStudent(index, { ipad_model: event.target.value })} placeholder="Модель" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.serial_number} onChange={event => updateStudent(index, { serial_number: event.target.value })} placeholder="Serial" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.imei} onChange={event => updateStudent(index, { imei: event.target.value })} placeholder="IMEI" className="min-h-11 rounded-xl border bg-white px-3" /><input value={item.note} onChange={event => updateStudent(index, { note: event.target.value })} placeholder="Заметка" className="min-h-11 rounded-xl border bg-white px-3" /></div></div>)}</div>
+          <div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Ученики и закреплённые iPad</h3><p className="text-sm text-slate-500">{students.filter(item => item.student_name && item.ipad_device_id).length} из {students.length} назначено</p></div><button type="button" onClick={() => setStudents(rows => [...rows, emptyStudent()])} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">+ Ученик</button></div>
+          <div className="space-y-3">{students.map((item, index) => <div key={index} className="rounded-2xl bg-slate-50 p-4 ring-1 ring-gray-100"><div className="mb-2 flex justify-between"><span className="text-xs font-bold uppercase text-slate-400">Ученик {index + 1}</span><button type="button" disabled={students.length === 1} onClick={() => setStudents(rows => rows.filter((_, rowIndex) => rowIndex !== index))} className="text-sm text-red-600 disabled:opacity-30">Удалить</button></div><div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr]"><input value={item.student_name} onChange={event => updateStudent(index, { student_name: event.target.value })} placeholder="ФИО ученика *" className="min-h-11 rounded-xl border bg-white px-3" /><select value={item.ipad_device_id} onChange={event => updateStudent(index, { ipad_device_id: event.target.value })} className="min-h-11 rounded-xl border bg-white px-3"><option value="">Выберите iPad *</option>{ipads.filter(ipad => ipad.id === item.ipad_device_id || !students.some((row, rowIndex) => rowIndex !== index && row.ipad_device_id === ipad.id)).map(ipad => <option key={ipad.id} value={ipad.id}>{ipad.model || ipad.device_name} · Tag {ipad.tag} · {ipad.serial_number}</option>)}</select><input value={item.note} onChange={event => updateStudent(index, { note: event.target.value })} placeholder="Заметка" className="min-h-11 rounded-xl border bg-white px-3" /></div></div>)}</div>
         </section>
         <button type="button" onClick={submit} disabled={saving} className="min-h-14 w-full rounded-2xl bg-slate-950 text-base font-black text-white disabled:opacity-50">{saving ? 'Создание...' : `Создать акт и зарезервировать ${students.length} iPad`}</button>
       </main>

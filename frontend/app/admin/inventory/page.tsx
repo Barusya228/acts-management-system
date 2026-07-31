@@ -57,6 +57,8 @@ interface ManualAccessory {
   issue_date: string;
 }
 
+interface IpadInventoryItem { id: string; device_name: string; model?: string | null; tag: string; serial_number: string; status: string; notes?: string | null; student_name?: string | null; act_id?: string | null; }
+
 const groupKey = (group: Pick<DeviceGroup, 'name' | 'model'>) => `${group.name}\u0000${group.model}`;
 
 const statusOptions = [
@@ -95,9 +97,14 @@ export default function InventoryPage() {
   const [groups, setGroups] = useState<DeviceGroup[]>([]);
   const [selectedGroup, setSelectedGroup] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
-  const [inventoryView, setInventoryView] = useState<'devices' | 'accessories'>('devices');
+  const [inventoryView, setInventoryView] = useState<'devices' | 'accessories' | 'ipads'>('devices');
   const [manualAccessories, setManualAccessories] = useState<ManualAccessory[]>([]);
   const [manualTotal, setManualTotal] = useState(0);
+  const [ipadItems, setIpadItems] = useState<IpadInventoryItem[]>([]);
+  const [ipadTotal, setIpadTotal] = useState(0);
+  const [showIpadModal, setShowIpadModal] = useState(false);
+  const [ipadBulk, setIpadBulk] = useState(false);
+  const [ipadForm, setIpadForm] = useState({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' });
 
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -118,7 +125,8 @@ export default function InventoryPage() {
   useEffect(() => {
     if (user?.role === 'ADMIN') {
       if (inventoryView === 'devices') fetchDevices();
-      else fetchManualAccessories();
+      else if (inventoryView === 'accessories') fetchManualAccessories();
+      else fetchIpads();
     }
   }, [user, inventoryView, catFilter, statusFilter, selectedGroup, page, refreshKey]);
   useEffect(() => {
@@ -199,6 +207,34 @@ export default function InventoryPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchIpads = async () => {
+    setLoading(true); setLoadError('');
+    try {
+      const params = new URLSearchParams({ page: String(page), page_size: '24' });
+      if (search) params.set('search', search);
+      const response = await api.get(`/api/ipad-inventory?${params}`);
+      setIpadItems(response.data.items || []); setIpadTotal(response.data.total || 0);
+    } catch { setIpadItems([]); setIpadTotal(0); setLoadError('Не удалось загрузить iPad'); }
+    finally { setLoading(false); }
+  };
+
+  const saveIpads = async () => {
+    setSaving(true);
+    try {
+      if (ipadBulk) {
+        const rows = ipadForm.list.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => line.split(/[\s;,]+/)).filter(parts => parts.length >= 2).map(parts => ({ tag: parts[0], serial_number: parts[1] }));
+        if (!rows.length) throw new Error('Вставьте список Tag и Serial Number');
+        const response = await api.post('/api/ipad-inventory/bulk', { device_name: ipadForm.device_name, model: ipadForm.model || null, status: ipadForm.status, devices: rows });
+        showToast(`Добавлено iPad: ${response.data.created}`, 'success');
+      } else {
+        await api.post('/api/ipad-inventory', { ...ipadForm, model: ipadForm.model || null, notes: ipadForm.notes || null });
+        showToast('iPad добавлен', 'success');
+      }
+      setShowIpadModal(false); setRefreshKey(value => value + 1);
+    } catch (error: any) { showToast(error.response?.data?.detail || error.message || 'Ошибка', 'error'); }
+    finally { setSaving(false); }
   };
 
   const handleSearch = () => {
@@ -398,9 +434,10 @@ export default function InventoryPage() {
           )}
         />
 
-        <div className="mb-5 grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+        <div className="mb-5 grid grid-cols-3 rounded-xl bg-slate-100 p-1">
           <button type="button" onClick={() => { setInventoryView('devices'); setPage(1); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'devices' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Инвентарные устройства</button>
           <button type="button" onClick={() => { setInventoryView('accessories'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'accessories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Мелкая техника · вручную</button>
+          <button type="button" onClick={() => { setInventoryView('ipads'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'ipads' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>iPad</button>
         </div>
 
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -457,6 +494,11 @@ export default function InventoryPage() {
           </div>
         ) : loadError ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{loadError}</div>
+        ) : inventoryView === 'ipads' ? (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <button type="button" onClick={() => { setIpadForm({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' }); setIpadBulk(false); setShowIpadModal(true); }} className="flex min-h-[170px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50 font-bold text-blue-700"><span className="text-3xl">+</span>Добавить iPad</button>
+            {ipadItems.map(item => <div key={item.id} className="rounded-2xl border bg-white p-4 shadow-sm"><div className="flex justify-between gap-3"><div><p className="font-bold text-slate-800">{item.device_name}</p><p className="text-sm text-slate-500">{item.model || 'Без модели'}</p></div><span className={`h-fit rounded-full px-2 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'Косячный' : 'Списан'}</span></div><div className="mt-4 space-y-1 font-mono text-sm text-slate-600"><p>Tag: {item.tag}</p><p>Serial: {item.serial_number}</p></div>{item.student_name && <div className="mt-3 rounded-xl bg-blue-50 p-3 text-sm"><p className="font-bold text-blue-900">{item.student_name}</p>{item.act_id && <Link href={`/admin/acts/${item.act_id}`} className="text-blue-600">Открыть акт</Link>}</div>}{item.notes && <p className="mt-3 text-sm text-slate-500">{item.notes}</p>}</div>)}
+          </div>
         ) : inventoryView === 'accessories' ? (
           manualAccessories.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
@@ -524,12 +566,12 @@ export default function InventoryPage() {
             ))}
           </div>
         )}
-        {(inventoryView === 'devices' ? total : manualTotal) > 24 && !loading && !loadError && (
+        {(inventoryView === 'devices' ? total : inventoryView === 'accessories' ? manualTotal : ipadTotal) > 24 && !loading && !loadError && (
           <div className="mt-5 flex items-center justify-between rounded-xl bg-white px-4 py-3 ring-1 ring-gray-100">
-            <span className="text-sm text-slate-500">Страница {page} из {Math.ceil((inventoryView === 'devices' ? total : manualTotal) / 24)} · всего {inventoryView === 'devices' ? total : manualTotal}</span>
+            <span className="text-sm text-slate-500">Страница {page} из {Math.ceil((inventoryView === 'devices' ? total : inventoryView === 'accessories' ? manualTotal : ipadTotal) / 24)} · всего {inventoryView === 'devices' ? total : inventoryView === 'accessories' ? manualTotal : ipadTotal}</span>
             <div className="flex gap-2">
               <button type="button" disabled={page === 1} onClick={() => setPage(value => value - 1)} className="min-h-11 rounded-lg border px-4 text-sm disabled:opacity-40">Назад</button>
-              <button type="button" disabled={page >= Math.ceil((inventoryView === 'devices' ? total : manualTotal) / 24)} onClick={() => setPage(value => value + 1)} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm text-white disabled:opacity-40">Далее</button>
+              <button type="button" disabled={page >= Math.ceil((inventoryView === 'devices' ? total : inventoryView === 'accessories' ? manualTotal : ipadTotal) / 24)} onClick={() => setPage(value => value + 1)} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm text-white disabled:opacity-40">Далее</button>
             </div>
           </div>
         )}
@@ -650,6 +692,17 @@ export default function InventoryPage() {
               className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50">{saving ? 'Сохранение...' : editId ? 'Сохранить' : bulkMode ? `Добавить ${bulkRows.length}` : 'Добавить'}</button>
             <button onClick={() => setShowModal(false)} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-200">Отмена</button>
           </div>
+        </Modal>
+      )}
+
+      {showIpadModal && (
+        <Modal onClose={() => setShowIpadModal(false)} title={ipadBulk ? 'Добавить несколько iPad' : 'Добавить iPad'}>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button type="button" onClick={() => setIpadBulk(false)} className={`min-h-10 rounded-lg text-sm font-bold ${!ipadBulk ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Один iPad</button><button type="button" onClick={() => setIpadBulk(true)} className={`min-h-10 rounded-lg text-sm font-bold ${ipadBulk ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Несколько iPad</button></div>
+            <div className="grid grid-cols-2 gap-2"><input value={ipadForm.device_name} onChange={e => setIpadForm({...ipadForm, device_name:e.target.value})} placeholder="Device name *" className="min-h-11 rounded-xl border px-3"/><input value={ipadForm.model} onChange={e => setIpadForm({...ipadForm, model:e.target.value})} placeholder="Model" className="min-h-11 rounded-xl border px-3"/></div>
+            <select value={ipadForm.status} onChange={e => setIpadForm({...ipadForm, status:e.target.value})} className="min-h-11 w-full rounded-xl border px-3"><option value="AVAILABLE">Не выдан</option><option value="MAINTENANCE">Косячный</option><option value="RETIRED">Списан</option></select>
+            {ipadBulk ? <textarea value={ipadForm.list} onChange={e => setIpadForm({...ipadForm, list:e.target.value})} rows={9} placeholder={'Tag    Serial Number\n116563 DMPFJS82Q1GG'} className="w-full rounded-xl border p-3 font-mono text-sm"/> : <><div className="grid grid-cols-2 gap-2"><input value={ipadForm.tag} onChange={e => setIpadForm({...ipadForm, tag:e.target.value})} placeholder="Tag *" className="min-h-11 rounded-xl border px-3"/><input value={ipadForm.serial_number} onChange={e => setIpadForm({...ipadForm, serial_number:e.target.value})} placeholder="Serial Number *" className="min-h-11 rounded-xl border px-3"/></div><textarea value={ipadForm.notes} onChange={e => setIpadForm({...ipadForm, notes:e.target.value})} rows={3} placeholder="Заметка" className="w-full rounded-xl border p-3 text-sm"/></>}
+          </div><div className="mt-5 flex gap-2"><button disabled={saving} onClick={saveIpads} className="min-h-12 flex-1 rounded-xl bg-slate-900 font-bold text-white">{saving ? 'Сохранение...' : 'Добавить'}</button><button onClick={() => setShowIpadModal(false)} className="min-h-12 rounded-xl bg-slate-100 px-4">Отмена</button></div>
         </Modal>
       )}
 

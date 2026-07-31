@@ -20,6 +20,7 @@ from app.db.models import (
     ActVersion,
     IpadAdvisoryAct,
     IpadAssignmentEvent,
+    IpadDevice,
     IpadStudentAssignment,
     Participant,
     ParticipantEmploymentStatus,
@@ -148,27 +149,27 @@ def create_ipad_advisory_act(
         })
 
     student_names = set()
-    ipad_tags = set()
+    ipad_device_ids = set()
     normalized_students = []
     for index, student in enumerate(payload.students):
         student_name = student.student_name.strip()
-        ipad_tag = student.ipad_tag.strip()
-        if not student_name or not ipad_tag:
-            raise HTTPException(status_code=422, detail=f"Строка #{index + 1}: укажите ученика и iPad Tag")
+        if not student_name:
+            raise HTTPException(status_code=422, detail=f"Строка #{index + 1}: укажите ученика")
         if student_name.casefold() in student_names:
             raise HTTPException(status_code=422, detail=f"Ученик {student_name} добавлен несколько раз")
-        if ipad_tag.casefold() in ipad_tags:
-            raise HTTPException(status_code=422, detail=f"iPad {ipad_tag} назначен несколько раз")
+        if student.ipad_device_id in ipad_device_ids:
+            raise HTTPException(status_code=422, detail="Один iPad назначен нескольким ученикам")
         student_names.add(student_name.casefold())
-        ipad_tags.add(ipad_tag.casefold())
-        normalized_students.append((student, student_name, ipad_tag))
+        ipad_device_ids.add(student.ipad_device_id)
+        normalized_students.append((student, student_name))
 
-    occupied = db.query(IpadStudentAssignment).filter(
-        IpadStudentAssignment.ipad_tag.in_([item[2] for item in normalized_students]),
-        IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
-    ).first()
-    if occupied:
-        raise HTTPException(status_code=409, detail=f"iPad {occupied.ipad_tag} уже закреплён")
+    devices = db.query(IpadDevice).filter(IpadDevice.id.in_(ipad_device_ids)).order_by(IpadDevice.id).with_for_update().all()
+    devices_by_id = {item.id: item for item in devices}
+    if len(devices_by_id) != len(ipad_device_ids):
+        raise HTTPException(status_code=404, detail="Один из выбранных iPad не найден")
+    unavailable = next((item for item in devices if item.status != "AVAILABLE"), None)
+    if unavailable:
+        raise HTTPException(status_code=409, detail=f"iPad {unavailable.tag} недоступен: {unavailable.status}")
 
     extra_data = {
         PARTY1_PARTICIPANT_ID_KEY: str(issuer.id),
@@ -192,15 +193,18 @@ def create_ipad_advisory_act(
     db.add(act)
     db.flush()
     db.add(IpadAdvisoryAct(act_id=act.id, advisory_group=group, academic_year=academic_year))
-    for student, student_name, ipad_tag in normalized_students:
+    for student, student_name in normalized_students:
+        device = devices_by_id[student.ipad_device_id]
+        device.status = "RESERVED"
         db.add(IpadStudentAssignment(
             act_id=act.id,
+            ipad_device_id=device.id,
             student_name=student_name,
-            ipad_name=student.ipad_name.strip() or "iPad",
-            ipad_model=student.ipad_model.strip() if student.ipad_model else None,
-            ipad_tag=ipad_tag,
-            serial_number=student.serial_number.strip() if student.serial_number else None,
-            imei=student.imei.strip() if student.imei else None,
+            ipad_name=device.device_name,
+            ipad_model=device.model,
+            ipad_tag=device.tag,
+            serial_number=device.serial_number,
+            imei=None,
             note=student.note.strip() if student.note else None,
             status="RESERVED",
         ))
@@ -255,6 +259,13 @@ def record_student_departure(
     assignment.student_status = "DEPARTED"
     assignment.status = "RETURNED" if payload.ipad_returned else "RETURN_PENDING"
     assignment.returned_at = datetime.utcnow() if payload.ipad_returned else None
+    device = db.query(IpadDevice).filter(IpadDevice.id == assignment.ipad_device_id).with_for_update().first()
+    if device:
+        if payload.ipad_returned:
+            condition = (payload.return_condition or "").strip().casefold()
+            device.status = "MAINTENANCE" if condition and condition not in {"исправен", "хорошее", "рабочее"} else "AVAILABLE"
+        else:
+            device.status = "RETURN_PENDING"
     event = IpadAssignmentEvent(
         assignment_id=assignment.id,
         event_type="STUDENT_DEPARTED",
@@ -295,16 +306,10 @@ def replace_student_ipad(
         raise HTTPException(status_code=404, detail="Назначение ученика не найдено")
     if act.status != ActStatus.COMPLETED or assignment.student_status != "ACTIVE" or assignment.status != "ISSUED":
         raise HTTPException(status_code=409, detail="Замена доступна только для активного ученика с выданным iPad")
-    new_tag = payload.ipad_tag.strip()
-    if not new_tag:
-        raise HTTPException(status_code=422, detail="Укажите новый iPad Tag")
-    occupied = db.query(IpadStudentAssignment).filter(
-        IpadStudentAssignment.ipad_tag == new_tag,
-        IpadStudentAssignment.id != assignment.id,
-        IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
-    ).first()
-    if occupied:
-        raise HTTPException(status_code=409, detail=f"iPad {new_tag} уже закреплён")
+    new_device = db.query(IpadDevice).filter(IpadDevice.id == payload.ipad_device_id).with_for_update().first()
+    old_device = db.query(IpadDevice).filter(IpadDevice.id == assignment.ipad_device_id).with_for_update().first()
+    if not new_device or new_device.status != "AVAILABLE":
+        raise HTTPException(status_code=409, detail="Новый iPad недоступен")
     old = {
         "ipad_name": assignment.ipad_name,
         "ipad_model": assignment.ipad_model,
@@ -313,11 +318,15 @@ def replace_student_ipad(
         "imei": assignment.imei,
         "condition": payload.old_condition,
     }
-    assignment.ipad_name = payload.ipad_name.strip() or "iPad"
-    assignment.ipad_model = payload.ipad_model.strip() if payload.ipad_model else None
-    assignment.ipad_tag = new_tag
-    assignment.serial_number = payload.serial_number.strip() if payload.serial_number else None
-    assignment.imei = payload.imei.strip() if payload.imei else None
+    if old_device:
+        old_device.status = "MAINTENANCE" if payload.old_condition.strip() else "AVAILABLE"
+    new_device.status = "ISSUED"
+    assignment.ipad_device_id = new_device.id
+    assignment.ipad_name = new_device.device_name
+    assignment.ipad_model = new_device.model
+    assignment.ipad_tag = new_device.tag
+    assignment.serial_number = new_device.serial_number
+    assignment.imei = None
     event = IpadAssignmentEvent(
         assignment_id=assignment.id,
         event_type="IPAD_REPLACED",
@@ -339,7 +348,7 @@ def replace_student_ipad(
     db.add(event)
     db.flush()
     version, pdf_asset = _add_event_version(db, act, current_user, f"Замена iPad: {assignment.student_name}")
-    record_audit(db, current_user, "ACT", act.id, "IPAD_REPLACED", {"assignment_id": str(assignment.id), "old_tag": old["ipad_tag"], "new_tag": new_tag})
+    record_audit(db, current_user, "ACT", act.id, "IPAD_REPLACED", {"assignment_id": str(assignment.id), "old_tag": old["ipad_tag"], "new_tag": new_device.tag})
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)

@@ -153,11 +153,7 @@ class ReturnStartRequest(BaseModel):
 
 class IpadStudentCreate(BaseModel):
     student_name: str
-    ipad_name: str = "iPad"
-    ipad_model: Optional[str] = None
-    ipad_tag: str
-    serial_number: Optional[str] = None
-    imei: Optional[str] = None
+    ipad_device_id: UUID4
     note: Optional[str] = None
 
 
@@ -183,12 +179,38 @@ class IpadReplacementRequest(BaseModel):
     replacement_date: date
     reason: str
     old_condition: str
-    ipad_name: str = "iPad"
-    ipad_model: Optional[str] = None
-    ipad_tag: str
-    serial_number: Optional[str] = None
-    imei: Optional[str] = None
+    ipad_device_id: UUID4
     note: Optional[str] = None
+
+
+class IpadDeviceCreate(BaseModel):
+    device_name: str = "iPad"
+    model: Optional[str] = None
+    tag: str
+    serial_number: str
+    status: Literal["AVAILABLE", "MAINTENANCE", "RETIRED"] = "AVAILABLE"
+    notes: Optional[str] = None
+
+
+class IpadDeviceUpdate(BaseModel):
+    device_name: Optional[str] = None
+    model: Optional[str] = None
+    tag: Optional[str] = None
+    serial_number: Optional[str] = None
+    status: Optional[Literal["AVAILABLE", "MAINTENANCE", "RETIRED"]] = None
+    notes: Optional[str] = None
+
+
+class IpadBulkRow(BaseModel):
+    tag: str
+    serial_number: str
+
+
+class IpadDeviceBulkCreate(BaseModel):
+    device_name: str = "iPad"
+    model: Optional[str] = None
+    status: Literal["AVAILABLE", "MAINTENANCE", "RETIRED"] = "AVAILABLE"
+    devices: list[IpadBulkRow]
 
 # Version schemas
 class ActVersionResponse(BaseModel):

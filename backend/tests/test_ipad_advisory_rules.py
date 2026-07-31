@@ -18,6 +18,7 @@ def test_ipad_act_serialization_separates_responsibles_and_students():
         current_version=1,
         ipad_assignments=[SimpleNamespace(
             id="2d27455d-a28a-4258-86dd-9ca58b059e22",
+            ipad_device_id="164fb2bc-5a9c-4504-a8bb-f16c543f6ac4",
             student_name="Student",
             student_status="ACTIVE",
             ipad_name="iPad",

@@ -321,6 +321,7 @@ class IpadStudentAssignment(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=False, index=True)
+    ipad_device_id = Column(UUID(as_uuid=True), ForeignKey("ipad_devices.id"), nullable=True, index=True)
     student_name = Column(String, nullable=False, index=True)
     student_status = Column(String, nullable=False, default="ACTIVE", index=True)
     ipad_name = Column(String, nullable=False, default="iPad")
@@ -335,6 +336,7 @@ class IpadStudentAssignment(Base):
 
     act = relationship("Act", back_populates="ipad_assignments")
     events = relationship("IpadAssignmentEvent", back_populates="assignment", cascade="all, delete-orphan")
+    ipad_device = relationship("IpadDevice", back_populates="assignments")
 
 
 class IpadAssignmentEvent(Base):
@@ -349,6 +351,22 @@ class IpadAssignmentEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     assignment = relationship("IpadStudentAssignment", back_populates="events")
+
+
+class IpadDevice(Base):
+    __tablename__ = "ipad_devices"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_name = Column(String, nullable=False, default="iPad")
+    model = Column(String, nullable=True, index=True)
+    tag = Column(String, unique=True, nullable=False, index=True)
+    serial_number = Column(String, unique=True, nullable=False, index=True)
+    status = Column(String, nullable=False, default="AVAILABLE", index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    assignments = relationship("IpadStudentAssignment", back_populates="ipad_device")
 
 
 class InventoryCategory(Base):

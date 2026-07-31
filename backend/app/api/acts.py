@@ -18,6 +18,7 @@ from app.db.models import (
     ActDeviceAssignment,
     ActAccessory,
     IpadStudentAssignment,
+    IpadDevice,
     DeviceStatus,
     Participant,
     ParticipantEmploymentStatus,
@@ -331,6 +332,10 @@ def _transition_ipad_assignments(db: Session, act: Act, target_status: str) -> N
         if assignment.status != expected:
             raise HTTPException(status_code=409, detail="Состояние iPad не соответствует операции")
         assignment.status = target_status
+        if assignment.ipad_device_id:
+            device = db.query(IpadDevice).filter(IpadDevice.id == assignment.ipad_device_id).with_for_update().first()
+            if device:
+                device.status = "ISSUED" if target_status == "ISSUED" else "AVAILABLE"
         if target_status == "RETURNED":
             assignment.returned_at = now
 
