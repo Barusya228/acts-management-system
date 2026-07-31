@@ -130,6 +130,9 @@ class ActResponse(ActBase):
     created_by: UUID4
     created_at: datetime
     updated_at: datetime
+    template_code: Optional[str] = None
+    advisory_group: Optional[str] = None
+    student_count: Optional[int] = None
     
     class Config:
         from_attributes = True
@@ -181,6 +184,37 @@ class IpadReplacementRequest(BaseModel):
     old_condition: str
     ipad_device_id: UUID4
     note: Optional[str] = None
+
+
+class IpadAppendixReplacementCreate(IpadReplacementRequest):
+    responsible_participant_id: UUID4
+
+
+class IpadAppendixDepartureCreate(IpadStudentDepartureRequest):
+    responsible_participant_id: UUID4
+    device_result_status: Literal["AVAILABLE", "MAINTENANCE", "RETIRED", "RETURN_PENDING"]
+
+
+class IpadAppendixStudentAddCreate(BaseModel):
+    responsible_participant_id: UUID4
+    added_at: date
+    student_name: str
+    ipad_device_id: UUID4
+    reason: str
+    note: Optional[str] = None
+
+
+class IpadAppendixLateReturnCreate(BaseModel):
+    responsible_participant_id: UUID4
+    returned_at: date
+    device_result_status: Literal["AVAILABLE", "MAINTENANCE", "RETIRED"]
+    condition: str
+    note: Optional[str] = None
+
+
+class IpadAppendixSignatureRequest(BaseModel):
+    participant_id: UUID4
+    signature_data: str
 
 
 class IpadDeviceCreate(BaseModel):

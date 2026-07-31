@@ -13,6 +13,9 @@ interface Act {
   item_serial?: string;
   issue_date: string;
   status: string;
+  template_code?: string | null;
+  advisory_group?: string | null;
+  student_count?: number | null;
 }
 
 interface Template {
@@ -29,6 +32,7 @@ export default function GuestActsGrid() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [actType, setActType] = useState<'ALL' | 'GENERIC_ONE' | 'GENERIC_MULTI' | 'IPAD'>('ALL');
 
   useEffect(() => {
     fetchActs();
@@ -109,9 +113,22 @@ export default function GuestActsGrid() {
       (a.party2_name || '').toLowerCase().includes(s)
     );
   };
+  const matchesType = (act: Act) => actType === 'ALL' || act.template_code === actType;
 
-  const filteredPending = pendingActs.filter(matchesSearch);
-  const filteredDone = doneActs.filter(matchesSearch);
+  const filteredPending = pendingActs.filter(matchesSearch).filter(matchesType);
+  const filteredDone = doneActs.filter(matchesSearch).filter(matchesType);
+  const actTypeOptions = [
+    { value: 'ALL' as const, label: 'Все акты', count: acts.length },
+    { value: 'GENERIC_ONE' as const, label: 'Акт для одного получателя', count: acts.filter(act => act.template_code === 'GENERIC_ONE').length },
+    { value: 'GENERIC_MULTI' as const, label: 'Акт для нескольких получателей', count: acts.filter(act => act.template_code === 'GENERIC_MULTI').length },
+    { value: 'IPAD' as const, label: 'Акт iPad для advisory', count: acts.filter(act => act.template_code === 'IPAD').length },
+  ];
+  const getActTitle = (act: Act) => act.template_code === 'IPAD'
+    ? `Advisory iPad: ${act.advisory_group || act.item_name.replace(/^Комплект iPad:\s*/i, '')}`
+    : act.item_name;
+  const getRecipientLine = (act: Act) => act.template_code === 'IPAD'
+    ? `Учеников: ${act.student_count || 0}`
+    : `Получатель: ${act.party2_name || '—'}`;
 
   const getItemEmoji = (name: string) => {
     const n = name.toLowerCase();
@@ -205,13 +222,13 @@ export default function GuestActsGrid() {
                       {getItemEmoji(act.item_name)}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-slate-800 truncate">{act.item_name}</p>
+                      <p className="font-semibold text-slate-800 truncate">{getActTitle(act)}</p>
                       <div className="mt-1 flex flex-col gap-0.5 text-xs">
                         <p className="text-slate-500">
                           Выдал: <span className="text-slate-700">{act.party1_name || '—'}</span>
                         </p>
                         <p className="text-slate-500">
-                          Получатель: <span className="text-slate-700">{act.party2_name || '—'}</span>
+                           <span className="text-slate-700">{getRecipientLine(act)}</span>
                         </p>
                       </div>
                       <p className="mt-2 text-xs text-slate-400">{formatDate(act.issue_date)}</p>
@@ -250,6 +267,14 @@ export default function GuestActsGrid() {
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
           </div>
         </div>
+        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+          {actTypeOptions.map(option => (
+            <button key={option.value} type="button" onClick={() => setActType(option.value)}
+              className={`min-h-11 shrink-0 rounded-xl px-4 text-sm transition ${actType === option.value ? 'bg-blue-600 font-bold text-white shadow-sm' : 'border border-gray-200 bg-white font-medium text-slate-600'}`}>
+              {option.label} · {option.count}
+            </button>
+          ))}
+        </div>
 
         {filteredDone.length === 0 && filteredPending.length === 0 ? (
           <div className="rounded-2xl border border-slate-200 bg-white px-5 py-10 text-center">
@@ -272,13 +297,13 @@ export default function GuestActsGrid() {
                       {getItemEmoji(act.item_name)}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-slate-800 truncate">{act.item_name}</p>
+                       <p className="font-semibold text-slate-800 truncate">{getActTitle(act)}</p>
                       <div className="mt-1 flex flex-col gap-0.5 text-xs">
                         <p className="text-slate-500">
                           Выдал: <span className="text-slate-700">{act.party1_name || '—'}</span>
                         </p>
                         <p className="text-slate-500">
-                          Получатель: <span className="text-slate-700">{act.party2_name || '—'}</span>
+                           <span className="text-slate-700">{getRecipientLine(act)}</span>
                         </p>
                       </div>
                       <p className="mt-2 text-xs text-slate-400">{formatDate(act.issue_date)}</p>

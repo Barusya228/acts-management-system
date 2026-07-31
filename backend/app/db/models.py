@@ -132,6 +132,7 @@ class Act(Base):
     accessories = relationship("ActAccessory", back_populates="act", cascade="all, delete-orphan")
     ipad_profile = relationship("IpadAdvisoryAct", back_populates="act", uselist=False, cascade="all, delete-orphan")
     ipad_assignments = relationship("IpadStudentAssignment", back_populates="act", cascade="all, delete-orphan")
+    ipad_appendices = relationship("IpadActAppendix", back_populates="act", cascade="all, delete-orphan")
 
 class ActVersion(Base):
     __tablename__ = "act_versions"
@@ -377,6 +378,35 @@ class IpadDevice(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     assignments = relationship("IpadStudentAssignment", back_populates="ipad_device")
+
+
+class IpadActAppendix(Base):
+    __tablename__ = "ipad_act_appendices"
+    __table_args__ = (
+        UniqueConstraint("act_id", "appendix_number", name="uq_ipad_appendices_act_number"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=False, index=True)
+    appendix_number = Column(Integer, nullable=False)
+    operation_type = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default="WAITING_RESPONSIBLE", index=True)
+    responsible_participant_id = Column(UUID(as_uuid=True), ForeignKey("participants.id"), nullable=False)
+    issuer_participant_id = Column(UUID(as_uuid=True), ForeignKey("participants.id"), nullable=False)
+    payload_json = Column(JSON, nullable=False)
+    responsible_signed_at = Column(DateTime, nullable=True)
+    responsible_signature_path = Column(String, nullable=True)
+    issuer_signed_at = Column(DateTime, nullable=True)
+    issuer_signature_path = Column(String, nullable=True)
+    pdf_storage_path = Column(String, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    applied_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+
+    act = relationship("Act", back_populates="ipad_appendices")
+    responsible = relationship("Participant", foreign_keys=[responsible_participant_id])
+    issuer = relationship("Participant", foreign_keys=[issuer_participant_id])
 
 
 class InventoryCategory(Base):

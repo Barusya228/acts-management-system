@@ -666,10 +666,18 @@ async def list_acts(
         query = query.filter(Act.receiver_email.ilike(f"%{email}%"))
     
     total = query.count()
-    acts = query.offset((page - 1) * page_size).limit(page_size).all()
+    acts = query.order_by(Act.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = []
+    for act in acts:
+        item = ActResponse.model_validate(act).model_dump()
+        item["template_code"] = act.template.code if act.template else None
+        if act.ipad_profile:
+            item["advisory_group"] = act.ipad_profile.advisory_group
+            item["student_count"] = len(act.ipad_assignments)
+        items.append(item)
     
     return {
-        "items": acts,
+        "items": items,
         "total": total,
         "page": page,
         "page_size": page_size

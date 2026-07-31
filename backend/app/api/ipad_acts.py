@@ -2,6 +2,8 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import FileResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.acts import (
@@ -19,6 +21,7 @@ from app.db.models import (
     ActStatus,
     ActVersion,
     IpadAdvisoryAct,
+    IpadActAppendix,
     IpadAssignmentEvent,
     IpadDevice,
     IpadStudentAssignment,
@@ -32,10 +35,26 @@ from app.schemas.schemas import (
     IpadAdvisoryActCreate,
     IpadReplacementRequest,
     IpadStudentDepartureRequest,
+    IpadAppendixReplacementCreate,
+    IpadAppendixDepartureCreate,
+    IpadAppendixStudentAddCreate,
+    IpadAppendixLateReturnCreate,
+    IpadAppendixSignatureRequest,
 )
 from app.services.audit_service import record_audit
 from app.services.pdf_backup_service import backup_pdf_by_ids
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
+from app.services.ipad_appendix_service import (
+    apply_appendix,
+    create_appendix_pdf,
+    ensure_no_pending_appendix,
+    next_appendix_number,
+    release_appendix_reservation,
+    save_appendix_signature,
+    serialize_appendix,
+)
+from app.utils.storage import resolve_storage_path
+from app.api.acts import _validate_signature
 
 
 router = APIRouter()
@@ -73,7 +92,48 @@ def _serialize(act: Act) -> dict:
                 "created_at": event.created_at.isoformat(),
             } for event in item.events],
         } for item in act.ipad_assignments],
+        "appendices": [serialize_appendix(item) for item in sorted(act.ipad_appendices, key=lambda row: row.appendix_number, reverse=True)],
     }
+
+
+def _appendix_participants(db: Session, act: Act, responsible_id: UUID) -> tuple[Participant, Participant]:
+    responsible_ids = {
+        str(item.get("participant_id"))
+        for item in (act.extra_data_json or {}).get(RECIPIENTS_KEY, [])
+        if isinstance(item, dict)
+    }
+    if str(responsible_id) not in responsible_ids:
+        raise HTTPException(status_code=422, detail="Выберите ответственное лицо из основного акта")
+    responsible = db.query(Participant).filter(Participant.id == responsible_id).first()
+    issuer_id = (act.extra_data_json or {}).get(PARTY1_PARTICIPANT_ID_KEY)
+    issuer = db.query(Participant).filter(Participant.id == issuer_id).first()
+    if not responsible or not issuer:
+        raise HTTPException(status_code=409, detail="Подписанты приложения не найдены")
+    return responsible, issuer
+
+
+def _create_appendix(
+    db: Session,
+    act: Act,
+    operation_type: str,
+    responsible: Participant,
+    issuer: Participant,
+    payload: dict,
+    current_user: User,
+) -> IpadActAppendix:
+    appendix = IpadActAppendix(
+        act_id=act.id,
+        appendix_number=next_appendix_number(db, act.id),
+        operation_type=operation_type,
+        responsible_participant_id=responsible.id,
+        issuer_participant_id=issuer.id,
+        payload_json=payload,
+        created_by=current_user.id,
+    )
+    db.add(appendix)
+    db.flush()
+    record_audit(db, current_user, "IPAD_APPENDIX", appendix.id, "IPAD_APPENDIX_CREATED", {"operation": operation_type})
+    return appendix
 
 
 def _add_event_version(
@@ -234,6 +294,216 @@ def get_ipad_advisory_act(
     if not act or not act.ipad_profile:
         raise HTTPException(status_code=404, detail="iPad-акт не найден")
     return _serialize(act)
+
+
+@router.post("/{act_id}/appendices/replacement", status_code=status.HTTP_201_CREATED)
+def create_replacement_appendix(
+    act_id: UUID,
+    assignment_id: UUID,
+    payload: IpadAppendixReplacementCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    if not act or not act.ipad_profile or act.status != ActStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Изменения доступны только в действующем iPad-акте")
+    ensure_no_pending_appendix(db, act.id)
+    assignment = db.query(IpadStudentAssignment).filter(
+        IpadStudentAssignment.id == assignment_id,
+        IpadStudentAssignment.act_id == act.id,
+        IpadStudentAssignment.student_status == "ACTIVE",
+        IpadStudentAssignment.status == "ISSUED",
+    ).with_for_update().first()
+    new_device = db.query(IpadDevice).filter(IpadDevice.id == payload.ipad_device_id).with_for_update().first()
+    if not assignment or not new_device or new_device.status != "AVAILABLE":
+        raise HTTPException(status_code=409, detail="Ученик или новый iPad недоступен")
+    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id)
+    old_device = assignment.ipad_device
+    new_device.status = "RESERVED"
+    appendix = _create_appendix(db, act, "IPAD_REPLACEMENT", responsible, issuer, {
+        "assignment_id": str(assignment.id),
+        "student_name": assignment.student_name,
+        "replacement_date": payload.replacement_date.isoformat(),
+        "reason": payload.reason.strip(),
+        "old_condition": payload.old_condition.strip(),
+        "old_result_status": "MAINTENANCE",
+        "old_device_id": str(old_device.id),
+        "old_ipad": {"model": old_device.model, "tag": old_device.tag, "serial_number": old_device.serial_number},
+        "new_device_id": str(new_device.id),
+        "new_ipad": {"model": new_device.model, "tag": new_device.tag, "serial_number": new_device.serial_number},
+        "note": payload.note,
+    }, current_user)
+    db.commit()
+    return serialize_appendix(appendix)
+
+
+@router.post("/{act_id}/appendices/departure", status_code=status.HTTP_201_CREATED)
+def create_departure_appendix(
+    act_id: UUID,
+    assignment_id: UUID,
+    payload: IpadAppendixDepartureCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    if not act or not act.ipad_profile or act.status != ActStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Изменения доступны только в действующем iPad-акте")
+    ensure_no_pending_appendix(db, act.id)
+    assignment = db.query(IpadStudentAssignment).filter(
+        IpadStudentAssignment.id == assignment_id,
+        IpadStudentAssignment.act_id == act.id,
+        IpadStudentAssignment.student_status == "ACTIVE",
+    ).with_for_update().first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Активный ученик не найден")
+    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id)
+    result_status = payload.device_result_status if payload.ipad_returned else "RETURN_PENDING"
+    appendix = _create_appendix(db, act, "STUDENT_DEPARTURE", responsible, issuer, {
+        "assignment_id": str(assignment.id),
+        "device_id": str(assignment.ipad_device_id),
+        "student_name": assignment.student_name,
+        "departure_date": payload.departure_date.isoformat(),
+        "reason": payload.reason.strip(),
+        "ipad_returned": payload.ipad_returned,
+        "return_condition": payload.return_condition,
+        "device_result_status": result_status,
+        "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
+        "note": payload.note,
+    }, current_user)
+    db.commit()
+    return serialize_appendix(appendix)
+
+
+@router.post("/{act_id}/appendices/student-addition", status_code=status.HTTP_201_CREATED)
+def create_student_addition_appendix(
+    act_id: UUID,
+    payload: IpadAppendixStudentAddCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    if not act or not act.ipad_profile or act.status != ActStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Изменения доступны только в действующем iPad-акте")
+    ensure_no_pending_appendix(db, act.id)
+    student_name = payload.student_name.strip()
+    if not student_name:
+        raise HTTPException(status_code=422, detail="Укажите ФИО ученика")
+    exists = db.query(IpadStudentAssignment.id).filter(
+        IpadStudentAssignment.act_id == act.id,
+        func.lower(IpadStudentAssignment.student_name) == student_name.lower(),
+        IpadStudentAssignment.student_status == "ACTIVE",
+    ).first()
+    device = db.query(IpadDevice).filter(IpadDevice.id == payload.ipad_device_id).with_for_update().first()
+    if exists or not device or device.status != "AVAILABLE":
+        raise HTTPException(status_code=409, detail="Ученик уже существует или iPad недоступен")
+    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id)
+    device.status = "RESERVED"
+    appendix = _create_appendix(db, act, "STUDENT_ADDITION", responsible, issuer, {
+        "student_name": student_name,
+        "added_at": payload.added_at.isoformat(),
+        "reason": payload.reason.strip(),
+        "device_id": str(device.id),
+        "ipad": {"model": device.model, "tag": device.tag, "serial_number": device.serial_number},
+        "note": payload.note,
+    }, current_user)
+    db.commit()
+    return serialize_appendix(appendix)
+
+
+@router.post("/{act_id}/appendices/late-return", status_code=status.HTTP_201_CREATED)
+def create_late_return_appendix(
+    act_id: UUID,
+    assignment_id: UUID,
+    payload: IpadAppendixLateReturnCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    ensure_no_pending_appendix(db, act_id)
+    assignment = db.query(IpadStudentAssignment).filter(
+        IpadStudentAssignment.id == assignment_id,
+        IpadStudentAssignment.act_id == act_id,
+        IpadStudentAssignment.status == "RETURN_PENDING",
+    ).with_for_update().first()
+    if not act or not act.ipad_profile or not assignment:
+        raise HTTPException(status_code=404, detail="Ожидающий возврата iPad не найден")
+    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id)
+    appendix = _create_appendix(db, act, "LATE_RETURN", responsible, issuer, {
+        "assignment_id": str(assignment.id),
+        "device_id": str(assignment.ipad_device_id),
+        "student_name": assignment.student_name,
+        "returned_at": payload.returned_at.isoformat(),
+        "device_result_status": payload.device_result_status,
+        "condition": payload.condition.strip(),
+        "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
+        "note": payload.note,
+    }, current_user)
+    db.commit()
+    return serialize_appendix(appendix)
+
+
+@router.post("/{act_id}/appendices/{appendix_id}/sign/{party}")
+def sign_appendix(
+    act_id: UUID,
+    appendix_id: UUID,
+    party: str,
+    payload: IpadAppendixSignatureRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    if party not in {"responsible", "issuer"}:
+        raise HTTPException(status_code=404, detail="Неизвестная сторона")
+    appendix = db.query(IpadActAppendix).filter(
+        IpadActAppendix.id == appendix_id,
+        IpadActAppendix.act_id == act_id,
+    ).populate_existing().with_for_update().first()
+    if not appendix:
+        raise HTTPException(status_code=404, detail="Приложение не найдено")
+    expected_id = appendix.responsible_participant_id if party == "responsible" else appendix.issuer_participant_id
+    expected_status = "WAITING_RESPONSIBLE" if party == "responsible" else "WAITING_ISSUER"
+    if payload.participant_id != expected_id or appendix.status != expected_status:
+        raise HTTPException(status_code=409, detail="Сейчас ожидается подпись другой стороны")
+    _validate_signature(payload.signature_data)
+    save_appendix_signature(appendix, party, payload.signature_data)
+    if party == "issuer":
+        apply_appendix(db, appendix, current_user)
+        create_appendix_pdf(appendix, appendix.act)
+    record_audit(db, current_user, "IPAD_APPENDIX", appendix.id, f"IPAD_APPENDIX_{party.upper()}_SIGNED")
+    db.commit()
+    db.refresh(appendix)
+    return serialize_appendix(appendix)
+
+
+@router.delete("/{act_id}/appendices/{appendix_id}", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_appendix(
+    act_id: UUID,
+    appendix_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    appendix = db.query(IpadActAppendix).filter(IpadActAppendix.id == appendix_id, IpadActAppendix.act_id == act_id).with_for_update().first()
+    if not appendix or appendix.status not in {"WAITING_RESPONSIBLE", "WAITING_ISSUER"}:
+        raise HTTPException(status_code=409, detail="Это приложение нельзя отменить")
+    release_appendix_reservation(db, appendix)
+    appendix.status = "CANCELLED"
+    appendix.cancelled_at = datetime.utcnow()
+    record_audit(db, current_user, "IPAD_APPENDIX", appendix.id, "IPAD_APPENDIX_CANCELLED")
+    db.commit()
+    return None
+
+
+@router.get("/{act_id}/appendices/{appendix_id}/pdf")
+def download_appendix_pdf(
+    act_id: UUID,
+    appendix_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    appendix = db.query(IpadActAppendix).filter(IpadActAppendix.id == appendix_id, IpadActAppendix.act_id == act_id).first()
+    if not appendix or not appendix.pdf_storage_path:
+        raise HTTPException(status_code=404, detail="PDF приложения не найден")
+    path = resolve_storage_path(appendix.pdf_storage_path)
+    return FileResponse(path, media_type="application/pdf", filename=f"appendix_{appendix.appendix_number}.pdf")
 
 
 @router.post("/{act_id}/students/{assignment_id}/departure")

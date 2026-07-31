@@ -30,6 +30,7 @@ def test_ipad_act_serialization_separates_responsibles_and_students():
             status="RESERVED",
             events=[],
         )],
+        ipad_appendices=[],
     )
 
     result = _serialize(act)
