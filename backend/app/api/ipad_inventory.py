@@ -17,7 +17,11 @@ from app.services.audit_service import record_audit
 router = APIRouter()
 
 
-def _serialize(device: IpadDevice, assignment: IpadStudentAssignment | None = None) -> dict:
+def _serialize(
+    device: IpadDevice,
+    assignment: IpadStudentAssignment | None = None,
+    duplicate_tag_count: int = 1,
+) -> dict:
     return {
         "id": str(device.id),
         "device_name": device.device_name,
@@ -30,6 +34,7 @@ def _serialize(device: IpadDevice, assignment: IpadStudentAssignment | None = No
         "act_id": str(assignment.act_id) if assignment else None,
         "created_at": device.created_at.isoformat(),
         "updated_at": device.updated_at.isoformat(),
+        "duplicate_tag_count": duplicate_tag_count,
     }
 
 
@@ -47,7 +52,11 @@ def available_ipads(
             | IpadDevice.serial_number.ilike(value)
             | IpadDevice.model.ilike(value)
         )
-    return [_serialize(item) for item in query.order_by(IpadDevice.model, IpadDevice.tag).limit(500).all()]
+    devices = query.order_by(IpadDevice.model, IpadDevice.tag, IpadDevice.serial_number).limit(500).all()
+    tag_counts = dict(db.query(IpadDevice.tag, func.count(IpadDevice.id)).filter(
+        IpadDevice.tag.in_([item.tag for item in devices])
+    ).group_by(IpadDevice.tag).all()) if devices else {}
+    return [_serialize(item, duplicate_tag_count=tag_counts.get(item.tag, 1)) for item in devices]
 
 
 @router.get("/groups")
@@ -67,6 +76,7 @@ def list_ipads(
     search: Optional[str] = None,
     status_value: Optional[str] = Query(None, alias="status"),
     model: Optional[str] = None,
+    duplicate_tags_only: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -80,6 +90,11 @@ def list_ipads(
     if search:
         value = f"%{search}%"
         query = query.filter(IpadDevice.device_name.ilike(value) | IpadDevice.model.ilike(value) | IpadDevice.tag.ilike(value) | IpadDevice.serial_number.ilike(value))
+    if duplicate_tags_only:
+        duplicate_tags = db.query(IpadDevice.tag).group_by(IpadDevice.tag).having(
+            func.count(IpadDevice.id) > 1
+        )
+        query = query.filter(IpadDevice.tag.in_(duplicate_tags))
     total = query.count()
     devices = query.order_by(IpadDevice.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     device_ids = [item.id for item in devices]
@@ -88,7 +103,10 @@ def list_ipads(
         IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
     ).all() if device_ids else []
     assignment_by_device = {item.ipad_device_id: item for item in assignments}
-    return {"items": [_serialize(item, assignment_by_device.get(item.id)) for item in devices], "total": total, "page": page, "page_size": page_size}
+    tag_counts = dict(db.query(IpadDevice.tag, func.count(IpadDevice.id)).filter(
+        IpadDevice.tag.in_([item.tag for item in devices])
+    ).group_by(IpadDevice.tag).all()) if devices else {}
+    return {"items": [_serialize(item, assignment_by_device.get(item.id), tag_counts.get(item.tag, 1)) for item in devices], "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -103,7 +121,7 @@ def create_ipad(data: IpadDeviceCreate, db: Session = Depends(get_db), current_u
     record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_CREATED", {"tag": device.tag})
     try: db.commit()
     except IntegrityError:
-        db.rollback(); raise HTTPException(status_code=409, detail="Tag или Serial Number уже используется")
+        db.rollback(); raise HTTPException(status_code=409, detail="Serial Number уже используется")
     db.refresh(device)
     return _serialize(device)
 
@@ -116,10 +134,10 @@ def bulk_create_ipads(data: IpadDeviceBulkCreate, db: Session = Depends(get_db),
     if not name or not rows or any(not tag or not serial for tag, serial in rows):
         raise HTTPException(status_code=422, detail="Заполните общие поля, Tag и Serial Number")
     tags = [item[0] for item in rows]; serials = [item[1] for item in rows]
-    if len(tags) != len(set(tags)) or len(serials) != len(set(serials)):
-        raise HTTPException(status_code=422, detail="Tag или Serial Number повторяется в списке")
-    conflicts = db.query(IpadDevice).filter(or_(IpadDevice.tag.in_(tags), IpadDevice.serial_number.in_(serials))).all()
-    if conflicts: raise HTTPException(status_code=409, detail="Уже существуют: " + ", ".join(item.tag for item in conflicts))
+    if len(serials) != len(set(serials)):
+        raise HTTPException(status_code=422, detail="Serial Number повторяется в списке")
+    conflicts = db.query(IpadDevice).filter(IpadDevice.serial_number.in_(serials)).all()
+    if conflicts: raise HTTPException(status_code=409, detail="Serial Number уже существуют: " + ", ".join(item.serial_number for item in conflicts))
     created = []
     for tag, serial in rows:
         device = IpadDevice(id=uuid.uuid4(), device_name=name, model=model, tag=tag, serial_number=serial, status=data.status)
@@ -127,7 +145,7 @@ def bulk_create_ipads(data: IpadDeviceBulkCreate, db: Session = Depends(get_db),
         record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_CREATED", {"source": "bulk", "tag": tag})
     try: db.commit()
     except IntegrityError:
-        db.rollback(); raise HTTPException(status_code=409, detail="Tag или Serial Number уже используется")
+        db.rollback(); raise HTTPException(status_code=409, detail="Serial Number уже используется")
     return {"created": len(created)}
 
 
@@ -143,7 +161,7 @@ def update_ipad(device_id: UUID, data: IpadDeviceUpdate, db: Session = Depends(g
     record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_UPDATED", {"fields": list(updates)})
     try: db.commit()
     except IntegrityError:
-        db.rollback(); raise HTTPException(status_code=409, detail="Tag или Serial Number уже используется")
+        db.rollback(); raise HTTPException(status_code=409, detail="Serial Number уже используется")
     db.refresh(device); return _serialize(device)
 
 

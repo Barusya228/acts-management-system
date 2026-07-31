@@ -310,14 +310,6 @@ class IpadAdvisoryAct(Base):
 
 class IpadStudentAssignment(Base):
     __tablename__ = "ipad_student_assignments"
-    __table_args__ = (
-        Index(
-            "uq_ipad_student_assignments_active_tag",
-            "ipad_tag",
-            unique=True,
-            postgresql_where=text("status IN ('RESERVED', 'ISSUED', 'RETURN_PENDING')"),
-        ),
-    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -359,7 +351,7 @@ class IpadDevice(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     device_name = Column(String, nullable=False, default="iPad")
     model = Column(String, nullable=True, index=True)
-    tag = Column(String, unique=True, nullable=False, index=True)
+    tag = Column(String, nullable=False, index=True)
     serial_number = Column(String, unique=True, nullable=False, index=True)
     status = Column(String, nullable=False, default="AVAILABLE", index=True)
     notes = Column(Text, nullable=True)
