@@ -74,7 +74,10 @@ export default function GuestActsGrid({ adminMode = false }: { adminMode?: boole
     return map[code] || `/acts/create?code=${code}`;
   };
 
-  const getActUrl = (actId: string) => adminMode ? `/admin/acts/${actId}` : `/acts/${actId}`;
+  const getActUrl = (act: Act) => {
+    if (act.template_code === 'IPAD') return `/acts/ipad/${act.id}`;
+    return adminMode ? `/admin/acts/${act.id}` : `/acts/${act.id}`;
+  };
 
   const fetchActs = async () => {
     setLoading(true);
@@ -219,7 +222,7 @@ export default function GuestActsGrid({ adminMode = false }: { adminMode?: boole
               <button
                 key={act.id}
                 type="button"
-                onClick={() => router.push(getActUrl(act.id))}
+                onClick={() => router.push(getActUrl(act))}
                 className="group rounded-2xl border border-amber-200 bg-white p-4 text-left shadow-sm transition hover:border-amber-400 hover:shadow-md"
               >
                 <div className="flex items-start justify-between gap-3">
@@ -294,7 +297,7 @@ export default function GuestActsGrid({ adminMode = false }: { adminMode?: boole
               <button
                 key={act.id}
                 type="button"
-                onClick={() => router.push(getActUrl(act.id))}
+                onClick={() => router.push(getActUrl(act))}
                 className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md"
               >
                 <div className="flex items-start justify-between gap-3">
