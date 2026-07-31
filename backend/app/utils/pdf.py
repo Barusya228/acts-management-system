@@ -249,6 +249,13 @@ def _build_numbered_party_rows(
 
 
 def _build_ipad_rows(act_data: dict, extra_data: dict) -> list[list[str]]:
+    advisory = extra_data.get("ipad_advisory")
+    if isinstance(advisory, dict) and isinstance(advisory.get("students"), list):
+        return [[
+            str(item.get("student_name", "") or ""),
+            str(item.get("ipad_tag", "") or "—"),
+            str(item.get("imei", "") or item.get("serial_number", "") or "—"),
+        ] for item in advisory["students"] if isinstance(item, dict)]
     rows = [[
         str(act_data.get('item_name', '') or ''),
         str(act_data.get('item_serial', '') or '—'),
@@ -576,12 +583,13 @@ def build_act_pdf_v2(
 
     if is_ipad_template:
         pdf.setFont(bold_font_name, 11)
-        pdf.drawString(margin_left + 10, y, "Поля для эдвайзери: ______________________________")
+        ipad_advisory = extra_data.get("ipad_advisory") if isinstance(extra_data.get("ipad_advisory"), dict) else {}
+        advisory_label = ipad_advisory.get("advisory_group") or extra_data.get('advisory_note', '') or '______________________________'
+        academic_year = ipad_advisory.get("academic_year")
+        pdf.drawString(margin_left + 10, y, f"Advisory: {advisory_label}")
+        if academic_year:
+            pdf.drawRightString(margin_right, y, f"Учебный год: {academic_year}")
         y -= 20
-        advisory_note = str(extra_data.get('advisory_note', '') or '').strip()
-        if advisory_note:
-            pdf.setFont(font_name, 11)
-            pdf.drawString(margin_left + 125, y + 20, advisory_note[:60])
     
     # Таблица оборудования
     if is_ipad_template:

@@ -19,6 +19,29 @@ def build_act_snapshot(act: Act) -> dict:
             }
             for item in act.accessories
         ]
+    if getattr(act, "ipad_profile", None):
+        base_extra["ipad_advisory"] = {
+            "advisory_group": act.ipad_profile.advisory_group,
+            "academic_year": act.ipad_profile.academic_year,
+            "students": [{
+                "id": str(item.id),
+                "student_name": item.student_name,
+                "student_status": item.student_status,
+                "ipad_name": item.ipad_name,
+                "ipad_model": item.ipad_model,
+                "ipad_tag": item.ipad_tag,
+                "serial_number": item.serial_number,
+                "imei": item.imei,
+                "note": item.note,
+                "status": item.status,
+                "events": [{
+                    "event_type": event.event_type,
+                    "data": event.data_json,
+                    "note": event.note,
+                    "created_at": event.created_at.isoformat(),
+                } for event in item.events],
+            } for item in act.ipad_assignments],
+        }
     return {
         "id": str(act.id),
         "template_id": str(act.template_id),

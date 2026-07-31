@@ -130,6 +130,8 @@ class Act(Base):
     file_assets = relationship("FileAsset", back_populates="act", cascade="all, delete-orphan")
     device_assignments = relationship("ActDeviceAssignment", back_populates="act", cascade="all, delete-orphan")
     accessories = relationship("ActAccessory", back_populates="act", cascade="all, delete-orphan")
+    ipad_profile = relationship("IpadAdvisoryAct", back_populates="act", uselist=False, cascade="all, delete-orphan")
+    ipad_assignments = relationship("IpadStudentAssignment", back_populates="act", cascade="all, delete-orphan")
 
 class ActVersion(Base):
     __tablename__ = "act_versions"
@@ -292,6 +294,61 @@ class ActAccessory(Base):
     returned_at = Column(DateTime, nullable=True)
 
     act = relationship("Act", back_populates="accessories")
+
+
+class IpadAdvisoryAct(Base):
+    __tablename__ = "ipad_advisory_acts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    advisory_group = Column(String, nullable=False, index=True)
+    academic_year = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    act = relationship("Act", back_populates="ipad_profile")
+
+
+class IpadStudentAssignment(Base):
+    __tablename__ = "ipad_student_assignments"
+    __table_args__ = (
+        Index(
+            "uq_ipad_student_assignments_active_tag",
+            "ipad_tag",
+            unique=True,
+            postgresql_where=text("status IN ('RESERVED', 'ISSUED', 'RETURN_PENDING')"),
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_name = Column(String, nullable=False, index=True)
+    student_status = Column(String, nullable=False, default="ACTIVE", index=True)
+    ipad_name = Column(String, nullable=False, default="iPad")
+    ipad_model = Column(String, nullable=True)
+    ipad_tag = Column(String, nullable=False, index=True)
+    serial_number = Column(String, nullable=True)
+    imei = Column(String, nullable=True)
+    note = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="RESERVED", index=True)
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    returned_at = Column(DateTime, nullable=True)
+
+    act = relationship("Act", back_populates="ipad_assignments")
+    events = relationship("IpadAssignmentEvent", back_populates="assignment", cascade="all, delete-orphan")
+
+
+class IpadAssignmentEvent(Base):
+    __tablename__ = "ipad_assignment_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assignment_id = Column(UUID(as_uuid=True), ForeignKey("ipad_student_assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    data_json = Column(JSON, nullable=False)
+    note = Column(Text, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    assignment = relationship("IpadStudentAssignment", back_populates="events")
 
 
 class InventoryCategory(Base):

@@ -150,6 +150,46 @@ class ReturnStartRequest(BaseModel):
     return_date: date
     return_note: Optional[str] = None
 
+
+class IpadStudentCreate(BaseModel):
+    student_name: str
+    ipad_name: str = "iPad"
+    ipad_model: Optional[str] = None
+    ipad_tag: str
+    serial_number: Optional[str] = None
+    imei: Optional[str] = None
+    note: Optional[str] = None
+
+
+class IpadAdvisoryActCreate(BaseModel):
+    template_id: UUID4
+    advisory_group: str
+    academic_year: str
+    issue_date: date
+    issuer_participant_id: UUID4
+    responsible_participant_ids: list[UUID4]
+    students: list[IpadStudentCreate]
+
+
+class IpadStudentDepartureRequest(BaseModel):
+    departure_date: date
+    reason: str
+    ipad_returned: bool
+    return_condition: Optional[str] = None
+    note: Optional[str] = None
+
+
+class IpadReplacementRequest(BaseModel):
+    replacement_date: date
+    reason: str
+    old_condition: str
+    ipad_name: str = "iPad"
+    ipad_model: Optional[str] = None
+    ipad_tag: str
+    serial_number: Optional[str] = None
+    imei: Optional[str] = None
+    note: Optional[str] = None
+
 # Version schemas
 class ActVersionResponse(BaseModel):
     id: UUID4

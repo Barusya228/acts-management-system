@@ -17,6 +17,7 @@ from app.db.models import (
     InventoryDevice,
     ActDeviceAssignment,
     ActAccessory,
+    IpadStudentAssignment,
     DeviceStatus,
     Participant,
     ParticipantEmploymentStatus,
@@ -316,6 +317,22 @@ def _transition_act_accessories(db: Session, act: Act, target_status: str) -> No
             accessory.issued_at = now
         else:
             accessory.returned_at = now
+
+
+def _transition_ipad_assignments(db: Session, act: Act, target_status: str) -> None:
+    assignments = db.query(IpadStudentAssignment).filter(
+        IpadStudentAssignment.act_id == act.id
+    ).with_for_update().all()
+    if not assignments:
+        return
+    expected = "RESERVED" if target_status == "ISSUED" else "ISSUED"
+    now = datetime.utcnow()
+    for assignment in assignments:
+        if assignment.status != expected:
+            raise HTTPException(status_code=409, detail="Состояние iPad не соответствует операции")
+        assignment.status = target_status
+        if target_status == "RETURNED":
+            assignment.returned_at = now
 
 
 def _get_selectable_participant(
@@ -965,6 +982,7 @@ async def sign_party1(
     if act.status == ActStatus.COMPLETED:
         _transition_act_devices(db, act, "ISSUED")
         _transition_act_accessories(db, act, "ISSUED")
+        _transition_ipad_assignments(db, act, "ISSUED")
     
     relative_path, mime_type, size_bytes, sha256 = save_data_url_file(
         signature.signature_data,
@@ -1071,6 +1089,7 @@ async def sign_party2(
     if act.status == ActStatus.RETURNED:
         _transition_act_devices(db, act, "RETURNED")
         _transition_act_accessories(db, act, "RETURNED")
+        _transition_ipad_assignments(db, act, "RETURNED")
     db.add(FileAsset(
         act_id=act.id,
         kind=(
