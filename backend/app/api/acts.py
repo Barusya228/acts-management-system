@@ -19,6 +19,7 @@ from app.db.models import (
     ActAccessory,
     IpadStudentAssignment,
     IpadDevice,
+    SmallEquipmentCatalog,
     DeviceStatus,
     Participant,
     ParticipantEmploymentStatus,
@@ -284,6 +285,7 @@ def _normalize_accessories(value: object) -> list[dict]:
         name = str(item.get("name", "")).strip()
         model = str(item.get("model", "")).strip()
         note = str(item.get("note", "")).strip()
+        catalog_item_id = item.get("catalog_item_id")
         try:
             quantity = int(item.get("quantity", 1))
         except (TypeError, ValueError):
@@ -294,11 +296,12 @@ def _normalize_accessories(value: object) -> list[dict]:
                 detail=f"Мелкая техника #{index + 1}: укажите название и количество больше нуля",
             )
         normalized.append({
+            "catalog_item_id": str(catalog_item_id).strip() if catalog_item_id else None,
             "name": name,
             "model": model or None,
             "quantity": quantity,
             "note": note or None,
-            "requires_return": bool(item.get("requires_return", True)),
+            "requires_return": True,
         })
     return normalized
 
@@ -308,9 +311,6 @@ def _transition_act_accessories(db: Session, act: Act, target_status: str) -> No
     now = datetime.utcnow()
     expected = "RESERVED" if target_status == "ISSUED" else "ISSUED"
     for accessory in accessories:
-        if target_status == "RETURNED" and not accessory.requires_return:
-            accessory.status = "NO_RETURN_REQUIRED"
-            continue
         if accessory.status != expected:
             raise HTTPException(status_code=409, detail="Состояние мелкой техники не соответствует операции")
         accessory.status = target_status
@@ -731,13 +731,34 @@ async def create_act(
     )
     accessories = normalized_extra_data.get(ACCESSORIES_KEY, [])
     for item in accessories:
+        catalog_item = None
+        if item.get("catalog_item_id"):
+            try:
+                catalog_item = db.query(SmallEquipmentCatalog).filter(
+                    SmallEquipmentCatalog.id == UUID(item["catalog_item_id"]),
+                    SmallEquipmentCatalog.is_active.is_(True),
+                ).first()
+            except ValueError:
+                catalog_item = None
+            if not catalog_item:
+                raise HTTPException(status_code=422, detail=f"Мелкая техника {item['name']} не найдена в инвентаре")
+        else:
+            catalog_item = db.query(SmallEquipmentCatalog).filter(
+                SmallEquipmentCatalog.name == item["name"],
+                SmallEquipmentCatalog.model == (item.get("model") or ""),
+            ).first()
+            if not catalog_item:
+                catalog_item = SmallEquipmentCatalog(name=item["name"], model=item.get("model") or "")
+                db.add(catalog_item)
+                db.flush()
         db.add(ActAccessory(
             act_id=act.id,
-            name=item["name"],
-            model=item.get("model"),
+            catalog_item_id=catalog_item.id,
+            name=catalog_item.name,
+            model=catalog_item.model or None,
             quantity=item["quantity"],
             note=item.get("note"),
-            requires_return=item["requires_return"],
+            requires_return=True,
             status="RESERVED",
             recipient_name=act.party2_name,
         ))

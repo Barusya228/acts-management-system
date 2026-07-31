@@ -282,6 +282,7 @@ class ActAccessory(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     act_id = Column(UUID(as_uuid=True), ForeignKey("acts.id", ondelete="CASCADE"), nullable=False, index=True)
+    catalog_item_id = Column(UUID(as_uuid=True), ForeignKey("small_equipment_catalog.id"), nullable=True, index=True)
     name = Column(String, nullable=False)
     model = Column(String, nullable=True)
     quantity = Column(Integer, nullable=False)
@@ -294,6 +295,23 @@ class ActAccessory(Base):
     returned_at = Column(DateTime, nullable=True)
 
     act = relationship("Act", back_populates="accessories")
+    catalog_item = relationship("SmallEquipmentCatalog", back_populates="act_items")
+
+
+class SmallEquipmentCatalog(Base):
+    __tablename__ = "small_equipment_catalog"
+    __table_args__ = (
+        UniqueConstraint("name", "model", name="uq_small_equipment_catalog_name_model"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False, index=True)
+    model = Column(String, nullable=False, default="")
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    act_items = relationship("ActAccessory", back_populates="catalog_item")
 
 
 class IpadAdvisoryAct(Base):

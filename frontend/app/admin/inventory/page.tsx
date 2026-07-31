@@ -56,6 +56,7 @@ interface ManualAccessory {
   recipient_name: string;
   issue_date: string;
 }
+interface SmallEquipmentGroup { id: string; name: string; model: string; active_quantity: number; active_assignments: Array<{ id: string; act_id: string; act_reference: string; recipient_name: string; quantity: number; status: string; note?: string | null; issue_date: string }>; }
 
 interface IpadInventoryItem { id: string; device_name: string; model?: string | null; tag: string; serial_number: string; status: string; notes?: string | null; student_name?: string | null; act_id?: string | null; duplicate_tag_count: number; }
 interface IpadGroup { device_name: string; model: string; count: number; }
@@ -100,6 +101,7 @@ export default function InventoryPage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [inventoryView, setInventoryView] = useState<'devices' | 'accessories' | 'ipads'>('devices');
   const [manualAccessories, setManualAccessories] = useState<ManualAccessory[]>([]);
+  const [smallEquipmentGroups, setSmallEquipmentGroups] = useState<SmallEquipmentGroup[]>([]);
   const [manualTotal, setManualTotal] = useState(0);
   const [ipadItems, setIpadItems] = useState<IpadInventoryItem[]>([]);
   const [ipadTotal, setIpadTotal] = useState(0);
@@ -204,9 +206,10 @@ export default function InventoryPage() {
     try {
       const params = new URLSearchParams({ page: String(page), page_size: '24' });
       if (search) params.set('search', search);
-      const response = await api.get(`/api/inventory/accessories?${params.toString()}`);
-      setManualAccessories(response.data.items || []);
-      setManualTotal(response.data.total || 0);
+      const response = await api.get(`/api/inventory/small-equipment/catalog?${params.toString()}`);
+      const items = Array.isArray(response.data) ? response.data : [];
+      setSmallEquipmentGroups(items);
+      setManualTotal(items.length);
     } catch {
       setManualAccessories([]);
       setManualTotal(0);
@@ -537,37 +540,19 @@ export default function InventoryPage() {
             {ipadItems.map(item => <div key={item.id} className={`rounded-2xl border bg-white p-4 shadow-sm ${item.duplicate_tag_count > 1 ? 'border-amber-300 ring-2 ring-amber-100' : ''}`}><div className="flex justify-between gap-3"><div><p className="font-bold text-slate-800">{item.device_name}</p><p className="text-sm text-slate-500">{item.model || 'Без модели'}</p></div><span className={`h-fit rounded-full px-2 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'Косячный' : 'Списан'}</span></div>{item.duplicate_tag_count > 1 && <div className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800">Дубликат Tag · записей: {item.duplicate_tag_count}</div>}<div className="mt-4 space-y-1 font-mono text-sm text-slate-600"><p>Tag: {item.tag}</p><p>Serial: {item.serial_number}</p></div>{item.student_name && <div className="mt-3 rounded-xl bg-blue-50 p-3 text-sm"><p className="font-bold text-blue-900">{item.student_name}</p>{item.act_id && <Link href={`/admin/acts/${item.act_id}`} className="text-blue-600">Открыть акт</Link>}</div>}{item.notes && <p className="mt-3 text-sm text-slate-500">{item.notes}</p>}</div>)}
           </div>
         ) : inventoryView === 'accessories' ? (
-          manualAccessories.length === 0 ? (
+          smallEquipmentGroups.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
               <p className="font-semibold text-slate-700">Ручные позиции не найдены</p>
               <p className="mt-1 text-sm text-slate-400">Они появятся после создания акта с мелкой техникой.</p>
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {manualAccessories.map(item => {
-                const statusMeta = accessoryStatus(item.status);
-                return (
-                  <div key={item.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-bold text-slate-800">{item.name}</p>
-                        <p className="truncate text-xs text-slate-500">{item.model || 'Без модели'} · {item.quantity} шт.</p>
-                      </div>
-                      <span className="shrink-0 rounded-full bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700">Ручная позиция</span>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusMeta.cls}`}>{statusMeta.label}</span>
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">{item.requires_return ? 'С возвратом' : 'Без возврата'}</span>
-                    </div>
-                    <dl className="mt-4 space-y-2 text-sm">
-                      <div><dt className="text-xs text-slate-400">Получатель</dt><dd className="font-semibold text-slate-800">{item.recipient_name}</dd></div>
-                      <div><dt className="text-xs text-slate-400">Дата выдачи</dt><dd className="text-slate-700">{new Date(item.issue_date).toLocaleDateString('ru-RU')}</dd></div>
-                      {item.note && <div><dt className="text-xs text-slate-400">Заметка</dt><dd className="text-slate-700">{item.note}</dd></div>}
-                    </dl>
-                    <Link href={`/admin/acts/${item.act_id}`} className="mt-4 flex min-h-11 items-center justify-center rounded-xl bg-slate-900 px-4 text-sm font-bold text-white">Открыть {item.act_reference}</Link>
-                  </div>
-                );
-              })}
+            <div className="grid gap-3 lg:grid-cols-2">
+              {smallEquipmentGroups.map(group => (
+                <div key={group.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3"><div><p className="font-bold text-slate-800">{group.name}</p><p className="text-sm text-slate-500">{group.model || 'Без модели'}</p></div><div className="text-right"><span className="rounded-full bg-blue-100 px-3 py-1 text-sm font-black text-blue-700">{group.active_quantity} шт.</span><p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">сейчас у получателей</p></div></div>
+                  {group.active_assignments.length === 0 ? <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-400">Активных выдач нет</div> : <div className="mt-4 space-y-2">{group.active_assignments.map(assignment => <div key={assignment.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3"><div className="min-w-0"><p className="truncate text-sm font-bold text-slate-800">{assignment.recipient_name}</p><p className="text-xs text-slate-400">{assignment.quantity} шт. · {new Date(assignment.issue_date).toLocaleDateString('ru-RU')}</p>{assignment.note && <p className="mt-1 truncate text-xs text-slate-500">{assignment.note}</p>}</div><Link href={`/admin/acts/${assignment.act_id}`} className="min-h-10 shrink-0 rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-700 ring-1 ring-gray-200">{assignment.act_reference}</Link></div>)}</div>}
+                </div>
+              ))}
             </div>
           )
         ) : (

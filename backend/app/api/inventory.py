@@ -10,7 +10,7 @@ from uuid import UUID
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
 from app.services.audit_service import record_audit
-from app.db.models import Act, ActAccessory, ActDeviceAssignment, InventoryCategory, InventoryDevice, User
+from app.db.models import Act, ActAccessory, ActDeviceAssignment, InventoryCategory, InventoryDevice, SmallEquipmentCatalog, User
 from app.schemas.schemas import (
     InventoryCategoryCreate,
     InventoryCategoryResponse,
@@ -32,6 +32,70 @@ CYRILLIC_TRANSLITERATION = str.maketrans({
     "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch",
     "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
 })
+
+
+@router.get("/small-equipment/catalog")
+def list_small_equipment_catalog(
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    query = db.query(SmallEquipmentCatalog).filter(SmallEquipmentCatalog.is_active.is_(True))
+    if search:
+        value = f"%{search}%"
+        query = query.filter(SmallEquipmentCatalog.name.ilike(value) | SmallEquipmentCatalog.model.ilike(value))
+    items = query.order_by(SmallEquipmentCatalog.name, SmallEquipmentCatalog.model).limit(200).all()
+    item_ids = [item.id for item in items]
+    active_rows = db.query(ActAccessory, Act).join(Act, Act.id == ActAccessory.act_id).filter(
+        ActAccessory.catalog_item_id.in_(item_ids),
+        ActAccessory.status.in_(["RESERVED", "ISSUED"]),
+    ).order_by(ActAccessory.reserved_at.desc()).all() if item_ids else []
+    assignments_by_catalog: dict = {}
+    for accessory, act in active_rows:
+        assignments_by_catalog.setdefault(accessory.catalog_item_id, []).append({
+            "id": str(accessory.id),
+            "act_id": str(act.id),
+            "act_reference": f"ACT-{str(act.id).split('-')[0].upper()}",
+            "recipient_name": accessory.recipient_name,
+            "quantity": accessory.quantity,
+            "status": accessory.status,
+            "note": accessory.note,
+            "issue_date": act.issue_date.isoformat(),
+        })
+    return [{
+        "id": str(item.id),
+        "name": item.name,
+        "model": item.model,
+        "active_quantity": sum(row["quantity"] for row in assignments_by_catalog.get(item.id, [])),
+        "active_assignments": assignments_by_catalog.get(item.id, []),
+    } for item in items]
+
+
+@router.post("/small-equipment/catalog", status_code=status.HTTP_201_CREATED)
+def create_small_equipment_catalog_item(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    name = str(payload.get("name", "")).strip()
+    model = str(payload.get("model", "")).strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Название мелкой техники обязательно")
+    existing = db.query(SmallEquipmentCatalog).filter(
+        SmallEquipmentCatalog.name == name,
+        SmallEquipmentCatalog.model == model,
+    ).first()
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            db.commit()
+        return {"id": str(existing.id), "name": existing.name, "model": existing.model}
+    item = SmallEquipmentCatalog(name=name, model=model)
+    db.add(item)
+    db.flush()
+    record_audit(db, current_user, "SMALL_EQUIPMENT", item.id, "SMALL_EQUIPMENT_CREATED", {"name": name, "model": model})
+    db.commit()
+    return {"id": str(item.id), "name": item.name, "model": item.model}
 
 
 @router.get("/accessories")

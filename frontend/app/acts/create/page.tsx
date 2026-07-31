@@ -14,7 +14,8 @@ interface Recipient {
 }
 
 interface EquipmentItem { inventory_device_id?: string; name: string; serial: string; }
-interface AccessoryItem { name: string; model: string; quantity: number; note: string; requires_return: boolean; }
+interface AccessoryItem { catalog_item_id?: string; name: string; model: string; quantity: number; note: string; }
+interface AccessoryCatalogItem { id: string; name: string; model: string; }
 
 interface TemplateOption { id: string; code: string; name: string; }
 interface DeviceOption { id: string; name: string; model?: string; category: string; category_name: string; category_icon: string; serial_number: string; inventory_number: string; barcode: string; }
@@ -41,6 +42,11 @@ function CreateActForm() {
   const [focusedRecipient, setFocusedRecipient] = useState(-1);
   const [equipment, setEquipment] = useState<EquipmentItem[]>([]);
   const [accessories, setAccessories] = useState<AccessoryItem[]>([]);
+  const [accessoryCatalog, setAccessoryCatalog] = useState<AccessoryCatalogItem[]>([]);
+  const [accessoryPickerOpen, setAccessoryPickerOpen] = useState(false);
+  const [newAccessoryOpen, setNewAccessoryOpen] = useState(false);
+  const [newAccessory, setNewAccessory] = useState({ name: '', model: '' });
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [advisoryNote, setAdvisoryNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [devicePickerOpen, setDevicePickerOpen] = useState(false);
@@ -97,6 +103,7 @@ function CreateActForm() {
         })
         .finally(() => setDevicesLoading(false));
       api.get('/api/participants?is_active=true').then(r => setParticipants(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+      api.get('/api/inventory/small-equipment/catalog').then(r => setAccessoryCatalog(Array.isArray(r.data) ? r.data : [])).catch(() => {});
     }
   }, [user, templateId]);
 
@@ -172,7 +179,20 @@ function CreateActForm() {
       serial: device?.inventory_number || '',
     } : item));
   };
-  const addAccessory = () => setAccessories(items => [...items, { name: '', model: '', quantity: 1, note: '', requires_return: true }]);
+  const addAccessoryFromCatalog = (catalogItem: AccessoryCatalogItem) => {
+    setAccessories(items => [...items, { catalog_item_id: catalogItem.id, name: catalogItem.name, model: catalogItem.model, quantity: 1, note: '' }]);
+    setAccessoryPickerOpen(false);
+  };
+  const createAccessory = async () => {
+    try {
+      const response = await api.post('/api/inventory/small-equipment/catalog', newAccessory);
+      const item = response.data as AccessoryCatalogItem;
+      setAccessoryCatalog(items => items.some(existing => existing.id === item.id) ? items : [...items, item]);
+      addAccessoryFromCatalog(item);
+      setNewAccessory({ name: '', model: '' });
+      setNewAccessoryOpen(false);
+    } catch (error: any) { showToast(error.response?.data?.detail || 'Не удалось добавить мелкую технику', 'error'); }
+  };
   const updateAccessory = (index: number, patch: Partial<AccessoryItem>) => setAccessories(items => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
   const removeAccessory = (index: number) => setAccessories(items => items.filter((_, itemIndex) => itemIndex !== index));
 
@@ -215,6 +235,14 @@ function CreateActForm() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const openConfirmation = () => {
+    if (!templateId || !selectedDevice || !party1ParticipantId) { showToast('Заполните шаблон, основное устройство и выдающего', 'error'); return; }
+    const normalized = recipients.filter(r => r.full_name.trim() && r.email.trim());
+    if (!normalized.length || normalized.some(r => !r.participant_id)) { showToast('Выберите получателя из справочника', 'error'); return; }
+    if (accessories.some(item => !item.name.trim() || item.quantity < 1)) { showToast('Проверьте мелкую технику', 'error'); return; }
+    setConfirmOpen(true);
   };
 
   if (!user) {
@@ -303,7 +331,7 @@ function CreateActForm() {
                 <p className="text-sm font-bold text-slate-800">Мелкая техника</p>
                 <p className="text-xs text-slate-400">Добавляется вручную без инвентарного номера и штрихкода.</p>
               </div>
-              <button type="button" onClick={addAccessory} className="min-h-11 rounded-lg bg-slate-100 px-4 text-sm font-semibold text-slate-700">+ Добавить</button>
+              <button type="button" onClick={() => setAccessoryPickerOpen(true)} className="min-h-11 rounded-lg bg-slate-100 px-4 text-sm font-semibold text-slate-700">+ Добавить</button>
             </div>
             {accessories.length === 0 ? (
               <div className="rounded-xl border border-dashed border-gray-200 py-6 text-center text-sm text-slate-400">Мелкая техника не добавлена</div>
@@ -312,18 +340,14 @@ function CreateActForm() {
                 {accessories.map((item, index) => (
                   <div key={index} className="rounded-xl bg-slate-50 p-3 ring-1 ring-gray-100">
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <input value={item.name} onChange={event => updateAccessory(index, { name: event.target.value })} placeholder="Название *" className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-blue-400" />
-                      <input value={item.model} onChange={event => updateAccessory(index, { model: event.target.value })} placeholder="Модель" className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-blue-400" />
+                      <div className="min-h-11 rounded-lg bg-white px-3 py-2 text-sm"><p className="font-semibold">{item.name}</p><p className="text-xs text-slate-400">{item.model || 'Без модели'}</p></div>
                     </div>
                     <div className="mt-2 grid gap-2 sm:grid-cols-[120px_1fr]">
                       <input type="number" min="1" value={item.quantity} onChange={event => updateAccessory(index, { quantity: Number(event.target.value) })} className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-blue-400" aria-label="Количество" />
                       <input value={item.note} onChange={event => updateAccessory(index, { note: event.target.value })} placeholder="Заметка" className="min-h-11 rounded-lg border border-gray-200 bg-white px-3 text-sm outline-none focus:border-blue-400" />
                     </div>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <label className="flex min-h-11 items-center gap-2 text-sm text-slate-600">
-                        <input type="checkbox" checked={item.requires_return} onChange={event => updateAccessory(index, { requires_return: event.target.checked })} className="h-5 w-5 rounded border-gray-300" />
-                        Требуется возврат
-                      </label>
+                      <span className="flex min-h-11 items-center text-sm font-medium text-emerald-700">Возврат обязателен</span>
                       <button type="button" onClick={() => removeAccessory(index)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-red-600 hover:bg-red-50">Удалить</button>
                     </div>
                   </div>
@@ -410,7 +434,7 @@ function CreateActForm() {
           )}
 
           {/* Submit */}
-          <button type="button" onClick={handleSubmit} disabled={saving}
+          <button type="button" onClick={openConfirmation} disabled={saving}
             className="w-full rounded-xl bg-slate-900 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50">
             {saving ? 'Создание...' : '✨ Создать акт'}
           </button>
@@ -534,6 +558,21 @@ function CreateActForm() {
             </div>
           </div>
         </div>
+      )}
+      {accessoryPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="flex items-center justify-between"><div><h2 className="text-lg font-black">Мелкая техника из инвентаря</h2><p className="text-sm text-slate-500">Выберите существующую позицию или добавьте новую.</p></div><button onClick={() => setAccessoryPickerOpen(false)} className="min-h-11 rounded-xl bg-slate-100 px-4">Закрыть</button></div>
+            <div className="mt-4 max-h-80 space-y-2 overflow-y-auto">{accessoryCatalog.map(item => <button key={item.id} type="button" onClick={() => addAccessoryFromCatalog(item)} className="flex min-h-14 w-full items-center justify-between rounded-xl border px-4 text-left hover:border-blue-400"><span><span className="block font-bold text-slate-800">{item.name}</span><span className="text-sm text-slate-400">{item.model || 'Без модели'}</span></span><span className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white">Добавить</span></button>)}</div>
+            <button type="button" onClick={() => setNewAccessoryOpen(true)} className="mt-4 min-h-12 w-full rounded-xl border-2 border-dashed border-blue-300 font-bold text-blue-700">+ Добавить новую позицию</button>
+          </div>
+        </div>
+      )}
+      {newAccessoryOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h2 className="text-lg font-black">Новая мелкая техника</h2><div className="mt-4 space-y-2"><input value={newAccessory.name} onChange={e => setNewAccessory({...newAccessory, name:e.target.value})} placeholder="Название *" className="min-h-12 w-full rounded-xl border px-3"/><input value={newAccessory.model} onChange={e => setNewAccessory({...newAccessory, model:e.target.value})} placeholder="Модель" className="min-h-12 w-full rounded-xl border px-3"/></div><div className="mt-5 flex gap-2"><button onClick={createAccessory} className="min-h-12 flex-1 rounded-xl bg-slate-900 font-bold text-white">Добавить и выбрать</button><button onClick={() => setNewAccessoryOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-4">Отмена</button></div></div></div>
+      )}
+      {confirmOpen && selectedDevice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-blue-600">Проверьте перед созданием</p><h2 className="mt-1 text-xl font-black">Что создаётся</h2><div className="mt-4 space-y-3 rounded-2xl bg-slate-50 p-4"><div><p className="text-xs text-slate-400">Получатель</p><p className="font-bold">{filledRecipients.map(item => item.full_name).join(', ')}</p></div><div><p className="text-xs text-slate-400">Основное устройство</p><p className="font-bold">{selectedDevice.name}</p><p className="text-sm text-slate-500">Инв: {selectedDevice.inventory_number} · ШК: {selectedDevice.barcode}</p></div><div><p className="text-xs text-slate-400">Дополнительные устройства</p><p className="font-semibold">{equipment.filter(item => item.inventory_device_id).length}</p></div><div><p className="text-xs text-slate-400">Мелкая техника</p>{accessories.length ? accessories.map((item,index) => <p key={index} className="text-sm">{item.name}{item.model ? ` · ${item.model}` : ''} · {item.quantity} шт.</p>) : <p className="text-sm text-slate-400">Не добавлена</p>}</div></div><div className="mt-5 flex gap-2"><button disabled={saving} onClick={() => { setConfirmOpen(false); handleSubmit(); }} className="min-h-12 flex-1 rounded-xl bg-blue-600 font-black text-white">{saving ? 'Создание...' : 'Создать и зарезервировать'}</button><button onClick={() => setConfirmOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-4">Вернуться</button></div></div></div>
       )}
     </div>
   );

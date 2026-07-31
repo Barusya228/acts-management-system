@@ -651,7 +651,7 @@ def build_act_pdf_v2(
 
     accessories = extra_data.get("accessories", [])
     if isinstance(accessories, list) and accessories:
-        accessory_data = [['№', 'Мелкая техника', 'Модель', 'Кол-во', 'Заметка', 'Возврат']]
+        accessory_data = [['№', 'Мелкая техника', 'Модель', 'Кол-во', 'Заметка']]
         for index, item in enumerate(accessories, start=1):
             if not isinstance(item, dict):
                 continue
@@ -661,9 +661,8 @@ def build_act_pdf_v2(
                 str(item.get('model', '') or '—'),
                 str(item.get('quantity', 1)),
                 str(item.get('note', '') or '—'),
-                'Да' if item.get('requires_return', True) else 'Нет',
             ])
-        accessory_table = Table(accessory_data, colWidths=[28, 115, 90, 48, 160, 50])
+        accessory_table = Table(accessory_data, colWidths=[28, 135, 100, 48, 180])
         accessory_table.setStyle(TableStyle([
             ('FONT', (0, 0), (-1, -1), font_name, 8),
             ('FONT', (0, 0), (-1, 0), bold_font_name, 8),
@@ -671,7 +670,6 @@ def build_act_pdf_v2(
             ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
             ('ALIGN', (0, 0), (0, -1), 'CENTER'),
             ('ALIGN', (3, 1), (3, -1), 'CENTER'),
-            ('ALIGN', (5, 1), (5, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('LEFTPADDING', (0, 0), (-1, -1), 5),
             ('RIGHTPADDING', (0, 0), (-1, -1), 5),

@@ -782,6 +782,14 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       source: 'Доп.',
     })),
   ].filter((item) => item.name || item.serial || item.imei);
+  const accessoryList = Array.isArray(act.extra_data_json?.accessories)
+    ? (act.extra_data_json.accessories as Array<Record<string, unknown>>).map(item => ({
+        name: String(item.name || ''),
+        model: String(item.model || ''),
+        quantity: Number(item.quantity || 1),
+        note: String(item.note || ''),
+      }))
+    : [];
   const isIpadTemplate = template?.code === 'IPAD';
   const isAdminUser = (user?.role || '').toUpperCase() === 'ADMIN';
   const canEditIpadDraft = isAdminUser && isIpadTemplate && act.status === 'DRAFT';
@@ -794,7 +802,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     : [mergedEquipmentList];
   const advisoryNote = String(act.extra_data_json?.advisory_note ?? '').trim();
   const extraEntries = Object.entries(act.extra_data_json || {}).filter(
-    ([key]) => key !== 'equipment_list' && key !== 'recipients' && key !== 'advisory_note'
+    ([key]) => key !== 'equipment_list' && key !== 'accessories' && key !== 'recipients' && key !== 'advisory_note' && key !== 'party1_participant_id' && key !== 'inventory_category'
   );
   const party1Email = participants.find((participant) => participant.full_name === act.party1_name)?.email || '—';
   const party2Email = recipients.map((recipient) => recipient.email).filter(Boolean).join(', ') || act.receiver_email || '—';
@@ -1364,6 +1372,20 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                     </table>
                   </div>
                 )}
+              </div>
+            )}
+
+            {accessoryList.length > 0 && (
+              <div className="md:col-span-2">
+                <h3 className="mb-2 text-sm font-medium text-gray-500">Мелкая техника · возврат вместе со всем комплектом</h3>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {accessoryList.map((item, index) => (
+                    <div key={`${item.name}-${item.model}-${index}`} className="rounded-xl border border-gray-200 bg-slate-50 p-3">
+                      <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-gray-900">{item.name}</p>{item.model && <p className="text-xs text-gray-500">{item.model}</p>}</div><span className="rounded-full bg-blue-100 px-2 py-1 text-xs font-bold text-blue-700">{item.quantity} шт.</span></div>
+                      {item.note && <p className="mt-2 text-sm text-gray-600">{item.note}</p>}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
