@@ -198,7 +198,6 @@ export default function InventoryPage() {
     try {
       const params = new URLSearchParams({ page: String(page), page_size: '24' });
       if (search) params.set('search', search);
-      if (duplicateIpadTagsOnly) params.set('duplicate_tags_only', 'true');
       const response = await api.get(`/api/inventory/accessories?${params.toString()}`);
       setManualAccessories(response.data.items || []);
       setManualTotal(response.data.total || 0);
@@ -216,6 +215,7 @@ export default function InventoryPage() {
     try {
       const params = new URLSearchParams({ page: String(page), page_size: '24' });
       if (search) params.set('search', search);
+      if (duplicateIpadTagsOnly) params.set('duplicate_tags_only', 'true');
       const response = await api.get(`/api/ipad-inventory?${params}`);
       setIpadItems(response.data.items || []); setIpadTotal(response.data.total || 0);
     } catch { setIpadItems([]); setIpadTotal(0); setLoadError('Не удалось загрузить iPad'); }
