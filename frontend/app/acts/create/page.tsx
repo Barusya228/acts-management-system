@@ -267,12 +267,12 @@ function CreateActForm() {
                 </div>
               ) : (
                 <button type="button" disabled={devicesLoading || devices.length === 0} onClick={() => openDevicePicker('main')}
-                  className="min-h-14 w-full rounded-xl border-2 border-dashed border-blue-300 bg-blue-50 text-sm font-semibold text-blue-700 disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400">
-                  {devicesLoading ? 'Загрузка устройств...' : devicesError || (devices.length ? 'Найти или отсканировать устройство' : 'Нет доступных устройств')}
+                  className="min-h-12 rounded-xl border border-dashed border-blue-300 bg-blue-50 px-5 text-sm font-semibold text-blue-700 disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400">
+                  {devicesLoading ? 'Загрузка...' : devicesError || (devices.length ? '+ Добавить' : 'Нет доступных устройств')}
                 </button>
               )}
             </div>
-            <div className="border-t border-gray-100 pt-3">
+            {selectedDevice && <div className="border-t border-gray-100 pt-3">
               <label className="mb-2 block text-xs font-medium text-slate-500">Дополнительные устройства</label>
               {equipment.length === 0 ? (
                 <p className="py-2 text-xs text-slate-400">Не добавлены</p>
@@ -294,7 +294,7 @@ function CreateActForm() {
                 className="min-h-11 rounded-lg border border-dashed border-slate-300 px-4 text-sm text-slate-500 hover:border-blue-400 hover:text-blue-500">
                 + Добавить
               </button>
-            </div>
+            </div>}
           </div>
 
           <div className="rounded-xl border border-gray-200 bg-white p-4">
