@@ -58,6 +58,7 @@ interface ManualAccessory {
 }
 
 interface IpadInventoryItem { id: string; device_name: string; model?: string | null; tag: string; serial_number: string; status: string; notes?: string | null; student_name?: string | null; act_id?: string | null; duplicate_tag_count: number; }
+interface IpadGroup { device_name: string; model: string; count: number; }
 
 const groupKey = (group: Pick<DeviceGroup, 'name' | 'model'>) => `${group.name}\u0000${group.model}`;
 
@@ -102,6 +103,8 @@ export default function InventoryPage() {
   const [manualTotal, setManualTotal] = useState(0);
   const [ipadItems, setIpadItems] = useState<IpadInventoryItem[]>([]);
   const [ipadTotal, setIpadTotal] = useState(0);
+  const [ipadGroups, setIpadGroups] = useState<IpadGroup[]>([]);
+  const [selectedIpadGroup, setSelectedIpadGroup] = useState('');
   const [showIpadModal, setShowIpadModal] = useState(false);
   const [duplicateIpadTagsOnly, setDuplicateIpadTagsOnly] = useState(false);
   const [ipadBulk, setIpadBulk] = useState(false);
@@ -129,7 +132,10 @@ export default function InventoryPage() {
       else if (inventoryView === 'accessories') fetchManualAccessories();
       else fetchIpads();
     }
-  }, [user, inventoryView, catFilter, statusFilter, selectedGroup, duplicateIpadTagsOnly, page, refreshKey]);
+  }, [user, inventoryView, catFilter, statusFilter, selectedGroup, selectedIpadGroup, duplicateIpadTagsOnly, page, refreshKey]);
+  useEffect(() => {
+    if (user?.role === 'ADMIN' && inventoryView === 'ipads') fetchIpadGroups();
+  }, [user, inventoryView, duplicateIpadTagsOnly, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchGroups();
   }, [user, catFilter, statusFilter, refreshKey]);
@@ -216,10 +222,27 @@ export default function InventoryPage() {
       const params = new URLSearchParams({ page: String(page), page_size: '24' });
       if (search) params.set('search', search);
       if (duplicateIpadTagsOnly) params.set('duplicate_tags_only', 'true');
+      const activeGroup = ipadGroups.find(group => `${group.device_name}\u0000${group.model}` === selectedIpadGroup);
+      if (activeGroup) params.set('model', activeGroup.model);
       const response = await api.get(`/api/ipad-inventory?${params}`);
       setIpadItems(response.data.items || []); setIpadTotal(response.data.total || 0);
     } catch { setIpadItems([]); setIpadTotal(0); setLoadError('Не удалось загрузить iPad'); }
     finally { setLoading(false); }
+  };
+
+  const fetchIpadGroups = async () => {
+    try {
+      const response = await api.get('/api/ipad-inventory/groups');
+      const nextGroups = Array.isArray(response.data) ? response.data : [];
+      setIpadGroups(nextGroups);
+      if (selectedIpadGroup && !nextGroups.some((group: IpadGroup) => `${group.device_name}\u0000${group.model}` === selectedIpadGroup)) {
+        setSelectedIpadGroup('');
+        setPage(1);
+      }
+    } catch {
+      setIpadGroups([]);
+      setSelectedIpadGroup('');
+    }
   };
 
   const saveIpads = async () => {
@@ -489,10 +512,16 @@ export default function InventoryPage() {
           </div>
         )}
         {inventoryView === 'ipads' && (
+          <>
+          {ipadGroups.length > 0 && <div className="mb-5 overflow-x-auto pb-2"><div className="flex min-w-max gap-2">
+            <button type="button" onClick={() => { setSelectedIpadGroup(''); setPage(1); }} className={`min-h-12 rounded-xl border px-4 text-left transition ${!selectedIpadGroup ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-gray-200 bg-white text-slate-700 hover:border-blue-300'}`}><span className="block text-sm font-semibold">Все iPad</span><span className={`text-xs ${!selectedIpadGroup ? 'text-blue-100' : 'text-slate-400'}`}>{ipadGroups.reduce((sum, group) => sum + group.count, 0)} шт.</span></button>
+            {ipadGroups.map(group => { const key = `${group.device_name}\u0000${group.model}`; const active = selectedIpadGroup === key; return <button key={key} type="button" onClick={() => { setSelectedIpadGroup(key); setPage(1); }} className={`min-h-12 rounded-xl border px-4 text-left transition ${active ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-gray-200 bg-white text-slate-700 hover:border-blue-300'}`}><span className="block max-w-52 truncate text-sm font-semibold">{group.device_name}</span><span className={`block max-w-52 truncate text-xs ${active ? 'text-blue-100' : 'text-slate-400'}`}>{group.model || 'Без модели'} · {group.count} шт.</span></button>; })}
+          </div></div>}
           <div className="mb-5 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
             <div><p className="text-sm font-bold text-amber-900">Контроль повторяющихся Tag</p><p className="text-xs text-amber-700">Дубликаты разрешены временно. Serial Number остаётся уникальным.</p></div>
             <label className="flex min-h-11 items-center gap-2 text-sm font-semibold text-amber-900"><input type="checkbox" checked={duplicateIpadTagsOnly} onChange={event => { setDuplicateIpadTagsOnly(event.target.checked); setPage(1); }} className="h-5 w-5" />Только дубликаты</label>
           </div>
+          </>
         )}
 
         {loading ? (
