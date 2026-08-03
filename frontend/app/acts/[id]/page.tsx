@@ -79,6 +79,10 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     finally { setBusy(false); }
   };
   const startReturn = async () => {
+    if (isIpadAdvisory) {
+      window.location.href = `/acts/ipad/${act.id}`;
+      return;
+    }
     setBusy(true);
     try { await api.post(`/api/acts/${id}/return`, { return_date: new Date().toISOString().slice(0, 10), return_note: null }); await loadAct(); }
     catch (requestError: any) { setError(requestError.response?.data?.detail || 'Не удалось начать возврат'); }

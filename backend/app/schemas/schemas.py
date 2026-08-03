@@ -212,6 +212,19 @@ class IpadAppendixLateReturnCreate(BaseModel):
     note: Optional[str] = None
 
 
+class IpadYearEndReturnItem(BaseModel):
+    assignment_id: UUID4
+    device_result_status: Literal["AVAILABLE", "MAINTENANCE", "RETIRED"]
+    condition: str
+
+
+class IpadAppendixYearEndReturnCreate(BaseModel):
+    responsible_participant_id: UUID4
+    returned_at: date
+    items: list[IpadYearEndReturnItem]
+    note: Optional[str] = None
+
+
 class IpadAppendixSignatureRequest(BaseModel):
     participant_id: UUID4
     signature_data: str

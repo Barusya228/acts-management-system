@@ -957,7 +957,6 @@ async def delete_act(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Act not found"
         )
-
     if act.status != ActStatus.DRAFT:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1209,6 +1208,11 @@ async def start_return_flow(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Act not found"
+        )
+    if act.ipad_profile:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Возврат iPad Advisory оформляется в управлении Advisory",
         )
 
     if act.status != ActStatus.COMPLETED:

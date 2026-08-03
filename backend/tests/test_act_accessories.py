@@ -16,6 +16,7 @@ def test_manual_accessory_is_normalized_for_snapshot():
     }])
 
     assert result == [{
+        "catalog_item_id": None,
         "name": "Мышь Logitech",
         "model": "M185",
         "quantity": 2,

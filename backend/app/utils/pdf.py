@@ -331,6 +331,36 @@ def _draw_ipad_tables(
     return max_height
 
 
+def _build_accessory_table_data(accessories):
+    accessory_items = [item for item in accessories if isinstance(item, dict)]
+    show_model = any(str(item.get('model', '') or '').strip() for item in accessory_items)
+    show_note = any(str(item.get('note', '') or '').strip() for item in accessory_items)
+    header = ['№', 'Мелкая техника']
+    if show_model:
+        header.append('Модель')
+    header.append('Кол-во')
+    if show_note:
+        header.append('Заметка')
+    data = [header]
+    for index, item in enumerate(accessory_items, start=1):
+        row = [str(index), str(item.get('name', '') or '—')]
+        if show_model:
+            row.append(str(item.get('model', '') or '—'))
+        row.append(str(item.get('quantity', 1)))
+        if show_note:
+            row.append(str(item.get('note', '') or '—'))
+        data.append(row)
+    if show_model and show_note:
+        widths = [28, 135, 100, 48, 180]
+    elif show_model:
+        widths = [28, 230, 170, 63]
+    elif show_note:
+        widths = [28, 180, 63, 220]
+    else:
+        widths = [28, 400, 63]
+    return data, widths, 3 if show_model else 2
+
+
 def build_act_pdf_bytes(
     act_data: dict,
     template_name: str | None = None,
@@ -651,25 +681,15 @@ def build_act_pdf_v2(
 
     accessories = extra_data.get("accessories", [])
     if isinstance(accessories, list) and accessories:
-        accessory_data = [['№', 'Мелкая техника', 'Модель', 'Кол-во', 'Заметка']]
-        for index, item in enumerate(accessories, start=1):
-            if not isinstance(item, dict):
-                continue
-            accessory_data.append([
-                str(index),
-                str(item.get('name', '') or '—'),
-                str(item.get('model', '') or '—'),
-                str(item.get('quantity', 1)),
-                str(item.get('note', '') or '—'),
-            ])
-        accessory_table = Table(accessory_data, colWidths=[28, 135, 100, 48, 180])
+        accessory_data, accessory_widths, quantity_column = _build_accessory_table_data(accessories)
+        accessory_table = Table(accessory_data, colWidths=accessory_widths)
         accessory_table.setStyle(TableStyle([
             ('FONT', (0, 0), (-1, -1), font_name, 8),
             ('FONT', (0, 0), (-1, 0), bold_font_name, 8),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
             ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
             ('ALIGN', (0, 0), (0, -1), 'CENTER'),
-            ('ALIGN', (3, 1), (3, -1), 'CENTER'),
+            ('ALIGN', (quantity_column, 1), (quantity_column, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('LEFTPADDING', (0, 0), (-1, -1), 5),
             ('RIGHTPADDING', (0, 0), (-1, -1), 5),
@@ -677,10 +697,10 @@ def build_act_pdf_v2(
             ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ]))
         _, accessory_height = accessory_table.wrap(0, 0)
-        if y - accessory_height < 100:
+        if y - accessory_height - 15 < 100:
             start_new_page()
         pdf.setFont(bold_font_name, 10)
-        pdf.drawString(margin_left, y, "Мелкая техника (добавлена вручную)")
+        pdf.drawString(margin_left, y, "Мелкая техника")
         y -= 15
         accessory_table.drawOn(pdf, margin_left, y - accessory_height)
         y -= accessory_height + 20

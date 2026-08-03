@@ -39,11 +39,13 @@ from app.schemas.schemas import (
     IpadAppendixDepartureCreate,
     IpadAppendixStudentAddCreate,
     IpadAppendixLateReturnCreate,
+    IpadAppendixYearEndReturnCreate,
     IpadAppendixSignatureRequest,
 )
 from app.services.audit_service import record_audit
 from app.services.pdf_backup_service import backup_pdf_by_ids
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
+from app.services.email_outbox_service import RETURN_COMPLETED, enqueue_act_emails
 from app.services.ipad_appendix_service import (
     apply_appendix,
     create_appendix_pdf,
@@ -442,34 +444,98 @@ def create_late_return_appendix(
     return serialize_appendix(appendix)
 
 
+@router.post("/{act_id}/appendices/year-end-return", status_code=status.HTTP_201_CREATED)
+def create_year_end_return_appendix(
+    act_id: UUID,
+    payload: IpadAppendixYearEndReturnCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    if not act or not act.ipad_profile or act.status != ActStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Годовой возврат доступен только для действующего iPad-акта")
+    if payload.returned_at < act.issue_date:
+        raise HTTPException(status_code=422, detail="Дата возврата не может быть раньше даты выдачи")
+    ensure_no_pending_appendix(db, act.id)
+    assignments = db.query(IpadStudentAssignment).filter(
+        IpadStudentAssignment.act_id == act.id,
+        IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
+    ).with_for_update().all()
+    if any(item.student_status != "ACTIVE" or item.status != "ISSUED" for item in assignments):
+        raise HTTPException(status_code=409, detail="Сначала завершите все ожидающие и поздние возвраты iPad")
+    expected_ids = {str(item.id) for item in assignments}
+    supplied_ids = [str(item.assignment_id) for item in payload.items]
+    if len(supplied_ids) != len(set(supplied_ids)):
+        raise HTTPException(status_code=422, detail="Один iPad указан в возврате несколько раз")
+    supplied = {str(item.assignment_id): item for item in payload.items}
+    if not expected_ids or set(supplied) != expected_ids:
+        raise HTTPException(status_code=422, detail="Укажите результат возврата для каждого активного iPad")
+    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id)
+    items = []
+    for assignment in assignments:
+        result = supplied[str(assignment.id)]
+        condition = result.condition.strip()
+        if not condition:
+            raise HTTPException(status_code=422, detail=f"Укажите состояние iPad ученика {assignment.student_name}")
+        items.append({
+            "assignment_id": str(assignment.id),
+            "device_id": str(assignment.ipad_device_id),
+            "student_name": assignment.student_name,
+            "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
+            "device_result_status": result.device_result_status,
+            "condition": condition,
+        })
+    appendix = _create_appendix(db, act, "YEAR_END_RETURN", responsible, issuer, {
+        "returned_at": payload.returned_at.isoformat(),
+        "items": items,
+        "note": payload.note,
+    }, current_user)
+    db.commit()
+    return serialize_appendix(appendix)
+
+
 @router.post("/{act_id}/appendices/{appendix_id}/sign/{party}")
 def sign_appendix(
     act_id: UUID,
     appendix_id: UUID,
     party: str,
     payload: IpadAppendixSignatureRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user),
 ):
     if party not in {"responsible", "issuer"}:
         raise HTTPException(status_code=404, detail="Неизвестная сторона")
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
+    if not act or not act.ipad_profile:
+        raise HTTPException(status_code=404, detail="iPad-акт не найден")
     appendix = db.query(IpadActAppendix).filter(
         IpadActAppendix.id == appendix_id,
         IpadActAppendix.act_id == act_id,
     ).populate_existing().with_for_update().first()
     if not appendix:
         raise HTTPException(status_code=404, detail="Приложение не найдено")
+    if appendix.operation_type == "YEAR_END_RETURN" and act.status != ActStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Статус Advisory изменился, создайте возврат заново")
     expected_id = appendix.responsible_participant_id if party == "responsible" else appendix.issuer_participant_id
     expected_status = "WAITING_RESPONSIBLE" if party == "responsible" else "WAITING_ISSUER"
     if payload.participant_id != expected_id or appendix.status != expected_status:
         raise HTTPException(status_code=409, detail="Сейчас ожидается подпись другой стороны")
     _validate_signature(payload.signature_data)
     save_appendix_signature(appendix, party, payload.signature_data)
+    version = None
+    pdf_asset = None
     if party == "issuer":
         apply_appendix(db, appendix, current_user)
         create_appendix_pdf(appendix, appendix.act)
+        if appendix.operation_type == "YEAR_END_RETURN":
+            version, pdf_asset = _add_event_version(db, act, current_user, "Годовой возврат Advisory завершён")
+            enqueue_act_emails(db, act, RETURN_COMPLETED, pdf_asset.storage_path)
+            record_audit(db, current_user, "ACT", act.id, "IPAD_YEAR_END_RETURN_COMPLETED", {"version": act.current_version})
     record_audit(db, current_user, "IPAD_APPENDIX", appendix.id, f"IPAD_APPENDIX_{party.upper()}_SIGNED")
     db.commit()
+    if version and pdf_asset:
+        background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(appendix)
     return serialize_appendix(appendix)
 
@@ -516,6 +582,8 @@ def record_student_departure(
     current_user: User = Depends(get_current_guest_or_admin_user),
 ):
     act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
+    if act:
+        ensure_no_pending_appendix(db, act.id)
     assignment = db.query(IpadStudentAssignment).filter(
         IpadStudentAssignment.id == assignment_id,
         IpadStudentAssignment.act_id == act_id,
@@ -568,6 +636,8 @@ def replace_student_ipad(
     current_user: User = Depends(get_current_guest_or_admin_user),
 ):
     act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
+    if act:
+        ensure_no_pending_appendix(db, act.id)
     assignment = db.query(IpadStudentAssignment).filter(
         IpadStudentAssignment.id == assignment_id,
         IpadStudentAssignment.act_id == act_id,

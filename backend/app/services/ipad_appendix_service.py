@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 
 from reportlab.lib import colors
@@ -8,7 +8,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.db.models import Act, IpadActAppendix, IpadDevice, IpadStudentAssignment, Participant, User
+from app.db.models import Act, ActStatus, IpadActAppendix, IpadAssignmentEvent, IpadDevice, IpadStudentAssignment, Participant, User
 from app.services.audit_service import record_audit
 from app.utils.storage import save_bytes, save_data_url_file
 from app.utils.pdf import _register_font, _resolve_bold_font_name
@@ -107,6 +107,37 @@ def apply_appendix(db: Session, appendix: IpadActAppendix, current_user: User) -
         assignment.returned_at = now
         if device:
             device.status = payload["device_result_status"]
+    elif operation == "YEAR_END_RETURN":
+        outstanding = db.query(IpadStudentAssignment).filter(
+            IpadStudentAssignment.act_id == appendix.act_id,
+            IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
+        ).with_for_update().all()
+        expected_ids = {str(item["assignment_id"]) for item in payload["items"]}
+        if {str(item.id) for item in outstanding} != expected_ids:
+            raise HTTPException(status_code=409, detail="Состав Advisory изменился, создайте возврат заново")
+        returned_date = date.fromisoformat(payload["returned_at"])
+        returned_at = datetime.combine(returned_date, datetime.min.time())
+        for item in payload["items"]:
+            assignment = db.query(IpadStudentAssignment).filter(
+                IpadStudentAssignment.id == item["assignment_id"],
+                IpadStudentAssignment.act_id == appendix.act_id,
+            ).with_for_update().first()
+            device = db.query(IpadDevice).filter(IpadDevice.id == item["device_id"]).with_for_update().first()
+            if not assignment or not device or assignment.status != "ISSUED" or assignment.student_status != "ACTIVE" or str(assignment.ipad_device_id) != str(device.id) or device.status != "ISSUED":
+                raise HTTPException(status_code=409, detail="Состав Advisory изменился, создайте возврат заново")
+            assignment.status = "RETURNED"
+            assignment.returned_at = returned_at
+            device.status = item["device_result_status"]
+            db.add(IpadAssignmentEvent(
+                assignment_id=assignment.id,
+                event_type="YEAR_END_RETURN",
+                data_json={"returned_at": payload["returned_at"], "condition": item["condition"], "device_result_status": item["device_result_status"]},
+                note=payload.get("note"),
+                created_by=current_user.id,
+            ))
+        appendix.act.status = ActStatus.RETURNED
+        appendix.act.return_date = date.fromisoformat(payload["returned_at"])
+        appendix.act.return_note = payload.get("note")
     appendix.status = "APPLIED"
     appendix.applied_at = now
     record_audit(db, current_user, "IPAD_APPENDIX", appendix.id, "IPAD_APPENDIX_APPLIED", {"operation": operation})
