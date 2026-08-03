@@ -16,6 +16,7 @@ from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
     Act,
     ActStatus,
+    EmailOutbox,
     IpadAdvisoryAct,
     IpadActAppendix,
     IpadDevice,
@@ -139,7 +140,6 @@ def test_year_end_return_is_applied_after_both_signatures(ipad_data, monkeypatch
     )
 
     monkeypatch.setattr(ipad_api, "_add_event_version", lambda *_args: (SimpleNamespace(id="version"), SimpleNamespace(id="pdf", storage_path="test.pdf")))
-    monkeypatch.setattr(ipad_api, "enqueue_act_emails", lambda *_args: None)
     signature = _signature()
     responsible_result = ipad_api.sign_appendix(
         act.id,
@@ -173,6 +173,7 @@ def test_year_end_return_is_applied_after_both_signatures(ipad_data, monkeypatch
     assert appendix.responsible_signature_path
     assert appendix.issuer_signature_path
     assert appendix.pdf_storage_path
+    assert db.query(EmailOutbox).filter(EmailOutbox.act_id == act.id).count() == 0
 
 
 def test_year_end_return_rejects_outstanding_departed_ipad(ipad_data):

@@ -45,7 +45,6 @@ from app.schemas.schemas import (
 from app.services.audit_service import record_audit
 from app.services.pdf_backup_service import backup_pdf_by_ids
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
-from app.services.email_outbox_service import RETURN_COMPLETED, enqueue_act_emails
 from app.services.ipad_appendix_service import (
     apply_appendix,
     create_appendix_pdf,
@@ -530,7 +529,6 @@ def sign_appendix(
         create_appendix_pdf(appendix, appendix.act)
         if appendix.operation_type == "YEAR_END_RETURN":
             version, pdf_asset = _add_event_version(db, act, current_user, "Годовой возврат Advisory завершён")
-            enqueue_act_emails(db, act, RETURN_COMPLETED, pdf_asset.storage_path)
             record_audit(db, current_user, "ACT", act.id, "IPAD_YEAR_END_RETURN_COMPLETED", {"version": act.current_version})
     record_audit(db, current_user, "IPAD_APPENDIX", appendix.id, f"IPAD_APPENDIX_{party.upper()}_SIGNED")
     db.commit()

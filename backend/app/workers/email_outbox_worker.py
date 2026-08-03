@@ -46,11 +46,14 @@ async def _send(row: EmailOutbox) -> None:
 def _update_completion_flag(db, row: EmailOutbox) -> None:
     if row.kind not in {ISSUE_COMPLETED, RETURN_COMPLETED} or not row.act_id:
         return
-    pending = db.query(EmailOutbox.id).filter(
+    pending_query = db.query(EmailOutbox.id).filter(
         EmailOutbox.act_id == row.act_id,
         EmailOutbox.kind == row.kind,
         EmailOutbox.status != "SENT",
-    ).first()
+    )
+    if row.dispatch_id:
+        pending_query = pending_query.filter(EmailOutbox.dispatch_id == row.dispatch_id)
+    pending = pending_query.first()
     if pending:
         return
     act = db.query(Act).filter(Act.id == row.act_id).first()

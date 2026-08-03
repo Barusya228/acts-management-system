@@ -14,6 +14,7 @@ import { useToast } from '@/contexts/ToastContext';
 import PageHeader from '@/components/ui/PageHeader';
 import SurfaceCard from '@/components/ui/SurfaceCard';
 import StatusPill from '@/components/ui/StatusPill';
+import ManualFinalEmail from '@/components/ManualFinalEmail';
 import { normalizeActRecipients, getSignedRecipientsCount, type ActRecipient } from '@/lib/actRecipients';
 
 interface Act {
@@ -130,7 +131,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   const [startingReturn, setStartingReturn] = useState(false);
   const [pdfLoading, setPdfLoading] = useState<'preview' | 'download' | null>(null);
   const [versionPdfLoading, setVersionPdfLoading] = useState<number | null>(null);
-  const [sendingNotification, setSendingNotification] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
@@ -185,8 +185,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
 
   const canSignParty1 = act?.status === 'SIGNED_PARTY2' || act?.status === 'RETURN_INITIATED';
   const canSignParty2 = act?.status === 'DRAFT' || act?.status === 'RETURN_SIGNED_PARTY1';
-  const issueEmailReady = act?.status === 'COMPLETED';
-  const returnEmailReady = act?.status === 'RETURNED';
   const shouldShowSigningBlock = !editing && (
     act?.status === 'DRAFT' ||
     act?.status === 'SIGNED_PARTY1' ||
@@ -453,19 +451,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
       'download',
       versionNumber
     );
-
-  const handleSendNotification = async () => {
-    try {
-      setSendingNotification(true);
-      const res = await api.post(`/api/acts/${id}/send-notification`);
-      showToast(res.data?.message || 'Уведомление отправлено получателям', 'success');
-    } catch (err: any) {
-      const msg = err.response?.data?.detail || 'Не удалось отправить уведомление';
-      showToast(msg, 'error');
-    } finally {
-      setSendingNotification(false);
-    }
-  };
 
   const handleDeleteAct = async () => {
     try {
@@ -1523,19 +1508,11 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
             </div>
           )}
 
+          {isAdminUser && <ManualFinalEmail actId={id} />}
+
           <div className="rounded bg-white p-6 shadow">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold">История действий</h2>
-              {isAdminUser && (
-                <button
-                  type="button"
-                  onClick={handleSendNotification}
-                  disabled={sendingNotification}
-                  className="rounded bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:bg-gray-400"
-                >
-                  {sendingNotification ? 'Отправка...' : 'Отправить уведомление'}
-                </button>
-              )}
             </div>
 
             {versions.length === 0 ? (
@@ -1575,21 +1552,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
               </div>
             )}
 
-            {(issueEmailReady || returnEmailReady) && (
-              <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 text-sm">
-                <p className="font-medium text-slate-800">Статус автоматической отправки PDF</p>
-                {issueEmailReady && (
-                  <p className="mt-1 text-slate-700">
-                    Выдача: {act.issue_completion_email_sent ? 'отправлено автоматически' : 'ожидает/ошибка отправки'}
-                  </p>
-                )}
-                {returnEmailReady && (
-                  <p className="mt-1 text-slate-700">
-                    Возврат: {act.return_completion_email_sent ? 'отправлено автоматически' : 'ожидает/ошибка отправки'}
-                  </p>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </div>

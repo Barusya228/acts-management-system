@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, UUID4
+from pydantic import BaseModel, EmailStr, Field, UUID4
 from typing import Literal, Optional
 from datetime import datetime, date
 
@@ -152,6 +152,12 @@ class SignatureRequest(BaseModel):
 class ReturnStartRequest(BaseModel):
     return_date: date
     return_note: Optional[str] = None
+
+
+class ManualFinalEmailRequest(BaseModel):
+    kind: Literal["ISSUE_COMPLETED", "RETURN_COMPLETED"]
+    recipient_emails: list[EmailStr] = Field(min_length=1)
+    custom_message: Optional[str] = Field(default=None, max_length=2000)
 
 
 class IpadStudentCreate(BaseModel):

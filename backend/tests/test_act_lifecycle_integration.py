@@ -10,7 +10,7 @@ from fastapi import BackgroundTasks, HTTPException
 from PIL import Image, ImageDraw
 from sqlalchemy import text
 
-from app.api.acts import create_act, delete_act, sign_party1, sign_party2, start_return_flow
+from app.api.acts import create_act, delete_act, get_manual_final_email, send_manual_final_email, sign_party1, sign_party2, start_return_flow
 from app.api.inventory import delete_small_equipment_catalog_item
 from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
@@ -18,6 +18,7 @@ from app.db.models import (
     ActAccessory,
     Act,
     DeviceStatus,
+    EmailOutbox,
     InventoryDevice,
     Participant,
     ParticipantKind,
@@ -26,7 +27,7 @@ from app.db.models import (
     User,
     UserRole,
 )
-from app.schemas.schemas import ActCreate, ReturnStartRequest, SignatureRequest
+from app.schemas.schemas import ActCreate, ManualFinalEmailRequest, ReturnStartRequest, SignatureRequest
 
 
 pytestmark = pytest.mark.skipif(
@@ -169,6 +170,63 @@ async def test_admin_can_permanently_delete_completed_act(lifecycle_data):
     assert device.assigned_to is None
     assert db.query(Act).filter(Act.id == act_id).first() is None
     assert db.query(ActAccessory).filter(ActAccessory.act_id == act_id).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_final_documents_are_sent_only_by_admin_action(lifecycle_data):
+    db, user, manager, recipient, _template, _device = lifecycle_data
+    act = await _create(lifecycle_data)
+    await sign_party2(act.id, SignatureRequest(signature_data=_signature(), participant_id=recipient.id), BackgroundTasks(), db, user)
+    await sign_party1(act.id, SignatureRequest(signature_data=_signature(), participant_id=manager.id), BackgroundTasks(), db, user)
+
+    assert db.query(EmailOutbox).filter(EmailOutbox.act_id == act.id).count() == 0
+    options = get_manual_final_email(act.id, db, user)
+    documents = {item["kind"]: item for item in options["documents"]}
+    assert documents["ISSUE_COMPLETED"]["available"] is True
+    assert documents["RETURN_COMPLETED"]["available"] is False
+    recipient_emails = [item["email"] for item in options["recipients"]]
+    assert set(recipient_emails) == {manager.email, recipient.email}
+
+    first = send_manual_final_email(
+        act.id,
+        ManualFinalEmailRequest(
+            kind="ISSUE_COMPLETED",
+            recipient_emails=recipient_emails,
+            custom_message="Keep this document.",
+        ),
+        db,
+        user,
+    )
+    second = send_manual_final_email(
+        act.id,
+        ManualFinalEmailRequest(kind="ISSUE_COMPLETED", recipient_emails=[recipient.email]),
+        db,
+        user,
+    )
+    rows = db.query(EmailOutbox).filter(EmailOutbox.act_id == act.id).all()
+    assert first["dispatch_id"] != second["dispatch_id"]
+    assert len(rows) == 3
+    assert all(row.requested_by == user.id for row in rows)
+    assert all(row.attachment_storage_path for row in rows)
+    assert sum(row.custom_message == "Keep this document." for row in rows) == 2
+
+    with pytest.raises(HTTPException) as error:
+        send_manual_final_email(
+            act.id,
+            ManualFinalEmailRequest(kind="ISSUE_COMPLETED", recipient_emails=["outsider@example.com"]),
+            db,
+            user,
+        )
+    assert error.value.status_code == 422
+
+    await start_return_flow(act.id, ReturnStartRequest(return_date=date.today()), BackgroundTasks(), db, user)
+    await sign_party1(act.id, SignatureRequest(signature_data=_signature(), participant_id=manager.id), BackgroundTasks(), db, user)
+    await sign_party2(act.id, SignatureRequest(signature_data=_signature(), participant_id=recipient.id), BackgroundTasks(), db, user)
+    assert db.query(EmailOutbox).filter(EmailOutbox.act_id == act.id, EmailOutbox.kind == "RETURN_COMPLETED").count() == 0
+    returned_options = get_manual_final_email(act.id, db, user)
+    returned_documents = {item["kind"]: item for item in returned_options["documents"]}
+    assert returned_documents["ISSUE_COMPLETED"]["available"] is True
+    assert returned_documents["RETURN_COMPLETED"]["available"] is True
 
 
 def _parallel_sign(act_id, participant_id, user, party):

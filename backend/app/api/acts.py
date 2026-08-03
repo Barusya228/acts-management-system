@@ -28,15 +28,14 @@ from app.db.models import (
     EmailOutbox,
     PdfBackupRecord,
 )
-from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
+from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, ManualFinalEmailRequest, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
 from app.services.pdf_backup_service import backup_pdf_by_ids
 from app.services.audit_service import record_audit
 from app.services.email_outbox_service import (
-    ACT_CREATED,
     ISSUE_COMPLETED,
     RETURN_COMPLETED,
-    enqueue_act_emails,
+    enqueue_manual_final_emails,
 )
 from app.utils.storage import resolve_storage_path, save_data_url_file, validate_signature_data_url
 
@@ -123,6 +122,93 @@ def _extract_recipients(extra_data: Optional[dict], fallback_name: str, fallback
         "return_signed_at": None,
         "return_signature_file_path": None,
     }]
+
+
+def _manual_email_recipients(db: Session, act: Act) -> list[dict]:
+    recipients = []
+    for item in _extract_recipients(act.extra_data_json, act.party2_name, act.receiver_email):
+        email = str(item.get("email", "")).strip().lower()
+        if email:
+            recipients.append({
+                "participant_id": item.get("participant_id"),
+                "full_name": str(item.get("full_name", "")).strip(),
+                "email": email,
+                "role": "Получатель" if not act.ipad_profile else "Ответственное лицо",
+            })
+    issuer = None
+    issuer_id = (act.extra_data_json or {}).get(PARTY1_PARTICIPANT_ID_KEY)
+    if issuer_id:
+        try:
+            issuer = db.query(Participant).filter(Participant.id == UUID(str(issuer_id))).first()
+        except (TypeError, ValueError, AttributeError):
+            issuer = None
+    if not issuer:
+        issuer = db.query(Participant).filter(Participant.full_name == act.party1_name).first()
+    if issuer and issuer.email:
+        recipients.append({
+            "participant_id": str(issuer.id),
+            "full_name": issuer.full_name,
+            "email": issuer.email.strip().lower(),
+            "role": "Выдающий IT",
+        })
+    unique = {}
+    for item in recipients:
+        email = item["email"]
+        if email in unique:
+            unique[email]["role"] = f"{unique[email]['role']}, {item['role']}"
+        else:
+            unique[email] = item
+    return list(unique.values())
+
+
+def _final_document(db: Session, act: Act, kind: str):
+    target_status = ActStatus.COMPLETED.value if kind == ISSUE_COMPLETED else ActStatus.RETURNED.value
+    versions = db.query(ActVersion).filter(ActVersion.act_id == act.id).order_by(ActVersion.version_number.desc()).all()
+    for version in versions:
+        snapshot = version.data_json if isinstance(version.data_json, dict) else {}
+        if snapshot.get("status") != target_status or not version.pdf_file_id:
+            continue
+        asset = db.query(FileAsset).filter(FileAsset.id == version.pdf_file_id).first()
+        if asset and resolve_storage_path(asset.storage_path).is_file():
+            return version, asset
+    return None, None
+
+
+def _manual_email_history(db: Session, act_id: UUID) -> list[dict]:
+    rows = db.query(EmailOutbox).filter(
+        EmailOutbox.act_id == act_id,
+        EmailOutbox.dispatch_id.isnot(None),
+        EmailOutbox.kind.in_([ISSUE_COMPLETED, RETURN_COMPLETED]),
+    ).order_by(EmailOutbox.created_at.desc()).all()
+    user_ids = {row.requested_by for row in rows if row.requested_by}
+    users = db.query(User).filter(User.id.in_(user_ids)).all() if user_ids else []
+    users_by_id = {item.id: item.full_name for item in users}
+    grouped = {}
+    for row in rows:
+        key = str(row.dispatch_id)
+        if key not in grouped:
+            grouped[key] = {
+                "dispatch_id": key,
+                "kind": row.kind,
+                "document_version": row.document_version,
+                "custom_message": row.custom_message,
+                "requested_by": users_by_id.get(row.requested_by, "Администратор"),
+                "created_at": row.created_at.isoformat(),
+                "recipients": [],
+            }
+        grouped[key]["recipients"].append({
+            "email": row.recipient_email,
+            "name": row.recipient_name,
+            "status": row.status,
+            "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+            "last_error": row.last_error,
+        })
+    result = []
+    for item in grouped.values():
+        statuses = {recipient["status"] for recipient in item["recipients"]}
+        item["status"] = "SENT" if statuses == {"SENT"} else "ERROR" if "DEAD" in statuses else "PENDING"
+        result.append(item)
+    return result
 
 
 def _build_party2_summary(recipients: list[dict]) -> str:
@@ -1081,9 +1167,6 @@ async def sign_party1(
         "participant_id": str(signature.participant_id) if signature.participant_id else None,
         "version": act.current_version,
     })
-    if act.status == ActStatus.COMPLETED:
-        enqueue_act_emails(db, act, ISSUE_COMPLETED, pdf_asset.storage_path)
-    
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)
@@ -1179,9 +1262,6 @@ async def sign_party2(
         "recipient": signed_recipient_name,
         "version": act.current_version,
     })
-    if act.status == ActStatus.RETURNED:
-        enqueue_act_emails(db, act, RETURN_COMPLETED, pdf_asset.storage_path)
-    
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
     db.refresh(act)
@@ -1406,27 +1486,81 @@ async def download_act_pdf_by_version(
     )
 
 
-@router.post("/{act_id}/send-notification")
-async def send_act_notification(
+@router.get("/{act_id}/manual-final-email")
+def get_manual_final_email(
     act_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user)
+    _current_user: User = Depends(get_current_admin_user),
 ):
-    """
-    Отправляет email уведомление получателям о созданном акте.
-    """
     act = db.query(Act).filter(Act.id == act_id).first()
-    
     if not act:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Act not found"
-        )
-    
-    queued = enqueue_act_emails(db, act, ACT_CREATED)
-    record_audit(db, current_user, "ACT", act.id, "EMAIL_ENQUEUED", {
-        "kind": ACT_CREATED,
+        raise HTTPException(status_code=404, detail="Акт не найден")
+    issue_version, _issue_asset = _final_document(db, act, ISSUE_COMPLETED)
+    return_version, _return_asset = _final_document(db, act, RETURN_COMPLETED)
+    return {
+        "recipients": _manual_email_recipients(db, act),
+        "documents": [
+            {
+                "kind": ISSUE_COMPLETED,
+                "label": "Финальный акт выдачи",
+                "available": bool(issue_version),
+                "version": issue_version.version_number if issue_version else None,
+            },
+            {
+                "kind": RETURN_COMPLETED,
+                "label": "Финальный акт возврата",
+                "available": bool(return_version),
+                "version": return_version.version_number if return_version else None,
+            },
+        ],
+        "history": _manual_email_history(db, act.id),
+    }
+
+
+@router.post("/{act_id}/manual-final-email", status_code=status.HTTP_201_CREATED)
+def send_manual_final_email(
+    act_id: UUID,
+    payload: ManualFinalEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
+    if not act:
+        raise HTTPException(status_code=404, detail="Акт не найден")
+    version, asset = _final_document(db, act, payload.kind)
+    if not version or not asset:
+        detail = "Финальный PDF выдачи ещё не готов" if payload.kind == ISSUE_COMPLETED else "Финальный PDF возврата ещё не готов"
+        raise HTTPException(status_code=409, detail=detail)
+    allowed = {item["email"]: item for item in _manual_email_recipients(db, act)}
+    requested_emails = [str(email).strip().lower() for email in payload.recipient_emails]
+    if len(requested_emails) != len(set(requested_emails)):
+        raise HTTPException(status_code=422, detail="Получатель указан несколько раз")
+    unknown = [email for email in requested_emails if email not in allowed]
+    if unknown:
+        raise HTTPException(status_code=422, detail="Можно отправлять акт только его участникам")
+    recipients = [allowed[email] for email in requested_emails]
+    dispatch_id, queued = enqueue_manual_final_emails(
+        db,
+        act,
+        payload.kind,
+        recipients,
+        asset.storage_path,
+        current_user.id,
+        version.version_number,
+        payload.custom_message,
+    )
+    if not queued:
+        raise HTTPException(status_code=409, detail="Не удалось поставить письма в очередь")
+    if payload.kind == ISSUE_COMPLETED:
+        act.issue_completion_email_sent = False
+    else:
+        act.return_completion_email_sent = False
+    record_audit(db, current_user, "ACT", act.id, "MANUAL_FINAL_EMAIL_ENQUEUED", {
+        "dispatch_id": str(dispatch_id),
+        "kind": payload.kind,
+        "version": version.version_number,
+        "recipients": requested_emails,
         "queued": queued,
     })
     db.commit()
-    return {"message": "Уведомления поставлены в очередь", "queued": queued}
+    return {"dispatch_id": str(dispatch_id), "queued": queued, "message": "Финальный документ поставлен в очередь"}

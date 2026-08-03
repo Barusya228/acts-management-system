@@ -45,6 +45,71 @@ def _render(act: Act, kind: str, recipient_name: str) -> tuple[str, str]:
     return subject, body
 
 
+def _render_manual_final(act: Act, kind: str, recipient_name: str, custom_message: str | None) -> tuple[str, str]:
+    if kind == RETURN_COMPLETED:
+        subject = f"Финальный акт возврата техники: {act.item_name}"
+        message = "Возврат техники завершён. Направляем финальную подписанную версию акта."
+    else:
+        subject = f"Финальный акт выдачи техники: {act.item_name}"
+        message = "Выдача техники завершена. Направляем финальную подписанную версию акта."
+    lines = [
+        f"Здравствуйте, {recipient_name or 'участник акта'}!",
+        "",
+        message,
+    ]
+    if custom_message:
+        lines.extend(["", "Сообщение администратора:", custom_message.strip()])
+    lines.extend([
+        "",
+        f"Техника: {act.item_name}",
+        f"Номер акта: ACT-{str(act.id).split('-')[0].upper()}",
+        f"Дата выдачи: {act.issue_date.isoformat()}",
+    ])
+    if kind == RETURN_COMPLETED and act.return_date:
+        lines.append(f"Дата возврата: {act.return_date.isoformat()}")
+    return subject, "\n".join(lines)
+
+
+def enqueue_manual_final_emails(
+    db: Session,
+    act: Act,
+    kind: str,
+    recipients: list[dict],
+    attachment_storage_path: str,
+    requested_by,
+    document_version: int,
+    custom_message: str | None = None,
+) -> tuple[uuid.UUID, int]:
+    dispatch_id = uuid.uuid4()
+    queued = 0
+    for recipient in recipients:
+        email = str(recipient.get("email", "")).strip().lower()
+        name = str(recipient.get("full_name", "")).strip()
+        if not email:
+            continue
+        subject, body = _render_manual_final(act, kind, name, custom_message)
+        statement = insert(EmailOutbox).values(
+            id=uuid.uuid4(),
+            act_id=act.id,
+            kind=kind,
+            recipient_email=email,
+            recipient_name=name or None,
+            subject=subject,
+            body=body,
+            attachment_storage_path=attachment_storage_path,
+            dispatch_id=dispatch_id,
+            requested_by=requested_by,
+            document_version=document_version,
+            custom_message=custom_message.strip() if custom_message and custom_message.strip() else None,
+            dedupe_key=f"{kind}:{act.id}:{email}:{dispatch_id}",
+            status="PENDING",
+            attempts=0,
+        ).on_conflict_do_nothing(index_elements=["dedupe_key"])
+        result = db.execute(statement)
+        queued += result.rowcount or 0
+    return dispatch_id, queued
+
+
 def enqueue_act_emails(
     db: Session,
     act: Act,
