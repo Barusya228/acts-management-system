@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
+import shutil
 from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_admin_user, get_current_guest_or_admin_user
 from app.db.models import (
@@ -24,6 +25,8 @@ from app.db.models import (
     Participant,
     ParticipantEmploymentStatus,
     ParticipantKind,
+    EmailOutbox,
+    PdfBackupRecord,
 )
 from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
@@ -957,18 +960,11 @@ async def delete_act(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Act not found"
         )
-    if act.status != ActStatus.DRAFT:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Удалить можно только черновик без завершённой выдачи",
-        )
-    recipients = _extract_recipients(act.extra_data_json, act.party2_name, act.receiver_email)
-    if any(recipient.get("signed_at") for recipient in recipients):
-        raise HTTPException(status_code=409, detail="Нельзя удалить акт после первой подписи")
+    act_storage_dir = resolve_storage_path(f"acts/{act.id}")
     assignments = db.query(ActDeviceAssignment).filter(
         ActDeviceAssignment.act_id == act.id,
-        ActDeviceAssignment.status == "RESERVED",
-    ).all()
+        ActDeviceAssignment.status.in_(["RESERVED", "ISSUED"]),
+    ).with_for_update().all()
     for assignment in assignments:
         device = db.query(InventoryDevice).filter(
             InventoryDevice.id == assignment.device_id
@@ -977,10 +973,27 @@ async def delete_act(
             device.status = DeviceStatus.AVAILABLE
             device.assigned_to = None
 
-    record_audit(db, current_user, "ACT", act.id, "ACT_DELETED")
+    ipad_assignments = db.query(IpadStudentAssignment).filter(
+        IpadStudentAssignment.act_id == act.id,
+        IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
+    ).with_for_update().all()
+    for assignment in ipad_assignments:
+        if not assignment.ipad_device_id:
+            continue
+        device = db.query(IpadDevice).filter(IpadDevice.id == assignment.ipad_device_id).with_for_update().first()
+        if device:
+            device.status = "AVAILABLE"
+
+    db.query(EmailOutbox).filter(EmailOutbox.act_id == act.id).delete(synchronize_session=False)
+    db.query(PdfBackupRecord).filter(PdfBackupRecord.act_id == act.id).delete(synchronize_session=False)
+    record_audit(db, current_user, "ACT", act.id, "ACT_PERMANENTLY_DELETED", {
+        "status": act.status.value,
+        "item_name": act.item_name,
+    })
     db.flush()
     db.delete(act)
     db.commit()
+    shutil.rmtree(act_storage_dir, ignore_errors=True)
     
     return None
 

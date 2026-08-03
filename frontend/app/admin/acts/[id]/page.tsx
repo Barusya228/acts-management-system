@@ -890,7 +890,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                   onClick={() => setShowDeleteModal(true)}
                   className="rounded-xl border border-red-300 bg-red-600 px-4 py-3 font-medium text-white transition hover:bg-red-700"
                 >
-                  Удалить
+                  Удалить навсегда
                 </button>
               )}
             </>
@@ -1596,9 +1596,9 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
 
       <ConfirmModal
         isOpen={showDeleteModal}
-        title="Удалить акт?"
-        message="Вы уверены, что хотите удалить этот акт? Это действие нельзя отменить."
-        confirmText="Удалить"
+        title="Удалить акт навсегда?"
+        message="Точно удалить этот акт со всеми версиями, подписями и связанными данными? Это действие нельзя отменить."
+        confirmText="Удалить навсегда"
         cancelText="Отмена"
         onConfirm={handleDeleteAct}
         onCancel={() => setShowDeleteModal(false)}

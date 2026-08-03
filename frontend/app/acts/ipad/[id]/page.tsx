@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import SignaturePad from '@/components/SignaturePad';
 import SignatureUpload from '@/components/SignatureUpload';
@@ -86,6 +86,7 @@ const appendixStatusLabels: Record<string, string> = {
 
 export default function IpadActPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const { user, loading, loginAsGuest } = useAuth();
   const { showToast } = useToast();
   const [act, setAct] = useState<IpadAct | null>(null);
@@ -102,6 +103,7 @@ export default function IpadActPage() {
   const [pdfUrl, setPdfUrl] = useState('');
   const [contentTab, setContentTab] = useState<ContentTab>('active');
   const [loadError, setLoadError] = useState('');
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const authAttempted = useRef(false);
 
   useEffect(() => {
@@ -295,6 +297,20 @@ export default function IpadActPage() {
     }
   };
 
+  const permanentlyDeleteAct = async () => {
+    setBusy(true);
+    try {
+      await api.delete(`/api/acts/${id}`);
+      showToast('Акт удалён навсегда', 'success');
+      router.push('/admin/acts');
+    } catch (error: unknown) {
+      showToast(apiErrorMessage(error, 'Не удалось удалить акт'), 'error');
+    } finally {
+      setBusy(false);
+      setDeleteConfirmOpen(false);
+    }
+  };
+
   const openPdf = async (appendixId?: string) => {
     try {
       const endpoint = appendixId
@@ -348,6 +364,7 @@ export default function IpadActPage() {
       <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 px-4">
         <Link href="/guest" className="flex h-11 items-center rounded-xl px-3 text-sm font-semibold text-slate-500 hover:bg-slate-100">← К актам</Link>
         <div><p className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-600">iPad Advisory</p><h1 className="text-base font-black sm:text-lg">{act.advisory_group} · {shortId}</h1></div>
+        {user?.role === 'ADMIN' && <button onClick={() => setDeleteConfirmOpen(true)} className="ml-auto min-h-11 rounded-xl bg-red-600 px-4 text-sm font-bold text-white">Удалить навсегда</button>}
       </div>
     </header>
     <main className="mx-auto grid max-w-7xl gap-4 p-3 sm:p-4 lg:grid-cols-[46%_54%] lg:gap-5 lg:p-5">
@@ -374,6 +391,7 @@ export default function IpadActPage() {
     {operation && <OperationModal operation={operation} student={selectedStudent} form={form} setForm={setForm} responsibles={act.responsibles} availableIpads={availableIpads} busy={busy} onSubmit={submitOperation} onClose={() => setOperation(null)} />}
     {historyOpen && <HistoryModal shortId={shortId} appendices={act.appendices} onPdf={openPdf} onClose={() => setHistoryOpen(false)} />}
     {pdfOpen && <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/90 p-3"><div className="mx-auto mb-3 flex w-full max-w-6xl justify-end"><button onClick={closePdf} className="min-h-11 rounded-xl bg-white px-5 font-bold">Закрыть</button></div><iframe src={pdfUrl} title="PDF акта" className="mx-auto h-full w-full max-w-6xl rounded-2xl bg-white"/></div>}
+    {deleteConfirmOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"><div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-red-600">Необратимое действие</p><h2 className="mt-2 text-xl font-black">Удалить акт навсегда?</h2><p className="mt-3 text-sm leading-6 text-slate-600">Точно удалить {shortId} со всеми версиями, подписями, приложениями и назначениями iPad? Восстановить его будет невозможно.</p><div className="mt-6 flex gap-3"><button disabled={busy} onClick={permanentlyDeleteAct} className="min-h-12 flex-1 rounded-xl bg-red-600 font-black text-white disabled:opacity-50">{busy ? 'Удаление...' : 'Удалить навсегда'}</button><button disabled={busy} onClick={() => setDeleteConfirmOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-5 font-bold">Отмена</button></div></div></div>}
   </div>;
 }
 

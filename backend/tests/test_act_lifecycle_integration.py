@@ -10,11 +10,12 @@ from fastapi import BackgroundTasks, HTTPException
 from PIL import Image, ImageDraw
 from sqlalchemy import text
 
-from app.api.acts import create_act, sign_party1, sign_party2, start_return_flow
+from app.api.acts import create_act, delete_act, sign_party1, sign_party2, start_return_flow
 from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
     ActDeviceAssignment,
     ActAccessory,
+    Act,
     DeviceStatus,
     InventoryDevice,
     Participant,
@@ -143,6 +144,23 @@ async def test_full_issue_and_return_lifecycle(lifecycle_data):
     assert device.assigned_to is None
     db.refresh(accessory)
     assert accessory.status == "RETURNED"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_permanently_delete_completed_act(lifecycle_data):
+    db, user, manager, recipient, _template, device = lifecycle_data
+    act = await _create(lifecycle_data)
+    act_id = act.id
+    await sign_party2(act.id, SignatureRequest(signature_data=_signature(), participant_id=recipient.id), BackgroundTasks(), db, user)
+    await sign_party1(act.id, SignatureRequest(signature_data=_signature(), participant_id=manager.id), BackgroundTasks(), db, user)
+
+    await delete_act(act_id, db, user)
+
+    db.refresh(device)
+    assert device.status == DeviceStatus.AVAILABLE
+    assert device.assigned_to is None
+    assert db.query(Act).filter(Act.id == act_id).first() is None
+    assert db.query(ActAccessory).filter(ActAccessory.act_id == act_id).count() == 0
 
 
 def _parallel_sign(act_id, participant_id, user, party):

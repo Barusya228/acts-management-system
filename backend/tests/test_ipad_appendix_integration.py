@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw
 from sqlalchemy import text
 
 import app.api.ipad_acts as ipad_api
+from app.api.acts import delete_act
 from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
     Act,
@@ -194,3 +195,15 @@ def test_year_end_return_rejects_outstanding_departed_ipad(ipad_data):
         )
 
     assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_releases_issued_ipad(ipad_data):
+    db, user, _issuer, _responsible, act, _assignment, old_device, _new_device = ipad_data
+    act_id = act.id
+
+    await delete_act(act_id, db, user)
+
+    db.refresh(old_device)
+    assert old_device.status == "AVAILABLE"
+    assert db.query(Act).filter(Act.id == act_id).first() is None
