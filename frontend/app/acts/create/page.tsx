@@ -249,26 +249,15 @@ function CreateActForm() {
     return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-400">Загрузка...</div>;
   }
 
-  if (user.role === 'ADMIN') {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <p className="text-slate-600">Администратор</p>
-          <Link href="/admin/acts/create" className="mt-2 inline-block text-blue-600 underline">Перейти в админ-панель</Link>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <header className="flex items-center justify-between bg-white px-5 py-3 shadow-sm">
         <div className="flex items-center gap-4">
-          <Link href="/guest" className="text-sm text-slate-500 hover:text-slate-700">← Назад</Link>
+          <Link href={user.role === 'ADMIN' ? '/admin/acts' : '/guest'} className="text-sm text-slate-500 hover:text-slate-700">← Назад</Link>
           <h1 className="text-lg font-bold">Новый акт</h1>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/guest" className="text-xs text-slate-400 hover:text-slate-600">Гость</Link>
+          <span className="text-xs text-slate-400">{user.role === 'ADMIN' ? 'Администратор' : 'Гость'}</span>
         </div>
       </header>
 

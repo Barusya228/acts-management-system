@@ -14,7 +14,6 @@ import { useToast } from '@/contexts/ToastContext';
 import PageHeader from '@/components/ui/PageHeader';
 import SurfaceCard from '@/components/ui/SurfaceCard';
 import StatusPill from '@/components/ui/StatusPill';
-import ManualFinalEmail from '@/components/ManualFinalEmail';
 import { normalizeActRecipients, getSignedRecipientsCount, type ActRecipient } from '@/lib/actRecipients';
 
 interface Act {
@@ -1507,8 +1506,6 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
               </p>
             </div>
           )}
-
-          {isAdminUser && <ManualFinalEmail actId={id} />}
 
           <div className="rounded bg-white p-6 shadow">
             <div className="mb-4 flex items-center justify-between">

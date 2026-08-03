@@ -64,7 +64,7 @@ export default function GuestActsGrid({ adminMode = false }: { adminMode?: boole
   const getTemplateUrl = (code: string) => {
     if (adminMode) {
       if (code === 'IPAD') return '/acts/create/ipad';
-      return `/admin/acts/create?code=${code}`;
+      return `/acts/create?code=${code}`;
     }
     const map: Record<string, string> = {
       GENERIC_ONE: '/acts/create/one',
@@ -76,7 +76,7 @@ export default function GuestActsGrid({ adminMode = false }: { adminMode?: boole
 
   const getActUrl = (act: Act) => {
     if (act.template_code === 'IPAD') return `/acts/ipad/${act.id}`;
-    return adminMode ? `/admin/acts/${act.id}` : `/acts/${act.id}`;
+    return `/acts/${act.id}`;
   };
 
   const fetchActs = async () => {

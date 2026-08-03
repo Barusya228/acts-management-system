@@ -25,7 +25,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin/inventory', label: 'Инвентарь' },
     { href: '/admin/templates', label: 'Шаблоны' },
     { href: '/admin/analytics', label: 'Аналитика' },
-    { href: '/admin/reminders', label: 'Напоминания' },
+    { href: '/admin/reminders', label: 'Коммуникации' },
     { href: '/admin/backups', label: 'Бэкапы' },
   ];
 

@@ -61,7 +61,15 @@ async def get_pending_acts(
         Act.created_at < threshold_date
     ).order_by(Act.created_at.asc()).all()
     
-    return acts
+    items = []
+    for act in acts:
+        item = ActResponse.model_validate(act).model_dump()
+        item["template_code"] = act.template.code if act.template else None
+        if act.ipad_profile:
+            item["advisory_group"] = act.ipad_profile.advisory_group
+            item["student_count"] = len(act.ipad_assignments)
+        items.append(item)
+    return items
 
 
 @router.post("/send-reminder/{act_id}")

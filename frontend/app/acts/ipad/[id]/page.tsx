@@ -6,7 +6,6 @@ import { useParams, useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import SignaturePad from '@/components/SignaturePad';
 import SignatureUpload from '@/components/SignatureUpload';
-import ManualFinalEmail from '@/components/ManualFinalEmail';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 
@@ -363,7 +362,7 @@ export default function IpadActPage() {
   return <div className="min-h-screen bg-[#eef2f6] text-slate-900">
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 px-4">
-        <Link href="/guest" className="flex h-11 items-center rounded-xl px-3 text-sm font-semibold text-slate-500 hover:bg-slate-100">← К актам</Link>
+        <Link href={user?.role === 'ADMIN' ? '/admin/acts' : '/guest'} className="flex h-11 items-center rounded-xl px-3 text-sm font-semibold text-slate-500 hover:bg-slate-100">← К актам</Link>
         <div><p className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-600">iPad Advisory</p><h1 className="text-base font-black sm:text-lg">{act.advisory_group} · {shortId}</h1></div>
         {user?.role === 'ADMIN' && <button onClick={() => setDeleteConfirmOpen(true)} className="ml-auto min-h-11 rounded-xl bg-red-600 px-4 text-sm font-bold text-white">Удалить навсегда</button>}
       </div>
@@ -382,7 +381,6 @@ export default function IpadActPage() {
           {contentTab === 'events' && <div className="space-y-2">{studentEvents.length === 0 ? <Empty text="Событий пока нет"/> : studentEvents.map(event => <div key={event.id} className="rounded-2xl bg-slate-50 p-4"><p className="font-bold">{event.student_name} · {event.event_type}</p><p className="mt-1 text-xs text-slate-500">{new Date(event.created_at).toLocaleString('ru-RU')}{event.note ? ` · ${event.note}` : ''}</p></div>)}</div>}
           {contentTab === 'appendices' && <div className="space-y-2">{act.appendices.length === 0 ? <Empty text="Приложений пока нет"/> : act.appendices.map(item => <div key={item.id} className="rounded-2xl bg-slate-50 p-4"><div className="flex flex-wrap justify-between gap-2"><div><p className="font-bold">№{item.appendix_number} · {operationLabels[item.operation_type] || item.operation_type}</p><p className="text-xs text-slate-500">{new Date(item.created_at).toLocaleString('ru-RU')} · {item.responsible_name}</p></div><span className="h-fit rounded-full bg-white px-3 py-1 text-xs font-bold">{appendixStatusLabels[item.status] || item.status}</span></div>{item.pdf_available && <button onClick={() => openPdf(item.id)} className="mt-3 min-h-10 rounded-xl bg-blue-100 px-4 text-sm font-bold text-blue-700">PDF приложения</button>}</div>)}</div>}
         </div>
-        {user?.role === 'ADMIN' && <ManualFinalEmail actId={id} />}
         <details className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><summary className="cursor-pointer text-sm font-bold text-slate-600">Дополнительно</summary><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={() => openPdf()} className="min-h-12 rounded-xl bg-slate-100 text-sm font-semibold">Предпросмотр PDF</button><button onClick={() => setHistoryOpen(true)} className="min-h-12 rounded-xl bg-slate-100 text-sm font-semibold">История приложений</button></div></details>
       </section>
       <section className="flex min-h-[52vh] flex-col overflow-hidden rounded-3xl bg-white shadow-xl ring-1 ring-slate-200 lg:sticky lg:top-[84px] lg:h-[calc(100vh-104px)]">

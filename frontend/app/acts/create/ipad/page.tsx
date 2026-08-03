@@ -79,7 +79,7 @@ export default function CreateIpad() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="flex items-center justify-between bg-white px-5 py-3 shadow-sm"><Link href="/guest" className="text-sm text-slate-500">← Назад</Link><h1 className="font-bold">Акт iPad для advisory</h1><span /></header>
+      <header className="flex items-center justify-between bg-white px-5 py-3 shadow-sm"><Link href={user.role === 'ADMIN' ? '/admin/acts' : '/guest'} className="text-sm text-slate-500">← Назад</Link><h1 className="font-bold">Акт iPad для advisory</h1><span /></header>
       <main className="mx-auto max-w-5xl space-y-5 p-4 lg:p-6">
         <section className="rounded-2xl bg-gradient-to-br from-indigo-700 to-blue-600 p-5 text-white shadow-lg">
           <p className="text-xs font-bold uppercase tracking-widest text-blue-200">Годовой комплект</p><h2 className="mt-1 text-2xl font-black">Одна advisory · несколько ответственных · один iPad каждому ученику</h2>
