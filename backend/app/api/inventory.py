@@ -98,6 +98,33 @@ def create_small_equipment_catalog_item(
     return {"id": str(item.id), "name": item.name, "model": item.model}
 
 
+@router.delete("/small-equipment/catalog/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_small_equipment_catalog_item(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    item = db.query(SmallEquipmentCatalog).filter(
+        SmallEquipmentCatalog.id == item_id,
+        SmallEquipmentCatalog.is_active.is_(True),
+    ).with_for_update().first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Позиция мелкой техники не найдена")
+    active_count = db.query(ActAccessory).filter(
+        ActAccessory.catalog_item_id == item.id,
+        ActAccessory.status.in_(["RESERVED", "ISSUED"]),
+    ).count()
+    if active_count:
+        raise HTTPException(status_code=409, detail="Нельзя удалить мелкую технику, пока она находится в активной выдаче")
+    item.is_active = False
+    record_audit(db, current_user, "SMALL_EQUIPMENT", item.id, "SMALL_EQUIPMENT_DELETED", {
+        "name": item.name,
+        "model": item.model,
+    })
+    db.commit()
+    return None
+
+
 @router.get("/accessories")
 def list_manual_accessories(
     status: Optional[str] = Query(None),

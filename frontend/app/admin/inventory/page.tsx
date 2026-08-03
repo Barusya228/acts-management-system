@@ -124,6 +124,8 @@ export default function InventoryPage() {
   const [categoryForm, setCategoryForm] = useState({ name: '', code: '', icon: '📦' });
   const [showCategoryEmojiPicker, setShowCategoryEmojiPicker] = useState(false);
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<InventoryCategory | null>(null);
+  const [deleteSmallEquipmentTarget, setDeleteSmallEquipmentTarget] = useState<SmallEquipmentGroup | null>(null);
+  const [deletingSmallEquipment, setDeletingSmallEquipment] = useState(false);
 
   useEffect(() => {
     if (user && user.role !== 'ADMIN') { router.push('/guest'); }
@@ -442,6 +444,21 @@ export default function InventoryPage() {
     }
   };
 
+  const handleDeleteSmallEquipment = async () => {
+    if (!deleteSmallEquipmentTarget) return;
+    setDeletingSmallEquipment(true);
+    try {
+      await api.delete(`/api/inventory/small-equipment/catalog/${deleteSmallEquipmentTarget.id}`);
+      setDeleteSmallEquipmentTarget(null);
+      await fetchManualAccessories();
+      showToast('Мелкая техника удалена', 'success');
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Не удалось удалить мелкую технику', 'error');
+    } finally {
+      setDeletingSmallEquipment(false);
+    }
+  };
+
   const getCategoryIcon = (code: string) => categories.find(category => category.code === code)?.icon || '📦';
   const getCategoryLabel = (code: string) => categories.find(category => category.code === code)?.name || code;
 
@@ -550,7 +567,7 @@ export default function InventoryPage() {
               {smallEquipmentGroups.map(group => (
                 <div key={group.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                   <div className="flex items-start justify-between gap-3"><div><p className="font-bold text-slate-800">{group.name}</p><p className="text-sm text-slate-500">{group.model || 'Без модели'}</p></div><div className="text-right"><span className="rounded-full bg-blue-100 px-3 py-1 text-sm font-black text-blue-700">{group.active_quantity} шт.</span><p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">сейчас у получателей</p></div></div>
-                  {group.active_assignments.length === 0 ? <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-400">Активных выдач нет</div> : <div className="mt-4 space-y-2">{group.active_assignments.map(assignment => <div key={assignment.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3"><div className="min-w-0"><p className="truncate text-sm font-bold text-slate-800">{assignment.recipient_name}</p><p className="text-xs text-slate-400">{assignment.quantity} шт. · {new Date(assignment.issue_date).toLocaleDateString('ru-RU')}</p>{assignment.note && <p className="mt-1 truncate text-xs text-slate-500">{assignment.note}</p>}</div><Link href={`/admin/acts/${assignment.act_id}`} className="min-h-10 shrink-0 rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-700 ring-1 ring-gray-200">{assignment.act_reference}</Link></div>)}</div>}
+                  {group.active_assignments.length === 0 ? <div className="mt-4 flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3"><span className="text-sm text-slate-400">Активных выдач нет</span><button onClick={() => setDeleteSmallEquipmentTarget(group)} className="min-h-10 rounded-lg bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100">Удалить позицию</button></div> : <div className="mt-4 space-y-2">{group.active_assignments.map(assignment => <div key={assignment.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3"><div className="min-w-0"><p className="truncate text-sm font-bold text-slate-800">{assignment.recipient_name}</p><p className="text-xs text-slate-400">{assignment.quantity} шт. · {new Date(assignment.issue_date).toLocaleDateString('ru-RU')}</p>{assignment.note && <p className="mt-1 truncate text-xs text-slate-500">{assignment.note}</p>}</div><Link href={`/admin/acts/${assignment.act_id}`} className="min-h-10 shrink-0 rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-700 ring-1 ring-gray-200">{assignment.act_reference}</Link></div>)}</div>}
                 </div>
               ))}
             </div>
@@ -825,6 +842,16 @@ export default function InventoryPage() {
               className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">
               Отмена
             </button>
+          </div>
+        </Modal>
+      )}
+      {deleteSmallEquipmentTarget && (
+        <Modal onClose={() => { if (!deletingSmallEquipment) setDeleteSmallEquipmentTarget(null); }} title="Удалить мелкую технику?">
+          <p className="text-sm text-slate-600">Точно удалить позицию <span className="font-bold text-slate-900">{deleteSmallEquipmentTarget.name}{deleteSmallEquipmentTarget.model ? ` · ${deleteSmallEquipmentTarget.model}` : ''}</span> из справочника?</p>
+          <p className="mt-2 text-xs text-slate-400">История в завершённых актах сохранится. Позиция больше не будет доступна для новых выдач.</p>
+          <div className="mt-6 flex gap-3">
+            <button disabled={deletingSmallEquipment} onClick={handleDeleteSmallEquipment} className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">{deletingSmallEquipment ? 'Удаление...' : 'Удалить'}</button>
+            <button disabled={deletingSmallEquipment} onClick={() => setDeleteSmallEquipmentTarget(null)} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">Отмена</button>
           </div>
         </Modal>
       )}

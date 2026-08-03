@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw
 from sqlalchemy import text
 
 from app.api.acts import create_act, delete_act, sign_party1, sign_party2, start_return_flow
+from app.api.inventory import delete_small_equipment_catalog_item
 from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
     ActDeviceAssignment,
@@ -20,6 +21,7 @@ from app.db.models import (
     InventoryDevice,
     Participant,
     ParticipantKind,
+    SmallEquipmentCatalog,
     Template,
     User,
     UserRole,
@@ -132,6 +134,9 @@ async def test_full_issue_and_return_lifecycle(lifecycle_data):
     assert device.assigned_to == recipient.full_name
     db.refresh(accessory)
     assert accessory.status == "ISSUED"
+    with pytest.raises(HTTPException) as active_delete_error:
+        delete_small_equipment_catalog_item(accessory.catalog_item_id, db, user)
+    assert active_delete_error.value.status_code == 409
 
     await start_return_flow(act.id, ReturnStartRequest(return_date=date.today()), BackgroundTasks(), db, user)
     await sign_party1(act.id, SignatureRequest(signature_data=_signature(), participant_id=manager.id), BackgroundTasks(), db, user)
@@ -144,6 +149,9 @@ async def test_full_issue_and_return_lifecycle(lifecycle_data):
     assert device.assigned_to is None
     db.refresh(accessory)
     assert accessory.status == "RETURNED"
+    delete_small_equipment_catalog_item(accessory.catalog_item_id, db, user)
+    catalog_item = db.query(SmallEquipmentCatalog).filter(SmallEquipmentCatalog.id == accessory.catalog_item_id).one()
+    assert catalog_item.is_active is False
 
 
 @pytest.mark.asyncio
