@@ -23,6 +23,8 @@ interface Device {
   status: string;
   location?: string | null;
   assigned_to?: string | null;
+  paper_act_number?: string | null;
+  paper_issue_date?: string | null;
   notes?: string | null;
   created_at: string;
   updated_at: string;
@@ -66,6 +68,7 @@ const groupKey = (group: Pick<DeviceGroup, 'name' | 'model'>) => `${group.name}\
 const statusOptions = [
   { value: 'available', label: 'Не выдан', cls: 'bg-emerald-100 text-emerald-700' },
   { value: 'assigned', label: 'Выдан под акт', cls: 'bg-amber-100 text-amber-700' },
+  { value: 'paper_issued', label: 'Выдан по бумажному акту', cls: 'bg-violet-100 text-violet-700' },
   { value: 'maintenance', label: 'Косячный', cls: 'bg-red-100 text-red-700' },
   { value: 'retired', label: 'Списан', cls: 'bg-gray-200 text-gray-600' },
 ];
@@ -76,7 +79,7 @@ const getStatusLabel = (s: string) => statusOptions.find(o => o.value === normal
 
 const emptyForm = {
   inventory_number: '', barcode: '', name: '', model: '', category: 'notebook',
-  serial_number: '', status: 'available', location: '', notes: '',
+  serial_number: '', status: 'available', location: '', assigned_to: '', paper_act_number: '', paper_issue_date: '', notes: '',
 };
 
 const emptyBulkRow = { inventory_number: '', barcode: '' };
@@ -315,7 +318,7 @@ export default function InventoryPage() {
   const openEdit = (d: Device) => {
     setEditId(d.id);
     setBulkMode(false);
-    setForm({ inventory_number: d.inventory_number, barcode: d.barcode || '', name: d.name, model: d.model || '', category: d.category, serial_number: d.serial_number, status: d.status, location: d.location || '', notes: d.notes || '' });
+    setForm({ inventory_number: d.inventory_number, barcode: d.barcode || '', name: d.name, model: d.model || '', category: d.category, serial_number: d.serial_number, status: d.status, location: d.location || '', assigned_to: d.assigned_to || '', paper_act_number: d.paper_act_number || '', paper_issue_date: d.paper_issue_date || '', notes: d.notes || '' });
     setShowModal(true);
   };
 
@@ -328,6 +331,10 @@ export default function InventoryPage() {
       }
     } else if (!form.inventory_number.trim() || !form.barcode.trim()) {
       showToast('Инв. номер и штрихкод обязательны', 'error');
+      return;
+    }
+    if (!bulkMode && form.status === 'paper_issued' && !form.assigned_to.trim()) {
+      showToast('Укажите, кому выдано устройство по бумажному акту', 'error');
       return;
     }
     setSaving(true);
@@ -353,6 +360,9 @@ export default function InventoryPage() {
         inventory_number: form.inventory_number.trim(), name: form.name.trim(), category: form.category,
         serial_number: form.inventory_number.trim(), status: form.status,
         barcode: form.barcode.trim(), model: form.model.trim() || null,
+        assigned_to: form.status === 'paper_issued' ? form.assigned_to.trim() : null,
+        paper_act_number: form.status === 'paper_issued' ? form.paper_act_number.trim() || null : null,
+        paper_issue_date: form.status === 'paper_issued' ? form.paper_issue_date || null : null,
         notes: form.notes.trim() || null,
       };
       if (editId) {
@@ -600,6 +610,8 @@ export default function InventoryPage() {
                   <p className="text-xs text-slate-400">Инв: <span className="font-mono text-slate-600">{d.inventory_number}</span></p>
                   <p className="text-xs text-slate-400">ШК: <span className="font-mono text-slate-600">{d.barcode || '—'}</span></p>
                   {d.assigned_to && <p className="text-xs text-slate-500">👤 {d.assigned_to}</p>}
+                  {d.status === 'paper_issued' && (d.paper_act_number || d.paper_issue_date) && <p className="text-xs text-violet-600">Бумажный акт{d.paper_act_number ? ` № ${d.paper_act_number}` : ''}{d.paper_issue_date ? ` · ${new Date(d.paper_issue_date).toLocaleDateString('ru-RU')}` : ''}</p>}
+                  {d.notes?.trim() && <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 ring-1 ring-amber-100"><p className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Заметка</p><p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-amber-900">{d.notes}</p></div>}
                 </div>
               </div>
             ))}
@@ -625,7 +637,7 @@ export default function InventoryPage() {
                   className={`min-h-10 rounded-lg px-3 text-sm font-medium transition ${!bulkMode ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
                   Одно устройство
                 </button>
-                <button type="button" onClick={() => setBulkMode(true)}
+                <button type="button" onClick={() => { setBulkMode(true); if (form.status === 'paper_issued') setForm(current => ({ ...current, status: 'available', assigned_to: '', paper_act_number: '', paper_issue_date: '' })); }}
                   className={`min-h-10 rounded-lg px-3 text-sm font-medium transition ${bulkMode ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
                   Несколько устройств
                 </button>
@@ -667,9 +679,10 @@ export default function InventoryPage() {
                   {form.status !== 'reserved' && form.status !== 'issued' && (
                     <option value="assigned" disabled>Выдан под акт (автоматически)</option>
                   )}
-                  {statusOptions.filter(option => option.value !== 'assigned').map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select></div>
-            </div>
+                   {statusOptions.filter(option => option.value !== 'assigned' && (!bulkMode || option.value !== 'paper_issued')).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                 </select></div>
+             </div>
+            {!bulkMode && form.status === 'paper_issued' && <div className="rounded-xl border border-violet-200 bg-violet-50 p-4"><p className="mb-3 text-sm font-bold text-violet-900">Данные бумажного акта</p><div className="space-y-3"><div><label className="mb-1 block text-xs font-medium text-violet-800">Кому выдано *</label><input value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })} placeholder="ФИО получателя" className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-medium text-violet-800">Номер акта</label><input value={form.paper_act_number} onChange={e => setForm({ ...form, paper_act_number: e.target.value })} placeholder="Например, 125" className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div><div><label className="mb-1 block text-xs font-medium text-violet-800">Дата бумажного акта</label><input type="date" value={form.paper_issue_date} onChange={e => setForm({ ...form, paper_issue_date: e.target.value })} className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div></div></div><p className="mt-3 text-xs text-violet-600">Устройство будет исключено из доступных для новых электронных актов.</p></div>}
             {bulkMode && !editId && (
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-3">
@@ -713,7 +726,7 @@ export default function InventoryPage() {
                 </button>
               </div>
             )}
-            {editId && (
+            {!bulkMode && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">Заметки</label>
                 <textarea

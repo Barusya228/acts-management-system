@@ -43,6 +43,7 @@ class DeviceStatus(str, enum.Enum):
     AVAILABLE = "available"
     RESERVED = "reserved"
     ISSUED = "issued"
+    PAPER_ISSUED = "paper_issued"
     MAINTENANCE = "maintenance"
     RETIRED = "retired"
 
@@ -250,6 +251,8 @@ class InventoryDevice(Base):
     )
     location = Column(String, nullable=True)
     assigned_to = Column(String, nullable=True)
+    paper_act_number = Column(String, nullable=True)
+    paper_issue_date = Column(Date, nullable=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

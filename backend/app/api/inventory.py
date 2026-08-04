@@ -398,6 +398,8 @@ def list_devices(
             | InventoryDevice.serial_number.ilike(s)
             | InventoryDevice.inventory_number.ilike(s)
             | InventoryDevice.assigned_to.ilike(s)
+            | InventoryDevice.paper_act_number.ilike(s)
+            | InventoryDevice.notes.ilike(s)
         )
     if name:
         query = query.filter(InventoryDevice.name == name)
@@ -424,7 +426,18 @@ def create_device(
         raise HTTPException(status_code=422, detail="Статус выдачи меняется только через акт")
     if not data.inventory_number.strip() or not data.barcode.strip() or not data.name.strip() or not data.serial_number.strip():
         raise HTTPException(status_code=422, detail="Инвентарный номер, штрихкод и название обязательны")
-    device = InventoryDevice(**data.model_dump())
+    values = data.model_dump()
+    if data.status == "paper_issued":
+        assigned_to = str(data.assigned_to or "").strip()
+        if not assigned_to:
+            raise HTTPException(status_code=422, detail="Для бумажного акта укажите, кому выдано устройство")
+        values["assigned_to"] = assigned_to
+        values["paper_act_number"] = str(data.paper_act_number or "").strip() or None
+    else:
+        values["assigned_to"] = None
+        values["paper_act_number"] = None
+        values["paper_issue_date"] = None
+    device = InventoryDevice(**values)
     db.add(device)
     db.flush()
     record_audit(db, current_user, "INVENTORY_DEVICE", device.id, "DEVICE_CREATED", {
@@ -543,6 +556,18 @@ def update_device(
             raise HTTPException(status_code=409, detail="Статус устройства управляется активным актом")
         if updates["status"] in {"reserved", "issued"}:
             raise HTTPException(status_code=422, detail="Статус выдачи меняется только через акт")
+    target_status = updates.get("status", device.status.value if hasattr(device.status, "value") else device.status)
+    if target_status == "paper_issued":
+        assigned_to = str(updates.get("assigned_to", device.assigned_to) or "").strip()
+        if not assigned_to:
+            raise HTTPException(status_code=422, detail="Для бумажного акта укажите, кому выдано устройство")
+        updates["assigned_to"] = assigned_to
+        paper_act_number = updates.get("paper_act_number", device.paper_act_number)
+        updates["paper_act_number"] = str(paper_act_number or "").strip() or None
+    else:
+        updates["assigned_to"] = None
+        updates["paper_act_number"] = None
+        updates["paper_issue_date"] = None
     for required_field in ("inventory_number", "name", "serial_number"):
         if required_field in updates and (
             updates[required_field] is None or not updates[required_field].strip()
@@ -556,6 +581,7 @@ def update_device(
         setattr(device, field, value)
     record_audit(db, current_user, "INVENTORY_DEVICE", device.id, "DEVICE_UPDATED", {
         "fields": list(updates.keys()),
+        "status": target_status,
     })
 
     try:

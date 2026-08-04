@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 from sqlalchemy import text
 
 from app.api.acts import create_act, delete_act, get_manual_final_email, send_manual_final_email, sign_party1, sign_party2, start_return_flow
-from app.api.inventory import delete_small_equipment_catalog_item
+from app.api.inventory import delete_small_equipment_catalog_item, list_available_devices, update_device
 from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
     ActDeviceAssignment,
@@ -27,7 +27,7 @@ from app.db.models import (
     User,
     UserRole,
 )
-from app.schemas.schemas import ActCreate, ManualFinalEmailRequest, ReturnStartRequest, SignatureRequest
+from app.schemas.schemas import ActCreate, InventoryDeviceUpdate, ManualFinalEmailRequest, ReturnStartRequest, SignatureRequest
 
 
 pytestmark = pytest.mark.skipif(
@@ -227,6 +227,44 @@ async def test_final_documents_are_sent_only_by_admin_action(lifecycle_data):
     returned_documents = {item["kind"]: item for item in returned_options["documents"]}
     assert returned_documents["ISSUE_COMPLETED"]["available"] is True
     assert returned_documents["RETURN_COMPLETED"]["available"] is True
+
+
+def test_paper_act_status_blocks_device_until_manual_return(lifecycle_data):
+    db, user, _manager, _recipient, _template, device = lifecycle_data
+    paper_date = date(2025, 9, 1)
+
+    updated = update_device(
+        device.id,
+        InventoryDeviceUpdate(
+            status="paper_issued",
+            assigned_to="Legacy Recipient",
+            paper_act_number="P-125",
+            paper_issue_date=paper_date,
+        ),
+        db,
+        user,
+    )
+    assert updated.status.value == "paper_issued"
+    assert updated.assigned_to == "Legacy Recipient"
+    assert updated.paper_act_number == "P-125"
+    assert updated.paper_issue_date == paper_date
+    assert all(item["id"] != str(device.id) for item in list_available_devices(db, user))
+
+    with pytest.raises(HTTPException) as error:
+        update_device(
+            device.id,
+            InventoryDeviceUpdate(status="paper_issued", assigned_to=""),
+            db,
+            user,
+        )
+    assert error.value.status_code == 422
+
+    returned = update_device(device.id, InventoryDeviceUpdate(status="available"), db, user)
+    assert returned.status.value == "available"
+    assert returned.assigned_to is None
+    assert returned.paper_act_number is None
+    assert returned.paper_issue_date is None
+    assert any(item["id"] == str(device.id) for item in list_available_devices(db, user))
 
 
 def _parallel_sign(act_id, participant_id, user, party):

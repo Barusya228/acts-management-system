@@ -313,8 +313,11 @@ class InventoryDeviceCreate(BaseModel):
     model: Optional[str] = None
     category: str
     serial_number: str
-    status: Literal["available", "maintenance", "retired"] = "available"
+    status: Literal["available", "paper_issued", "maintenance", "retired"] = "available"
     location: Optional[str] = None
+    assigned_to: Optional[str] = None
+    paper_act_number: Optional[str] = None
+    paper_issue_date: Optional[date] = None
     notes: Optional[str] = None
 
 
@@ -338,9 +341,11 @@ class InventoryDeviceUpdate(BaseModel):
     model: Optional[str] = None
     category: Optional[str] = None
     serial_number: Optional[str] = None
-    status: Optional[Literal["available", "reserved", "issued", "maintenance", "retired"]] = None
+    status: Optional[Literal["available", "reserved", "issued", "paper_issued", "maintenance", "retired"]] = None
     location: Optional[str] = None
     assigned_to: Optional[str] = None
+    paper_act_number: Optional[str] = None
+    paper_issue_date: Optional[date] = None
     notes: Optional[str] = None
 
 
@@ -355,6 +360,8 @@ class InventoryDeviceResponse(BaseModel):
     status: str
     location: Optional[str] = None
     assigned_to: Optional[str] = None
+    paper_act_number: Optional[str] = None
+    paper_issue_date: Optional[date] = None
     notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
