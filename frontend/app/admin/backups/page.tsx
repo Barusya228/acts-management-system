@@ -24,6 +24,7 @@ interface BackupItem {
 }
 
 interface BackupOverview {
+  system_backup: { status: 'SUCCESS' | 'FAILED' | 'NOT_CONFIGURED'; updated_at?: string | null; bundle?: string | null; message?: string | null };
   enabled: boolean;
   destination: string;
   total: number;
@@ -86,13 +87,15 @@ export default function BackupsPage() {
   };
 
   if (!user || user.role !== 'ADMIN') return null;
+  const systemBackupAge = data?.system_backup.updated_at ? Date.now() - new Date(data.system_backup.updated_at).getTime() : null;
+  const systemBackupStale = systemBackupAge !== null && systemBackupAge > 26 * 60 * 60 * 1000;
 
   return (
     <AdminLayout>
       <PageHeader
         eyebrow="Хранение"
-        title="Бэкапы PDF"
-        description="Финальные PDF выдачи и возврата в Google Drive."
+        title="Резервные копии"
+        description="Полное восстановление PostgreSQL и файлов, а также отдельные копии финальных PDF."
         actions={(
           <button
             type="button"
@@ -108,19 +111,25 @@ export default function BackupsPage() {
       {loading ? (
         <div className="rounded-2xl bg-white p-12 text-center text-sm text-slate-500 shadow-sm">Загрузка истории...</div>
       ) : data ? (
-        <div className="space-y-5">
+         <div className="space-y-5">
+          <section className={`rounded-2xl border p-5 shadow-sm ${data.system_backup.status === 'SUCCESS' && !systemBackupStale ? 'border-emerald-200 bg-emerald-50' : data.system_backup.status === 'NOT_CONFIGURED' ? 'border-slate-200 bg-white' : 'border-red-200 bg-red-50'}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Системный backup</p><h2 className="mt-1 text-xl font-black text-slate-900">PostgreSQL + PDF + подписи</h2><p className="mt-1 text-sm text-slate-600">Создаётся timer на Fedora, проверяется локально и после загрузки в зашифрованный Google Drive.</p></div><span className={`rounded-full px-3 py-1 text-xs font-black ${data.system_backup.status === 'SUCCESS' && !systemBackupStale ? 'bg-emerald-600 text-white' : data.system_backup.status === 'NOT_CONFIGURED' ? 'bg-slate-200 text-slate-600' : 'bg-red-600 text-white'}`}>{data.system_backup.status === 'SUCCESS' && !systemBackupStale ? 'Проверен' : data.system_backup.status === 'NOT_CONFIGURED' ? 'Не настроен' : systemBackupStale ? 'Просрочен' : 'Ошибка'}</span></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-white/80 p-3"><p className="text-xs text-slate-400">Последний результат</p><p className="mt-1 font-bold text-slate-800">{formatDate(data.system_backup.updated_at)}</p></div><div className="rounded-xl bg-white/80 p-3"><p className="text-xs text-slate-400">Bundle</p><p className="mt-1 truncate font-mono text-xs font-bold text-slate-700" title={data.system_backup.bundle || ''}>{data.system_backup.bundle || '—'}</p></div><div className="rounded-xl bg-white/80 p-3"><p className="text-xs text-slate-400">Проверка</p><p className="mt-1 text-sm font-bold text-slate-700">{data.system_backup.message || 'Нет данных'}</p></div></div>
+            {(systemBackupStale || data.system_backup.status === 'FAILED') && <p className="mt-4 rounded-xl bg-red-100 p-3 text-sm font-bold text-red-800">Полный backup требует внимания. Проверьте `journalctl --user -u acts-system-backup.service` на Fedora.</p>}
+          </section>
+
           {!data.enabled && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
               Бэкап отключён. Укажите `PDF_BACKUP_ENABLED=true` и путь Google Drive в `.env`, затем пересоздайте backend.
             </div>
           )}
 
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div><h2 className="mb-3 text-lg font-black text-slate-900">Отдельные копии финальных PDF</h2><section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <SummaryCard label="Назначение" value={data.destination} hint={data.enabled ? 'Подключено' : 'Отключено'} tone={data.enabled ? 'emerald' : 'amber'} />
             <SummaryCard label="Последний успешный" value={formatDate(data.last_success_at)} hint="Проверен SHA-256" tone="blue" />
             <SummaryCard label="Сохранено копий" value={String(data.successful)} hint="Только выдача и возврат" tone="emerald" />
             <SummaryCard label="Ошибок" value={String(data.failed)} hint={data.failed ? 'Требуют повторной синхронизации' : 'Проблем нет'} tone={data.failed ? 'rose' : 'slate'} />
-          </section>
+          </section></div>
 
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-100 px-5 py-4">

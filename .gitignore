@@ -215,6 +215,11 @@ yarn-error.log*
 
 # Backend local storage
 backend/storage/
+backend/pdf-backups/
+backend/system-backups/
+.system-backup.lock
+ops/backup/backup.env
+ops/backup/rclone.conf
 *.db
 *.sqlite3
 

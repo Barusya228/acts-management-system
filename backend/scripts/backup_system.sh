@@ -26,10 +26,16 @@ tar -tzf "$TEMP_DIR/storage.tar.gz" >/dev/null
 DB_SIZE="$(stat -c %s "$TEMP_DIR/database.dump")"
 STORAGE_SIZE="$(stat -c %s "$TEMP_DIR/storage.tar.gz")"
 FILE_COUNT="$(find "$STORAGE_ROOT" -type f | wc -l)"
+POSTGRES_VERSION="$(psql "$DATABASE_URL" -Atqc 'SHOW server_version')"
+DATABASE_NAME="$(psql "$DATABASE_URL" -Atqc 'SELECT current_database()')"
+ALEMBIC_REVISION="$(alembic current 2>/dev/null | tail -n 1 | tr -d '\r')"
 cat > "$TEMP_DIR/manifest.json" <<EOF
 {
   "created_at": "$STAMP",
   "bundle_id": "$BUNDLE_ID",
+  "database_name": "$DATABASE_NAME",
+  "postgres_version": "$POSTGRES_VERSION",
+  "alembic_revision": "$ALEMBIC_REVISION",
   "database_bytes": $DB_SIZE,
   "storage_bytes": $STORAGE_SIZE,
   "storage_files": $FILE_COUNT

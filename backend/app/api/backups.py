@@ -1,4 +1,6 @@
+import json
 import threading
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
@@ -18,6 +20,22 @@ from app.services.pdf_backup_service import (
 
 router = APIRouter()
 sync_lock = threading.Lock()
+
+
+def _system_backup_status() -> dict:
+    status_path = Path(settings.PDF_BACKUP_PATH) / "system" / "last-backup-status.json"
+    if not status_path.is_file():
+        return {"status": "NOT_CONFIGURED", "updated_at": None, "bundle": None, "message": "System backup has not reported yet"}
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"status": "FAILED", "updated_at": None, "bundle": None, "message": "System backup status file is invalid"}
+    return {
+        "status": payload.get("status", "FAILED"),
+        "updated_at": payload.get("updated_at"),
+        "bundle": payload.get("bundle"),
+        "message": payload.get("message"),
+    }
 
 
 def _serialize_record(record: PdfBackupRecord, act: Act | None) -> dict:
@@ -77,6 +95,7 @@ async def get_backup_overview(
     )
 
     return {
+        "system_backup": _system_backup_status(),
         "enabled": settings.PDF_BACKUP_ENABLED,
         "destination": settings.PDF_BACKUP_LABEL,
         "total": total,

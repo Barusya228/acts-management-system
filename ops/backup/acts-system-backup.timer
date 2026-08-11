@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Acts Management full backup timer
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=acts-system-backup.service
+
+[Install]
+WantedBy=timers.target

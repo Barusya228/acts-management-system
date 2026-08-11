@@ -1,0 +1,16 @@
+[Unit]
+Description=Acts Management full PostgreSQL and storage backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/acts-management-system
+Environment=SYSTEM_BACKUP_CONFIG=%h/acts-management-system/ops/backup/backup.env
+ExecStart=/usr/bin/bash %h/acts-management-system/backend/scripts/backup_to_google_drive.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=default.target
