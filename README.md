@@ -57,10 +57,8 @@ acts-management-system/
 - `ADMIN` - полный доступ к актам, шаблонам, участникам, аналитике и напоминаниям
 - `GUEST` - доступ к просмотру актов, созданию, подписанию и работе с PDF без доступа к административным разделам
 
-Seed-скрипт backend создаёт таких пользователей:
-
-- `admin` / `qwerty`
-- гостевой вход без логина и пароля через кнопку на странице `/login`
+Seed-скрипт backend создаёт администратора из переменных окружения
+`ADMIN_USERNAME` и `ADMIN_PASSWORD`. Production-пароль не хранится в репозитории.
 
 В базе также создаётся отдельный гостевой пользователь:
 
@@ -191,7 +189,10 @@ docker compose up --build -d
 
 ```bash
 docker compose exec backend alembic upgrade head
-docker compose exec backend python scripts/seed_admin.py
+docker compose exec \
+  -e ADMIN_USERNAME=administrator \
+  -e ADMIN_PASSWORD='<strong-password>' \
+  backend python scripts/seed_admin.py
 docker compose exec backend python scripts/seed_templates.py
 docker compose exec backend python scripts/seed_employees.py
 ```
@@ -202,6 +203,110 @@ docker compose exec backend python scripts/seed_employees.py
 - backend API: `http://localhost:8000`
 - Swagger UI: `http://localhost:8000/docs`
 - healthcheck: `http://localhost:8000/health`
+
+## Обновление production-сервера Fedora
+
+Production-сервер доступен по адресу `192.168.23.151`, приложение — на порту `5000`.
+
+Из Windows PowerShell подключитесь к серверу:
+
+```powershell
+ssh ruslan_adm@192.168.23.151
+```
+
+После входа перейдите в каталог проекта и обновите ветку `version_v3`:
+
+```bash
+cd ~/acts-management-system
+git pull origin version_v3
+```
+
+### 1. Backup перед обновлением
+
+Сделайте дамп production-базы до сборки:
+
+```bash
+docker compose -p acts_v3 exec -T db pg_dump -U acts_user -d acts_db -Fc > pre-build-$(date +%Y%m%d-%H%M).dump
+```
+
+Убедитесь, что файл дампа создан и не пустой:
+
+```bash
+ls -lh pre-build-*.dump
+```
+
+### 2. Тестовая сборка
+
+Тесты запускаются в отдельном Compose-проекте и не используют production-базу:
+
+```bash
+docker compose -p acts_test -f docker-compose.test.yml down -v
+docker compose -p acts_test -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from tests
+```
+
+Ожидаемый результат для текущей версии:
+
+```text
+69 passed
+```
+
+Если тесты завершились успешно, удалите тестовые контейнеры и volume:
+
+```bash
+docker compose -p acts_test -f docker-compose.test.yml down -v
+```
+
+Не запускайте production build, если тесты завершились с ошибкой.
+
+### 3. Production build
+
+Пересоберите образы и перезапустите сервисы под существующим именем Compose-проекта:
+
+```bash
+docker compose -p acts_v3 up -d --build
+```
+
+Backend автоматически выполняет `alembic upgrade head` при запуске.
+
+### 4. Проверка после обновления
+
+Проверьте состояние контейнеров и healthcheck:
+
+```bash
+docker compose -p acts_v3 ps
+curl http://localhost:5000/health
+```
+
+Ожидаемый healthcheck:
+
+```json
+{"status":"healthy"}
+```
+
+Проверьте текущую миграцию:
+
+```bash
+docker compose -p acts_v3 exec backend alembic current
+```
+
+Ожидаемая head-ревизия для текущей версии:
+
+```text
+20260811_0026 (head)
+```
+
+Если backend или email-worker не запустились, проверьте логи:
+
+```bash
+docker compose -p acts_v3 logs --tail=200 backend
+docker compose -p acts_v3 logs --tail=200 email-worker
+```
+
+После успешной проверки приложение доступно по адресу:
+
+```text
+http://192.168.23.151:5000
+```
 
 ## Локальная разработка без Docker
 
@@ -214,6 +319,8 @@ source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 alembic upgrade head
+export ADMIN_USERNAME=administrator
+export ADMIN_PASSWORD='<strong-password>'
 python scripts/seed_admin.py
 python scripts/seed_templates.py
 python scripts/seed_employees.py
@@ -229,6 +336,8 @@ venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
 alembic upgrade head
+set ADMIN_USERNAME=administrator
+set ADMIN_PASSWORD=<strong-password>
 python scripts\seed_admin.py
 python scripts\seed_templates.py
 python scripts\seed_employees.py
@@ -270,7 +379,7 @@ npm run lint
 DATABASE_URL=postgresql://user:password@localhost:5432/acts_db
 SECRET_KEY=your-secret-key-here-change-in-production
 ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
 CORS_ORIGINS=["http://localhost:3000"]
 CORS_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$
 SMTP_HOST=
@@ -429,7 +538,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 После запуска seed-скриптов проект получает:
 
-- администратора `admin / qwerty`
+- администратора из `ADMIN_USERNAME` / `ADMIN_PASSWORD`
 - гостевого пользователя для `guest-login`
 - шаблоны `GENERIC_ONE`, `GENERIC_MULTI`, `GENERIC`, `IPAD`
 - справочник сотрудников из `backend/scripts/seed_employees.py`

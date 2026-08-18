@@ -8,39 +8,43 @@ from app.db.models import User, UserRole
 
 def seed_admin():
     db = SessionLocal()
+    admin_username = os.getenv("ADMIN_USERNAME", "administrator")
+    admin_password = os.getenv("ADMIN_PASSWORD")
     
     try:
-        # Check if admin already exists
-        existing_admin = db.query(User).filter(User.username == "admin").first()
+        # Не храните production-пароль в Git. ADMIN_PASSWORD передаётся
+        # только при первоначальном создании или явной ротации пароля.
+        existing_admin = db.query(User).filter(User.role == UserRole.ADMIN).first()
         
         if existing_admin:
             print("Admin user already exists")
-            # Update password to qwerty
-            existing_admin.username = "admin"
-            existing_admin.email = "admin"
-            existing_admin.password_hash = get_password_hash("qwerty")
+            existing_admin.username = admin_username
+            existing_admin.email = admin_username
+            if admin_password:
+                existing_admin.password_hash = get_password_hash(admin_password)
             existing_admin.full_name = "Администратор"
             existing_admin.role = UserRole.ADMIN
             existing_admin.is_active = True
             db.commit()
-            print("Admin password updated to 'qwerty'")
+            print(f"Admin login updated: {admin_username}")
+            print("Admin password updated" if admin_password else "Admin password left unchanged")
         else:
-            # Create admin user with static credentials
+            if not admin_password:
+                raise RuntimeError("ADMIN_PASSWORD is required to create the administrator")
             admin = User(
-                username="admin",
-                email="admin",
+                username=admin_username,
+                email=admin_username,
                 full_name="Администратор",
-                password_hash=get_password_hash("qwerty"),
+                password_hash=get_password_hash(admin_password),
                 role=UserRole.ADMIN,
                 is_active=True
             )
             
             db.add(admin)
             db.commit()
-            
+
             print("Admin user created successfully")
-            print("Login: admin")
-            print("Password: qwerty")
+            print(f"Login: {admin_username}")
 
         # Create guest user if not exists
         existing_guest = db.query(User).filter(User.username == "guest").first()
