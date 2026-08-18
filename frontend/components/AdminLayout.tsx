@@ -27,6 +27,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin/analytics', label: 'Аналитика' },
     { href: '/admin/reminders', label: 'Коммуникации' },
     { href: '/admin/backups', label: 'Бэкапы' },
+    { href: '/admin/kiosks', label: 'Устройства' },
   ];
 
   const isActive = (href: string) => {
@@ -39,17 +40,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <div className="min-h-screen flex flex-col bg-gray-100 text-slate-900">
       <nav className="bg-white border-b border-gray-200 px-4 py-2.5 shadow-sm">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <Link href="/admin/acts" className="text-lg font-bold text-slate-900">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <div className="flex w-full min-w-0 items-center gap-2 md:w-auto md:gap-4 order-2 md:order-1">
+            <Link href="/admin/acts" className="hidden shrink-0 text-lg font-bold text-slate-900 md:block">
               ActDigital
             </Link>
-            <div className="flex items-center gap-1 overflow-x-auto">
+            <div className="flex min-w-0 items-center gap-1 overflow-x-auto pb-1 md:pb-0">
               {navItems.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`rounded-lg px-3 py-1.5 text-sm transition ${
+                  className={`flex min-h-11 shrink-0 items-center rounded-lg px-3 text-sm transition ${
                     isActive(item.href)
                       ? 'bg-slate-900 text-white'
                       : 'text-slate-700 hover:bg-gray-100'
@@ -61,20 +62,25 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="text-sm text-slate-600">
-              <span className="font-medium text-slate-900">{user.full_name || user.username}</span>
-              <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
-                Админ
-              </span>
+          <div className="flex w-full min-w-0 items-center justify-between gap-2 md:w-auto md:justify-end md:gap-3 order-1 md:order-2">
+            <Link href="/admin/acts" className="shrink-0 text-base font-bold text-slate-900 md:hidden">
+              ActDigital
+            </Link>
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex min-w-0 items-center text-sm text-slate-600">
+                <span className="truncate font-medium text-slate-900">{user.full_name || user.username}</span>
+                <span className="ml-2 shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                  Админ
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLogoutModal(true)}
+                className="min-h-11 shrink-0 rounded-xl bg-slate-100 px-4 text-sm text-slate-700 transition hover:bg-red-100 hover:text-red-700"
+              >
+                Выход
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowLogoutModal(true)}
-              className="rounded-xl bg-slate-100 px-4 py-1.5 text-sm text-slate-700 transition hover:bg-red-100 hover:text-red-700"
-            >
-              Выход
-            </button>
           </div>
         </div>
       </nav>

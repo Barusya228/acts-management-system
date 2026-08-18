@@ -6,6 +6,7 @@ import Link from 'next/link';
 import api from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
+import IpadPickerModal, { ipadLabel } from '@/components/IpadPickerModal';
 
 interface Participant { id: string; full_name: string; email?: string | null; kind: string; }
 interface Template { id: string; code: string; name: string; }
@@ -28,6 +29,7 @@ export default function CreateIpad() {
   const [responsibleSearch, setResponsibleSearch] = useState('');
   const [students, setStudents] = useState<StudentRow[]>([emptyStudent()]);
   const [ipads, setIpads] = useState<IpadDevice[]>([]);
+  const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { if (!loading && !user) loginAsGuest(); }, [loading, user, loginAsGuest]);
@@ -79,7 +81,7 @@ export default function CreateIpad() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="flex items-center justify-between bg-white px-5 py-3 shadow-sm"><Link href={user.role === 'ADMIN' ? '/admin/acts' : '/guest'} className="text-sm text-slate-500">← Назад</Link><h1 className="font-bold">Акт iPad для advisory</h1><span /></header>
+      <header className="flex items-center justify-between gap-2 bg-white px-3 py-3 shadow-sm sm:px-5"><Link href={user.role === 'ADMIN' ? '/admin/acts' : '/guest'} className="flex min-h-11 shrink-0 items-center text-sm text-slate-500">← Назад</Link><h1 className="min-w-0 truncate font-bold">Акт iPad для advisory</h1><span /></header>
       <main className="mx-auto max-w-5xl space-y-5 p-4 lg:p-6">
         <section className="rounded-2xl bg-gradient-to-br from-indigo-700 to-blue-600 p-5 text-white shadow-lg">
           <p className="text-xs font-bold uppercase tracking-widest text-blue-200">Годовой комплект</p><h2 className="mt-1 text-2xl font-black">Одна advisory · несколько ответственных · один iPad каждому ученику</h2>
@@ -95,18 +97,36 @@ export default function CreateIpad() {
             <div><h3 className="font-bold">Ответственные лица и подписанты</h3><p className="text-sm text-slate-500">Подписывают выбранные ответственные, затем IT.</p></div>
             <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">Выбрано: {responsibleIds.length}</span>
           </div>
-          {selectedResponsibles.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{selectedResponsibles.map(item => <span key={item.id} className="inline-flex min-h-9 items-center gap-2 rounded-full bg-slate-100 pl-3 pr-1 text-sm font-semibold text-slate-700">{item.full_name}<button type="button" onClick={() => setResponsibleIds(ids => ids.filter(id => id !== item.id))} className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button></span>)}</div>}
+          {selectedResponsibles.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{selectedResponsibles.map(item => <span key={item.id} className="inline-flex min-h-11 items-center gap-1 rounded-full bg-slate-100 pl-3 pr-1 text-sm font-semibold text-slate-700"><span className="min-w-0 truncate">{item.full_name}</span><button type="button" onClick={() => setResponsibleIds(ids => ids.filter(id => id !== item.id))} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600">×</button></span>)}</div>}
           <div className="relative mt-3">
             <input value={responsibleSearch} onChange={event => setResponsibleSearch(event.target.value)} placeholder="Найти ответственного по ФИО..." className="min-h-11 w-full rounded-xl border border-gray-200 px-3 text-sm outline-none focus:border-blue-400" />
-            {responsibleSuggestions.length > 0 && <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-xl">{responsibleSuggestions.map(item => <button key={item.id} type="button" onClick={() => { setResponsibleIds(ids => [...ids, item.id]); setResponsibleSearch(''); }} className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-blue-50"><span className="text-sm font-semibold text-slate-700">{item.full_name}</span><span className="text-xs text-slate-400">{item.email || 'Нет email'}</span></button>)}</div>}
+            {responsibleSuggestions.length > 0 && <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-xl">{responsibleSuggestions.map(item => <button key={item.id} type="button" onClick={() => { setResponsibleIds(ids => [...ids, item.id]); setResponsibleSearch(''); }} className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-3 text-left hover:bg-blue-50"><span className="min-w-0 truncate text-sm font-semibold text-slate-700">{item.full_name}</span><span className="min-w-0 truncate text-xs text-slate-400">{item.email || 'Нет email'}</span></button>)}</div>}
           </div>
         </section>
         <section className="rounded-2xl bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Ученики и закреплённые iPad</h3><p className="text-sm text-slate-500">{students.filter(item => item.student_name && item.ipad_device_id).length} из {students.length} назначено</p></div><button type="button" onClick={() => setStudents(rows => [...rows, emptyStudent()])} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">+ Ученик</button></div>
-          <div className="space-y-3">{students.map((item, index) => <div key={index} className="rounded-2xl bg-slate-50 p-4 ring-1 ring-gray-100"><div className="mb-2 flex justify-between"><span className="text-xs font-bold uppercase text-slate-400">Ученик {index + 1}</span><button type="button" disabled={students.length === 1} onClick={() => setStudents(rows => rows.filter((_, rowIndex) => rowIndex !== index))} className="text-sm text-red-600 disabled:opacity-30">Удалить</button></div><div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr]"><input value={item.student_name} onChange={event => updateStudent(index, { student_name: event.target.value })} placeholder="ФИО ученика *" className="min-h-11 rounded-xl border bg-white px-3" /><select value={item.ipad_device_id} onChange={event => updateStudent(index, { ipad_device_id: event.target.value })} className="min-h-11 rounded-xl border bg-white px-3"><option value="">Выберите iPad *</option>{ipads.filter(ipad => ipad.id === item.ipad_device_id || !students.some((row, rowIndex) => rowIndex !== index && row.ipad_device_id === ipad.id)).map(ipad => <option key={ipad.id} value={ipad.id}>{ipad.model || ipad.device_name} · Tag {ipad.tag} · {ipad.serial_number}</option>)}</select><input value={item.note} onChange={event => updateStudent(index, { note: event.target.value })} placeholder="Заметка" className="min-h-11 rounded-xl border bg-white px-3" /></div></div>)}</div>
+          <div className="space-y-3">{students.map((item, index) => {
+            const selectedIpad = ipads.find(ipad => ipad.id === item.ipad_device_id);
+            return <div key={index} className="rounded-2xl bg-slate-50 p-4 ring-1 ring-gray-100"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-bold uppercase text-slate-400">Ученик {index + 1}</span><button type="button" disabled={students.length === 1} onClick={() => setStudents(rows => rows.filter((_, rowIndex) => rowIndex !== index))} className="min-h-11 px-2 text-sm text-red-600 disabled:opacity-30">Удалить</button></div><div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr]"><input value={item.student_name} onChange={event => updateStudent(index, { student_name: event.target.value })} placeholder="ФИО ученика *" className="min-h-11 rounded-xl border bg-white px-3" />{selectedIpad ? (
+              <div className="flex min-h-11 items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3">
+                <button type="button" onClick={() => setPickerRowIndex(index)} className="min-w-0 flex-1 text-left text-sm font-semibold text-blue-800"><span className="block truncate">{ipadLabel(selectedIpad)}</span></button>
+                <button type="button" onClick={() => updateStudent(index, { ipad_device_id: '' })} className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500" aria-label="Сбросить iPad">✕</button>
+              </div>
+            ) : (
+              <button type="button" onClick={() => setPickerRowIndex(index)} className="min-h-11 rounded-xl border border-dashed border-blue-300 bg-white px-3 text-left text-sm font-semibold text-blue-700 hover:border-blue-400">Выбрать iPad *</button>
+            )}<input value={item.note} onChange={event => updateStudent(index, { note: event.target.value })} placeholder="Заметка" className="min-h-11 rounded-xl border bg-white px-3" /></div></div>;
+          })}</div>
         </section>
         <button type="button" onClick={submit} disabled={saving} className="min-h-14 w-full rounded-2xl bg-slate-950 text-base font-black text-white disabled:opacity-50">{saving ? 'Создание...' : `Создать акт и зарезервировать ${students.length} iPad`}</button>
       </main>
+      {pickerRowIndex !== null && (
+        <IpadPickerModal
+          ipads={ipads}
+          excludeIds={students.filter((_, rowIndex) => rowIndex !== pickerRowIndex).map(row => row.ipad_device_id).filter(Boolean)}
+          onSelect={ipad => { updateStudent(pickerRowIndex, { ipad_device_id: ipad.id }); setPickerRowIndex(null); }}
+          onClose={() => setPickerRowIndex(null)}
+        />
+      )}
     </div>
   );
 }

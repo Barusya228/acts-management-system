@@ -20,6 +20,7 @@ from app.schemas.schemas import (
     InventoryDeviceUpdate,
     InventoryDeviceResponse,
     InventoryListResponse,
+    SmallEquipmentCatalogCreate,
 )
 
 router = APIRouter()
@@ -73,12 +74,12 @@ def list_small_equipment_catalog(
 
 @router.post("/small-equipment/catalog", status_code=status.HTTP_201_CREATED)
 def create_small_equipment_catalog_item(
-    payload: dict,
+    payload: SmallEquipmentCatalogCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user),
 ):
-    name = str(payload.get("name", "")).strip()
-    model = str(payload.get("model", "")).strip()
+    name = payload.name.strip()
+    model = (payload.model or "").strip()
     if not name:
         raise HTTPException(status_code=422, detail="Название мелкой техники обязательно")
     existing = db.query(SmallEquipmentCatalog).filter(

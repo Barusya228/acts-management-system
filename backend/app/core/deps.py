@@ -1,14 +1,37 @@
-from fastapi import Depends, HTTPException, status
+from datetime import datetime
+
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from uuid import UUID
 from app.core.database import get_db
 from app.core.security import decode_access_token
-from app.db.models import User, UserRole
+from app.db.models import KioskDevice, User, UserRole
 
 security = HTTPBearer()
 
+KIOSK_ACTIVE_STATUS = "ACTIVE"
+
+
+def _validate_kiosk_claim(request: Request, payload: dict, db: Session) -> None:
+    """Kiosk tokens carry a kiosk_id claim; the device must still be enrolled."""
+    kiosk_id = payload.get("kiosk_id")
+    if not kiosk_id:
+        return
+    try:
+        kiosk_uuid = UUID(str(kiosk_id))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Недействительный токен устройства")
+    kiosk = db.query(KioskDevice).filter(KioskDevice.id == kiosk_uuid).first()
+    if not kiosk or kiosk.status != KIOSK_ACTIVE_STATUS:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Устройство подписания отключено администратором")
+    kiosk.last_seen_at = datetime.utcnow()
+    db.commit()
+    request.state.kiosk_device = kiosk
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ) -> User:
@@ -48,7 +71,15 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Inactive user"
         )
-    
+
+    if user.role == UserRole.GUEST:
+        _validate_kiosk_claim(request, payload, db)
+        if getattr(request.state, "kiosk_device", None) is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Требуется зарегистрированное устройство подписания",
+            )
+
     return user
 
 async def get_current_admin_user(

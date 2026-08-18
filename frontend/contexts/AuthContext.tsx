@@ -17,6 +17,7 @@ interface AuthContextType {
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   loginAsGuest: () => Promise<void>;
+  enrollKiosk: (enrollmentCode: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -57,7 +58,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const loginAsGuest = async () => {
-    const res = await api.post('/api/auth/guest-login');
+    // Устройство должно быть привязано администратором: без сохранённого
+    // токена киоска отправляем на страницу привязки.
+    const stored = localStorage.getItem('token');
+    if (!stored) {
+      window.location.href = '/kiosk';
+      return;
+    }
+    api.defaults.headers.common['Authorization'] = `Bearer ${stored}`;
+    try {
+      await fetchUser();
+    } catch {
+      localStorage.removeItem('token');
+      window.location.href = '/kiosk';
+    }
+  };
+
+  const enrollKiosk = async (enrollmentCode: string) => {
+    const res = await api.post('/api/auth/kiosks/enroll', { enrollment_code: enrollmentCode });
     const { access_token } = res.data;
     localStorage.setItem('token', access_token);
     api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
@@ -71,7 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, loginAsGuest, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, loginAsGuest, enrollKiosk, logout }}>
       {children}
     </AuthContext.Provider>
   );

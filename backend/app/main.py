@@ -1,5 +1,5 @@
 import httpx
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api import auth, acts, templates, participants, reminders, analytics, ad_sync, inventory, backups, audit, email_outbox, ipad_acts, ipad_inventory
@@ -44,6 +44,10 @@ async def health():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"])
 async def frontend_proxy(path: str, request: Request):
+    # API-маршруты не проксируются на фронтенд: неизвестный /api/* — это 404,
+    # а не запрос к Next.js (иначе в тестах и при недоступном фронте получаем ConnectError).
+    if path == "api" or path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="Not Found")
     target_url = httpx.URL(f"{FRONTEND_URL}/{path}").copy_with(query=request.url.query.encode("utf-8"))
     headers = {key: value for key, value in request.headers.items() if key.lower() != "host"}
 

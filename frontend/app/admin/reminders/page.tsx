@@ -9,6 +9,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import api from '@/lib/api';
+import { apiErrorMessage } from '@/lib/apiError';
 
 interface Act {
   id: string;
@@ -127,4 +128,4 @@ export default function AdminCommunicationsPage() {
 function Loading() { return <div className="rounded-2xl bg-white p-12 text-center text-sm text-slate-400 shadow-sm">Загрузка коммуникаций...</div>; }
 function Empty({ title, text }: { title: string; text: string }) { return <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center"><p className="font-black text-slate-700">{title}</p><p className="mt-1 text-sm text-slate-400">{text}</p></div>; }
 function Status({ status }: { status: string }) { const returned = status === 'RETURNED'; return <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${returned ? 'bg-slate-200 text-slate-700' : 'bg-emerald-100 text-emerald-700'}`}>{returned ? 'Возвращено' : status.startsWith('RETURN') ? 'Идёт возврат' : 'Выдано'}</span>; }
-function apiErrorMessage(error: unknown, fallback: string): string { const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail; return typeof detail === 'string' ? detail : fallback; }
+

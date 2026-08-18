@@ -47,7 +47,6 @@ function CreateActForm() {
   const [newAccessoryOpen, setNewAccessoryOpen] = useState(false);
   const [newAccessory, setNewAccessory] = useState({ name: '', model: '' });
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [advisoryNote, setAdvisoryNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [devicePickerOpen, setDevicePickerOpen] = useState(false);
   const [devicePickerTarget, setDevicePickerTarget] = useState<'main' | number>('main');
@@ -74,17 +73,26 @@ function CreateActForm() {
 
   const selectedTemplate = templates.find(t => t.id === templateId);
   const selectedDevice = devices.find(d => d.serial_number === deviceSerial);
-  const isIpad = selectedTemplate?.code === 'IPAD';
   const isSingle = selectedTemplate?.code === 'GENERIC_ONE';
 
   useEffect(() => {
     if (!loading && !user) loginAsGuest();
   }, [loading, user, loginAsGuest]);
 
+  // iPad-акты создаются только через специализированный мастер
+  useEffect(() => {
+    if (preselectedCode === 'IPAD') router.replace('/acts/create/ipad');
+  }, [preselectedCode, router]);
+
   useEffect(() => {
     if (user) {
       api.get('/api/templates?is_active=true').then(r => {
-        const list = Array.isArray(r.data) ? r.data : [];
+        const all = Array.isArray(r.data) ? r.data : [];
+        if (preselectedTemplateId && all.find((t: TemplateOption) => t.id === preselectedTemplateId)?.code === 'IPAD') {
+          router.replace('/acts/create/ipad');
+          return;
+        }
+        const list = all.filter((t: TemplateOption) => t.code !== 'IPAD');
         setTemplates(list);
         if (!templateId && preselectedCode && list.length > 0) {
           const found = list.find((t: TemplateOption) => t.code === preselectedCode);
@@ -223,7 +231,6 @@ function CreateActForm() {
         receiver_email: normalized[0].email,
         extra_data_json: {
           recipients: normalized.map(r => ({ participant_id: r.participant_id, full_name: r.full_name, email: r.email })),
-          ...(advisoryNote.trim() ? { advisory_note: advisoryNote.trim() } : {}),
           ...(equipment.length > 0 ? { equipment_list: equipment.filter(e => e.inventory_device_id) } : {}),
           ...(accessories.length > 0 ? { accessories: accessories.map(item => ({ ...item, name: item.name.trim(), model: item.model.trim(), note: item.note.trim() })) } : {}),
         },
@@ -346,7 +353,7 @@ function CreateActForm() {
           </div>
 
           {/* Party1 + Date */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">👤 Кто выдаёт</label>
               <select value={party1ParticipantId} onChange={e => {
@@ -354,7 +361,7 @@ function CreateActForm() {
                 setParty1ParticipantId(e.target.value);
                 setParty1(participant?.full_name || '');
               }}
-                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400">
+                className="min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400">
                 <option value="">Выберите выдающего</option>
                 {participants.filter(p => p.kind === 'IT_MANAGER' || p.kind === 'BOTH').map(p => (
                   <option key={p.id} value={p.id}>{p.full_name}</option>
@@ -364,7 +371,7 @@ function CreateActForm() {
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-500">📅 Дата выдачи</label>
               <input type="date" value={issueDate} onChange={e => setIssueDate(e.target.value)}
-                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" />
+                className="min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" />
             </div>
           </div>
 
@@ -374,20 +381,22 @@ function CreateActForm() {
               <div className="space-y-2">
               {recipients.map((r, i) => (
                 <div key={i} className="relative">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center">
                     <input type="text" value={r.full_name}
                       onChange={e => { updateRecipient(i, 'full_name', e.target.value); setFocusedRecipient(i); }}
                       onFocus={() => { setFocusedRecipient(i); }}
                       onBlur={() => setTimeout(() => setFocusedRecipient(-1), 200)}
                       placeholder="ФИО" autoComplete="off"
-                      className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
-                    <input type="email" value={r.email} onChange={e => updateRecipient(i, 'email', e.target.value)}
-                      placeholder="Email" autoComplete="off"
-                      className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
-                    {recipients.length > 1 && !isSingle && (
-                      <button type="button" onClick={() => removeRecipient(i)}
-                        className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-500">✕</button>
-                    )}
+                      className="min-h-11 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400 md:flex-1" />
+                    <div className="flex items-center gap-2">
+                      <input type="email" value={r.email} onChange={e => updateRecipient(i, 'email', e.target.value)}
+                        placeholder="Email" autoComplete="off"
+                        className="min-h-11 flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                      {recipients.length > 1 && !isSingle && (
+                        <button type="button" onClick={() => removeRecipient(i)}
+                          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500">✕</button>
+                      )}
+                    </div>
                   </div>
                   {focusedRecipient === i && suggestions.length > 0 && (
                     <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
@@ -407,24 +416,15 @@ function CreateActForm() {
             </div>
             {!isSingle && (
             <button type="button" onClick={addRecipient}
-              className="mt-2 rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm text-slate-500 hover:border-blue-400 hover:text-blue-500">
+              className="mt-2 min-h-11 rounded-xl border border-dashed border-slate-300 px-3 py-2 text-sm text-slate-500 hover:border-blue-400 hover:text-blue-500">
               + Добавить получателя
             </button>
             )}
           </div>
 
-          {/* iPad specific */}
-          {isIpad && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">📝 Поле для эдвайзери</label>
-              <textarea rows={2} value={advisoryNote} onChange={e => setAdvisoryNote(e.target.value)}
-                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Advisory note" />
-            </div>
-          )}
-
           {/* Submit */}
           <button type="button" onClick={openConfirmation} disabled={saving}
-            className="w-full rounded-xl bg-slate-900 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50">
+            className="min-h-12 w-full rounded-xl bg-slate-900 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50">
             {saving ? 'Создание...' : '✨ Создать акт'}
           </button>
         </div>
@@ -470,12 +470,6 @@ function CreateActForm() {
                     <dd key={i} className="text-sm text-slate-700">{r.full_name || '...'}</dd>
                   ))}
                 </div>
-                {isIpad && advisoryNote.trim() && (
-                  <div>
-                    <dt className="text-xs text-slate-400">Эдвайзери</dt>
-                    <dd className="text-sm text-slate-700">{advisoryNote}</dd>
-                  </div>
-                )}
                 <div>
                   <dt className="text-xs text-slate-400">Дата</dt>
                   <dd className="text-sm font-semibold text-slate-800">{new Date(issueDate).toLocaleDateString('ru-RU')}</dd>
@@ -550,9 +544,9 @@ function CreateActForm() {
       )}
       {accessoryPickerOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between"><div><h2 className="text-lg font-black">Мелкая техника из инвентаря</h2><p className="text-sm text-slate-500">Выберите существующую позицию или добавьте новую.</p></div><button onClick={() => setAccessoryPickerOpen(false)} className="min-h-11 rounded-xl bg-slate-100 px-4">Закрыть</button></div>
-            <div className="mt-4 max-h-80 space-y-2 overflow-y-auto">{accessoryCatalog.map(item => <button key={item.id} type="button" onClick={() => addAccessoryFromCatalog(item)} className="flex min-h-14 w-full items-center justify-between rounded-xl border px-4 text-left hover:border-blue-400"><span><span className="block font-bold text-slate-800">{item.name}</span><span className="text-sm text-slate-400">{item.model || 'Без модели'}</span></span><span className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white">Добавить</span></button>)}</div>
+          <div className="flex max-h-[90dvh] w-full max-w-2xl flex-col rounded-2xl bg-white p-5 shadow-2xl">
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><h2 className="text-lg font-black">Мелкая техника из инвентаря</h2><p className="text-sm text-slate-500">Выберите существующую позицию или добавьте новую.</p></div><button onClick={() => setAccessoryPickerOpen(false)} className="min-h-11 rounded-xl bg-slate-100 px-4">Закрыть</button></div>
+            <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto">{accessoryCatalog.map(item => <button key={item.id} type="button" onClick={() => addAccessoryFromCatalog(item)} className="flex min-h-14 w-full items-center justify-between rounded-xl border px-4 text-left hover:border-blue-400"><span><span className="block font-bold text-slate-800">{item.name}</span><span className="text-sm text-slate-400">{item.model || 'Без модели'}</span></span><span className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white">Добавить</span></button>)}</div>
             <button type="button" onClick={() => setNewAccessoryOpen(true)} className="mt-4 min-h-12 w-full rounded-xl border-2 border-dashed border-blue-300 font-bold text-blue-700">+ Добавить новую позицию</button>
           </div>
         </div>
@@ -561,7 +555,7 @@ function CreateActForm() {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"><h2 className="text-lg font-black">Новая мелкая техника</h2><div className="mt-4 space-y-2"><input value={newAccessory.name} onChange={e => setNewAccessory({...newAccessory, name:e.target.value})} placeholder="Название *" className="min-h-12 w-full rounded-xl border px-3"/><input value={newAccessory.model} onChange={e => setNewAccessory({...newAccessory, model:e.target.value})} placeholder="Модель" className="min-h-12 w-full rounded-xl border px-3"/></div><div className="mt-5 flex gap-2"><button onClick={createAccessory} className="min-h-12 flex-1 rounded-xl bg-slate-900 font-bold text-white">Добавить и выбрать</button><button onClick={() => setNewAccessoryOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-4">Отмена</button></div></div></div>
       )}
       {confirmOpen && selectedDevice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-blue-600">Проверьте перед созданием</p><h2 className="mt-1 text-xl font-black">Что создаётся</h2><div className="mt-4 space-y-3 rounded-2xl bg-slate-50 p-4"><div><p className="text-xs text-slate-400">Получатель</p><p className="font-bold">{filledRecipients.map(item => item.full_name).join(', ')}</p></div><div><p className="text-xs text-slate-400">Основное устройство</p><p className="font-bold">{selectedDevice.name}</p><p className="text-sm text-slate-500">Инв: {selectedDevice.inventory_number} · ШК: {selectedDevice.barcode}</p></div><div><p className="text-xs text-slate-400">Дополнительные устройства</p><p className="font-semibold">{equipment.filter(item => item.inventory_device_id).length}</p></div><div><p className="text-xs text-slate-400">Мелкая техника</p>{accessories.length ? accessories.map((item,index) => <p key={index} className="text-sm">{item.name}{item.model ? ` · ${item.model}` : ''} · {item.quantity} шт.</p>) : <p className="text-sm text-slate-400">Не добавлена</p>}</div></div><div className="mt-5 flex gap-2"><button disabled={saving} onClick={() => { setConfirmOpen(false); handleSubmit(); }} className="min-h-12 flex-1 rounded-xl bg-blue-600 font-black text-white">{saving ? 'Создание...' : 'Создать и зарезервировать'}</button><button onClick={() => setConfirmOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-4">Вернуться</button></div></div></div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"><div className="flex max-h-[90dvh] w-full max-w-xl flex-col rounded-2xl bg-white p-5 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-blue-600">Проверьте перед созданием</p><h2 className="mt-1 text-xl font-black">Что создаётся</h2><div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto rounded-2xl bg-slate-50 p-4"><div><p className="text-xs text-slate-400">Получатель</p><p className="font-bold">{filledRecipients.map(item => item.full_name).join(', ')}</p></div><div><p className="text-xs text-slate-400">Основное устройство</p><p className="font-bold">{selectedDevice.name}</p><p className="text-sm text-slate-500">Инв: {selectedDevice.inventory_number} · ШК: {selectedDevice.barcode}</p></div><div><p className="text-xs text-slate-400">Дополнительные устройства</p><p className="font-semibold">{equipment.filter(item => item.inventory_device_id).length}</p></div><div><p className="text-xs text-slate-400">Мелкая техника</p>{accessories.length ? accessories.map((item,index) => <p key={index} className="text-sm">{item.name}{item.model ? ` · ${item.model}` : ''} · {item.quantity} шт.</p>) : <p className="text-sm text-slate-400">Не добавлена</p>}</div></div><div className="mt-5 flex gap-2"><button disabled={saving} onClick={() => { setConfirmOpen(false); handleSubmit(); }} className="min-h-12 flex-1 rounded-xl bg-blue-600 font-black text-white">{saving ? 'Создание...' : 'Создать и зарезервировать'}</button><button onClick={() => setConfirmOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-4">Вернуться</button></div></div></div>
       )}
     </div>
   );

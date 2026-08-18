@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: acts_user
-      POSTGRES_PASSWORD: acts_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acts_password}
       POSTGRES_DB: acts_db
     ports:
       - "5432:5432"
@@ -21,8 +21,8 @@ services:
     container_name: acts_backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://acts_user:acts_password@db:5432/acts_db
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      DATABASE_URL: postgresql://acts_user:${POSTGRES_PASSWORD:-acts_password}@db:5432/acts_db
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required - generate with openssl rand -hex 32}"
       CORS_ORIGINS: '["http://localhost:5000"]'
       CORS_ORIGIN_REGEX: '^https?://.+(:\d+)?$'
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5000}
@@ -63,8 +63,8 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.workers.email_outbox_worker"]
     environment:
-      DATABASE_URL: postgresql://acts_user:acts_password@db:5432/acts_db
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      DATABASE_URL: postgresql://acts_user:${POSTGRES_PASSWORD:-acts_password}@db:5432/acts_db
+      SECRET_KEY: "${SECRET_KEY:?SECRET_KEY is required - generate with openssl rand -hex 32}"
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}

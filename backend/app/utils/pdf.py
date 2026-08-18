@@ -251,11 +251,13 @@ def _build_numbered_party_rows(
 def _build_ipad_rows(act_data: dict, extra_data: dict) -> list[list[str]]:
     advisory = extra_data.get("ipad_advisory")
     if isinstance(advisory, dict) and isinstance(advisory.get("students"), list):
+        # В актуальной ревизии показываем только активных учеников:
+        # выбывшие оформлены приложениями и в текущем составе не участвуют.
         return [[
             str(item.get("student_name", "") or ""),
             str(item.get("ipad_tag", "") or "—"),
             str(item.get("imei", "") or item.get("serial_number", "") or "—"),
-        ] for item in advisory["students"] if isinstance(item, dict)]
+        ] for item in advisory["students"] if isinstance(item, dict) and item.get("student_status", "ACTIVE") == "ACTIVE"]
     rows = [[
         str(act_data.get('item_name', '') or ''),
         str(act_data.get('item_serial', '') or '—'),
@@ -657,6 +659,52 @@ def build_act_pdf_v2(
             ipad_rows,
         )
         y -= (table_height + 20)
+
+        # Применённые приложения: основание каждого изменения состава с датами
+        # подписей — актуальная ревизия ссылается на подписанные документы.
+        ipad_advisory_data = extra_data.get("ipad_advisory") if isinstance(extra_data.get("ipad_advisory"), dict) else {}
+        applied_appendices = ipad_advisory_data.get("appendices") or []
+        if isinstance(applied_appendices, list) and applied_appendices:
+            appendix_titles = {
+                'IPAD_REPLACEMENT': 'Замена iPad',
+                'STUDENT_DEPARTURE': 'Выбытие ученика',
+                'STUDENT_ADDITION': 'Добавление ученика',
+                'LATE_RETURN': 'Поздний возврат iPad',
+                'YEAR_END_RETURN': 'Годовой возврат Advisory',
+            }
+
+            def _short_date(value) -> str:
+                try:
+                    from datetime import datetime as _dt
+                    return _dt.fromisoformat(str(value)).strftime('%d.%m.%Y')
+                except (TypeError, ValueError):
+                    return '—'
+
+            block_height_estimate = 20 + len(applied_appendices) * 14
+            if y - block_height_estimate < 100:
+                start_new_page()
+            pdf.setFont(bold_font_name, 10)
+            pdf.drawString(margin_left, y, 'Изменения по приложениям к акту:')
+            y -= 16
+            pdf.setFont(font_name, 9)
+            for appendix_info in applied_appendices:
+                if not isinstance(appendix_info, dict):
+                    continue
+                title = appendix_titles.get(appendix_info.get('operation_type'), str(appendix_info.get('operation_type', '')))
+                student = appendix_info.get('student_name')
+                line = f"Приложение №{appendix_info.get('appendix_number', '?')}: {title}"
+                if student:
+                    line += f" — {student}"
+                line += (
+                    f" (подписи: {appendix_info.get('responsible_name', '—')} {_short_date(appendix_info.get('responsible_signed_at'))}, "
+                    f"{appendix_info.get('issuer_name', '—')} {_short_date(appendix_info.get('issuer_signed_at'))})"
+                )
+                if y < 100:
+                    start_new_page()
+                    pdf.setFont(font_name, 9)
+                pdf.drawString(margin_left, y, line)
+                y -= 14
+            y -= 8
     else:
         table = Table(table_data, colWidths=[40, margin_right - margin_left - 180, 140])
         table.setStyle(TableStyle([

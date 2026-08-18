@@ -1,0 +1,11 @@
+services:
+  backend:
+    volumes:
+      # Fedora SELinux: Z gives the project containers private access to
+      # application files without disabling SELinux globally.
+      - ./backend/storage:/app/storage:Z
+      - ${PDF_BACKUP_HOST_PATH:-./backend/pdf-backups}:/app/pdf-backups:Z
+
+  email-worker:
+    volumes:
+      - ./backend/storage:/app/storage:ro,Z

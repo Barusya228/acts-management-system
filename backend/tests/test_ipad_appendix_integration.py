@@ -99,6 +99,64 @@ def ipad_data():
     db.close()
 
 
+def test_replacement_creates_new_revision_with_new_tag(ipad_data):
+    db, user, issuer, responsible, act, assignment, old_device, new_device = ipad_data
+    initial_version = act.current_version
+    appendix_data = ipad_api.create_replacement_appendix(
+        act.id,
+        assignment.id,
+        IpadAppendixReplacementCreate(
+            responsible_participant_id=responsible.id,
+            replacement_date=date.today(),
+            reason="CRACKED_SCREEN",
+            ipad_device_id=new_device.id,
+        ),
+        db,
+        user,
+    )
+    signature = _signature()
+    ipad_api.sign_appendix(
+        act.id,
+        UUID(appendix_data["id"]),
+        "responsible",
+        IpadAppendixSignatureRequest(participant_id=responsible.id, signature_data=signature),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+    ipad_api.sign_appendix(
+        act.id,
+        UUID(appendix_data["id"]),
+        "issuer",
+        IpadAppendixSignatureRequest(participant_id=issuer.id, signature_data=signature),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+    db.refresh(act)
+    db.refresh(assignment)
+    db.refresh(old_device)
+    db.refresh(new_device)
+    # Замена применена: назначение указывает на новый iPad, старый — на обслуживание.
+    assert assignment.ipad_tag == new_device.tag
+    assert new_device.status == "ISSUED"
+    assert old_device.status == "MAINTENANCE"
+    # Создана новая ревизия основного акта со снапшотом нового состава.
+    assert act.current_version == initial_version + 1
+    from app.db.models import ActVersion
+    version = db.query(ActVersion).filter(
+        ActVersion.act_id == act.id,
+        ActVersion.version_number == act.current_version,
+    ).one()
+    assert version.pdf_file_id is not None
+    assert "Замена iPad" in (version.change_note or "")
+    students = version.data_json["extra_data_json"]["ipad_advisory"]["students"]
+    assert students[0]["ipad_tag"] == new_device.tag
+    # PDF приложения сгенерирован.
+    appendix = db.query(IpadActAppendix).filter(IpadActAppendix.id == UUID(appendix_data["id"])).one()
+    assert appendix.pdf_storage_path
+
+
 def test_cancel_replacement_appendix_releases_reserved_ipad(ipad_data):
     db, user, _issuer, responsible, act, assignment, _old_device, new_device = ipad_data
     appendix = ipad_api.create_replacement_appendix(
@@ -107,8 +165,7 @@ def test_cancel_replacement_appendix_releases_reserved_ipad(ipad_data):
         IpadAppendixReplacementCreate(
             responsible_participant_id=responsible.id,
             replacement_date=date.today(),
-            reason="Damaged",
-            old_condition="Broken screen",
+            reason="CRACKED_SCREEN",
             ipad_device_id=new_device.id,
         ),
         db,
@@ -131,8 +188,7 @@ def test_year_end_return_is_applied_after_both_signatures(ipad_data, monkeypatch
             returned_at=date.today(),
             items=[IpadYearEndReturnItem(
                 assignment_id=assignment.id,
-                device_result_status="AVAILABLE",
-                condition="Good",
+                condition="OK",
             )],
         ),
         db,

@@ -66,7 +66,7 @@ Seed-скрипт backend создаёт таких пользователей:
 
 - `guest@example.com` / `guest123`
 
-Он используется backend-эндпоинтом `POST /api/auth/guest-login`.
+Он используется как служебный подписант для привязанных устройств (`POST /api/auth/kiosks/enroll`). Открытый гостевой вход отключён: планшет должен быть зарегистрирован администратором в разделе «Устройства».
 
 ## Жизненный цикл акта
 
@@ -179,6 +179,13 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 ```bash
 docker compose up --build -d
 ```
+
+> **Важно:** фронтенд собирается внутрь Docker-образа backend на этапе сборки.
+> После любых изменений в `frontend/` обязательно запускайте `docker compose up --build -d` —
+> `docker compose up -d` без `--build` поднимет старый образ со старым фронтендом.
+> Если контейнеры были созданы под другим именем compose-проекта (см. `docker ps` — label
+> `com.docker.compose.project`), используйте тот же проект: `docker compose -p <project> up --build -d`,
+> иначе получите второй набор контейнеров с пустой базой.
 
 4. Примените миграции и заполните начальные данные:
 
@@ -303,7 +310,9 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 ### Auth
 
 - `POST /api/auth/login` - вход по `username` и паролю
-- `POST /api/auth/guest-login` - гостевой вход
+- `POST /api/auth/kiosks` - создать код привязки устройства (админ)
+- `POST /api/auth/kiosks/enroll` - привязать планшет по коду
+- `GET /api/auth/kiosks` / `DELETE /api/auth/kiosks/{id}` - список и отзыв устройств (админ)
 - `GET /api/auth/me` - текущий пользователь
 
 ### Acts

@@ -10,7 +10,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
-    role: str = "STAFF"
+    role: str = "GUEST"
 
 class UserResponse(BaseModel):
     id: UUID4
@@ -35,6 +35,19 @@ class TokenData(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class KioskCreateRequest(BaseModel):
+    name: str
+
+
+class KioskEnrollRequest(BaseModel):
+    enrollment_code: str
+
+
+class SmallEquipmentCatalogCreate(BaseModel):
+    name: str
+    model: Optional[str] = None
 
 # Template schemas
 class TemplateBase(BaseModel):
@@ -176,29 +189,35 @@ class IpadAdvisoryActCreate(BaseModel):
     students: list[IpadStudentCreate]
 
 
+# Классификация повреждений iPad (причина замены / состояние при возврате).
+IpadDamageReason = Literal["BENT_BODY", "CRACKED_SCREEN", "LOST", "WEAK_BATTERY", "DAMAGED_DISPLAY"]
+# Состояние iPad при возврате: OK или одно из повреждений.
+IpadReturnCondition = Literal["OK", "BENT_BODY", "CRACKED_SCREEN", "LOST", "WEAK_BATTERY", "DAMAGED_DISPLAY"]
+# При выбытии iPad может быть ещё не сдан — тогда ожидается поздний возврат.
+IpadDepartureCondition = Literal["OK", "BENT_BODY", "CRACKED_SCREEN", "LOST", "WEAK_BATTERY", "DAMAGED_DISPLAY", "NOT_RETURNED"]
+
+
 class IpadStudentDepartureRequest(BaseModel):
     departure_date: date
-    reason: str
-    ipad_returned: bool
-    return_condition: Optional[str] = None
+    return_condition: IpadDepartureCondition
     note: Optional[str] = None
 
 
 class IpadReplacementRequest(BaseModel):
     replacement_date: date
-    reason: str
-    old_condition: str
+    reason: IpadDamageReason
     ipad_device_id: UUID4
     note: Optional[str] = None
 
 
 class IpadAppendixReplacementCreate(IpadReplacementRequest):
     responsible_participant_id: UUID4
+    issuer_participant_id: Optional[UUID4] = None
 
 
 class IpadAppendixDepartureCreate(IpadStudentDepartureRequest):
     responsible_participant_id: UUID4
-    device_result_status: Literal["AVAILABLE", "MAINTENANCE", "RETIRED", "RETURN_PENDING"]
+    issuer_participant_id: Optional[UUID4] = None
 
 
 class IpadAppendixStudentAddCreate(BaseModel):
@@ -212,16 +231,15 @@ class IpadAppendixStudentAddCreate(BaseModel):
 
 class IpadAppendixLateReturnCreate(BaseModel):
     responsible_participant_id: UUID4
+    issuer_participant_id: Optional[UUID4] = None
     returned_at: date
-    device_result_status: Literal["AVAILABLE", "MAINTENANCE", "RETIRED"]
-    condition: str
+    condition: IpadReturnCondition
     note: Optional[str] = None
 
 
 class IpadYearEndReturnItem(BaseModel):
     assignment_id: UUID4
-    device_result_status: Literal["AVAILABLE", "MAINTENANCE", "RETIRED"]
-    condition: str
+    condition: IpadReturnCondition
 
 
 class IpadAppendixYearEndReturnCreate(BaseModel):
@@ -250,7 +268,7 @@ class IpadDeviceUpdate(BaseModel):
     model: Optional[str] = None
     tag: Optional[str] = None
     serial_number: Optional[str] = None
-    status: Optional[Literal["AVAILABLE", "MAINTENANCE", "RETIRED"]] = None
+    status: Optional[Literal["AVAILABLE", "MAINTENANCE", "RETIRED", "RETURN_PENDING"]] = None
     notes: Optional[str] = None
 
 

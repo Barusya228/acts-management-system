@@ -4,20 +4,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import Act, EmailOutbox
+from app.services.recipients import act_recipients
 
 
 ISSUE_COMPLETED = "ISSUE_COMPLETED"
 RETURN_COMPLETED = "RETURN_COMPLETED"
 ACT_CREATED = "ACT_CREATED"
 REMINDER = "REMINDER"
-
-
-def _recipients(act: Act) -> list[dict]:
-    extra_data = act.extra_data_json if isinstance(act.extra_data_json, dict) else {}
-    recipients = extra_data.get("recipients")
-    if isinstance(recipients, list) and recipients:
-        return [item for item in recipients if isinstance(item, dict)]
-    return [{"participant_id": None, "full_name": act.party2_name, "email": act.receiver_email}]
 
 
 def _render(act: Act, kind: str, recipient_name: str) -> tuple[str, str]:
@@ -119,7 +112,7 @@ def enqueue_act_emails(
     dedupe_suffix: str | None = None,
 ) -> int:
     queued = 0
-    for recipient in _recipients(act):
+    for recipient in act_recipients(act):
         if pending_only and (recipient.get("signed_at") or recipient.get("return_signed_at")):
             continue
         email = str(recipient.get("email", "")).strip().lower()

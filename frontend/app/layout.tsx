@@ -1,3 +1,4 @@
+import type { Viewport } from 'next';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 import './globals.css';
@@ -5,6 +6,14 @@ import './globals.css';
 export const metadata = {
   title: 'Acts Digitalization',
   description: 'System for digitalizing equipment issuance acts',
+};
+
+// viewport-fit=cover — чтобы sticky-хедеры и полноэкранные модалки корректно
+// работали на телефонах с вырезом (safe-area, см. globals.css).
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({

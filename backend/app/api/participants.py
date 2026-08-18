@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from typing import Optional, List
@@ -28,6 +28,7 @@ class BulkParticipantCreate(BaseModel):
 
 @router.get("", response_model=list[ParticipantResponse])
 async def list_participants(
+    request: Request,
     kind: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     employment_status: Optional[str] = Query(None),
@@ -59,7 +60,15 @@ async def list_participants(
             raise HTTPException(status_code=422, detail="Некорректный статус участника")
         query = query.filter(Participant.employment_status == requested_status)
 
-    return query.order_by(Participant.full_name.asc()).all()
+    participants = query.order_by(Participant.full_name.asc()).all()
+
+    # Киоск получает только поля церемонии подписания:
+    # без AD GUID и служебных дат синхронизации.
+    if getattr(request.state, "kiosk_device", None) is not None:
+        for participant in participants:
+            participant.ad_guid = None
+            participant.last_synced_at = None
+    return participants
 
 
 @router.post("", response_model=ParticipantResponse, status_code=status.HTTP_201_CREATED)

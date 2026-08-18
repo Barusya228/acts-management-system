@@ -1,3 +1,5 @@
+import hashlib
+import mimetypes
 from datetime import datetime
 from uuid import UUID
 
@@ -5,24 +7,28 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
-from app.api.acts import (
+from app.services.act_shared import (
     PARTY1_PARTICIPANT_ID_KEY,
     RECIPIENTS_KEY,
-    _build_party2_summary,
-    _get_primary_recipient_email,
-    _get_selectable_participant,
-    _require_active_template,
+    build_party2_summary as _build_party2_summary,
+    get_primary_recipient_email as _get_primary_recipient_email,
+    get_selectable_participant as _get_selectable_participant,
+    require_active_template as _require_active_template,
+    validate_signature as _validate_signature,
 )
 from app.core.database import get_db
 from app.core.deps import get_current_guest_or_admin_user
+from app.db.states import ACTIVE_IPAD_ASSIGNMENT_STATUSES
 from app.db.models import (
     Act,
     ActStatus,
     ActVersion,
+    FileAsset,
+    FileAssetKind,
     IpadAdvisoryAct,
     IpadActAppendix,
-    IpadAssignmentEvent,
     IpadDevice,
     IpadStudentAssignment,
     Participant,
@@ -33,8 +39,6 @@ from app.db.models import (
 )
 from app.schemas.schemas import (
     IpadAdvisoryActCreate,
-    IpadReplacementRequest,
-    IpadStudentDepartureRequest,
     IpadAppendixReplacementCreate,
     IpadAppendixDepartureCreate,
     IpadAppendixStudentAddCreate,
@@ -55,10 +59,91 @@ from app.services.ipad_appendix_service import (
     serialize_appendix,
 )
 from app.utils.storage import resolve_storage_path
-from app.api.acts import _validate_signature
 
 
 router = APIRouter()
+
+# Классификация повреждений iPad: человекочитаемые подписи (для PDF/аудита).
+IPAD_DAMAGE_LABELS = {
+    "OK": "Всё в порядке",
+    "BENT_BODY": "Погнутый корпус",
+    "CRACKED_SCREEN": "Треснутый экран",
+    "LOST": "Потерян",
+    "WEAK_BATTERY": "Слабый аккумулятор",
+    "DAMAGED_DISPLAY": "Повреждена матрица",
+    "NOT_RETURNED": "iPad не сдан (ожидается возврат)",
+}
+
+
+def _device_status_for_condition(condition: str) -> str:
+    """Статус устройства по классификации состояния: OK → снова в выдачу,
+    потерян → списан, любое повреждение → на обслуживание."""
+    if condition == "OK":
+        return "AVAILABLE"
+    if condition == "LOST":
+        return "RETIRED"
+    return "MAINTENANCE"
+
+
+def _register_signature_asset(db: Session, act: Act, kind: FileAssetKind, relative_path: str) -> None:
+    """Регистрирует файл подписи приложения как последнюю подпись акта данного вида."""
+    absolute = resolve_storage_path(relative_path)
+    if not absolute.is_file():
+        return
+    content = absolute.read_bytes()
+    db.add(FileAsset(
+        act_id=act.id,
+        kind=kind,
+        storage_path=relative_path,
+        mime_type=mimetypes.guess_type(str(absolute))[0] or "image/png",
+        size_bytes=len(content),
+        sha256=hashlib.sha256(content).hexdigest(),
+    ))
+
+
+def _sync_act_signatures_from_appendix(db: Session, act: Act, appendix: IpadActAppendix) -> None:
+    """Подписи применённого приложения становятся подписями текущей ревизии акта.
+
+    PDF ревизии берёт подпись IT из последнего FileAsset(SIGNATURE_PARTY1),
+    а подписи ответственных — из recipients[].signature_file_path. Обновляем
+    оба источника, чтобы актуальная ревизия несла свежие подписи сторон.
+    """
+    if appendix.issuer_signature_path:
+        _register_signature_asset(db, act, FileAssetKind.SIGNATURE_PARTY1, appendix.issuer_signature_path)
+    if not appendix.responsible_signature_path:
+        return
+    _register_signature_asset(db, act, FileAssetKind.SIGNATURE_PARTY2, appendix.responsible_signature_path)
+    extra = dict(act.extra_data_json or {})
+    recipients = extra.get(RECIPIENTS_KEY)
+    if not isinstance(recipients, list):
+        return
+    signed_at = appendix.responsible_signed_at.isoformat() if appendix.responsible_signed_at else datetime.utcnow().isoformat()
+    for recipient in recipients:
+        if isinstance(recipient, dict) and str(recipient.get("participant_id")) == str(appendix.responsible_participant_id):
+            recipient["signature_file_path"] = appendix.responsible_signature_path
+            recipient["signed_at"] = signed_at
+    act.extra_data_json = extra
+    flag_modified(act, "extra_data_json")
+
+
+def _appendix_change_note(appendix: IpadActAppendix) -> str:
+    """Человекочитаемое описание ревизии по применённому приложению."""
+    payload = appendix.payload_json or {}
+    prefix = f"Приложение №{appendix.appendix_number}"
+    operation = appendix.operation_type
+    if operation == "IPAD_REPLACEMENT":
+        old_tag = (payload.get("old_ipad") or {}).get("tag", "?")
+        new_tag = (payload.get("new_ipad") or {}).get("tag", "?")
+        return f"{prefix}: Замена iPad — {payload.get('student_name', '')} (Tag {old_tag} → {new_tag})"
+    if operation == "STUDENT_DEPARTURE":
+        return f"{prefix}: Выбытие ученика — {payload.get('student_name', '')}"
+    if operation == "STUDENT_ADDITION":
+        return f"{prefix}: Добавление ученика — {payload.get('student_name', '')}"
+    if operation == "LATE_RETURN":
+        return f"{prefix}: Поздний возврат iPad — {payload.get('student_name', '')}"
+    if operation == "YEAR_END_RETURN":
+        return f"{prefix}: Годовой возврат Advisory завершён"
+    return f"{prefix}: {operation}"
 
 
 def _serialize(act: Act) -> dict:
@@ -97,7 +182,12 @@ def _serialize(act: Act) -> dict:
     }
 
 
-def _appendix_participants(db: Session, act: Act, responsible_id: UUID) -> tuple[Participant, Participant]:
+def _appendix_participants(
+    db: Session,
+    act: Act,
+    responsible_id: UUID,
+    issuer_id: UUID | None = None,
+) -> tuple[Participant, Participant]:
     responsible_ids = {
         str(item.get("participant_id"))
         for item in (act.extra_data_json or {}).get(RECIPIENTS_KEY, [])
@@ -106,8 +196,14 @@ def _appendix_participants(db: Session, act: Act, responsible_id: UUID) -> tuple
     if str(responsible_id) not in responsible_ids:
         raise HTTPException(status_code=422, detail="Выберите ответственное лицо из основного акта")
     responsible = db.query(Participant).filter(Participant.id == responsible_id).first()
-    issuer_id = (act.extra_data_json or {}).get(PARTY1_PARTICIPANT_ID_KEY)
-    issuer = db.query(Participant).filter(Participant.id == issuer_id).first()
+    if issuer_id is not None:
+        # IT-сотрудник, оформляющий операцию, выбирается из справочника выдающих.
+        issuer = _get_selectable_participant(
+            db, issuer_id, {ParticipantKind.IT_MANAGER, ParticipantKind.BOTH}, "выдающего"
+        )
+    else:
+        act_issuer_id = (act.extra_data_json or {}).get(PARTY1_PARTICIPANT_ID_KEY)
+        issuer = db.query(Participant).filter(Participant.id == act_issuer_id).first()
     if not responsible or not issuer:
         raise HTTPException(status_code=409, detail="Подписанты приложения не найдены")
     return responsible, issuer
@@ -318,16 +414,16 @@ def create_replacement_appendix(
     new_device = db.query(IpadDevice).filter(IpadDevice.id == payload.ipad_device_id).with_for_update().first()
     if not assignment or not new_device or new_device.status != "AVAILABLE":
         raise HTTPException(status_code=409, detail="Ученик или новый iPad недоступен")
-    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id)
+    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id, payload.issuer_participant_id)
     old_device = assignment.ipad_device
     new_device.status = "RESERVED"
     appendix = _create_appendix(db, act, "IPAD_REPLACEMENT", responsible, issuer, {
         "assignment_id": str(assignment.id),
         "student_name": assignment.student_name,
         "replacement_date": payload.replacement_date.isoformat(),
-        "reason": payload.reason.strip(),
-        "old_condition": payload.old_condition.strip(),
-        "old_result_status": "MAINTENANCE",
+        "reason": payload.reason,
+        "reason_label": IPAD_DAMAGE_LABELS.get(payload.reason, payload.reason),
+        "old_result_status": _device_status_for_condition(payload.reason),
         "old_device_id": str(old_device.id),
         "old_ipad": {"model": old_device.model, "tag": old_device.tag, "serial_number": old_device.serial_number},
         "new_device_id": str(new_device.id),
@@ -357,17 +453,19 @@ def create_departure_appendix(
     ).with_for_update().first()
     if not assignment:
         raise HTTPException(status_code=404, detail="Активный ученик не найден")
-    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id)
-    result_status = payload.device_result_status if payload.ipad_returned else "RETURN_PENDING"
+    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id, payload.issuer_participant_id)
+    # NOT_RETURNED — ученик выбыл, но iPad ещё не сдан: устройство переходит
+    # в ожидание позднего возврата, иначе результат определяется состоянием.
+    ipad_returned = payload.return_condition != "NOT_RETURNED"
     appendix = _create_appendix(db, act, "STUDENT_DEPARTURE", responsible, issuer, {
         "assignment_id": str(assignment.id),
         "device_id": str(assignment.ipad_device_id),
         "student_name": assignment.student_name,
         "departure_date": payload.departure_date.isoformat(),
-        "reason": payload.reason.strip(),
-        "ipad_returned": payload.ipad_returned,
+        "ipad_returned": ipad_returned,
         "return_condition": payload.return_condition,
-        "device_result_status": result_status,
+        "return_condition_label": IPAD_DAMAGE_LABELS.get(payload.return_condition, payload.return_condition),
+        "device_result_status": _device_status_for_condition(payload.return_condition) if ipad_returned else "RETURN_PENDING",
         "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
         "note": payload.note,
     }, current_user)
@@ -428,14 +526,15 @@ def create_late_return_appendix(
     ).with_for_update().first()
     if not act or not act.ipad_profile or not assignment:
         raise HTTPException(status_code=404, detail="Ожидающий возврата iPad не найден")
-    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id)
+    responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id, payload.issuer_participant_id)
     appendix = _create_appendix(db, act, "LATE_RETURN", responsible, issuer, {
         "assignment_id": str(assignment.id),
         "device_id": str(assignment.ipad_device_id),
         "student_name": assignment.student_name,
         "returned_at": payload.returned_at.isoformat(),
-        "device_result_status": payload.device_result_status,
-        "condition": payload.condition.strip(),
+        "condition": payload.condition,
+        "condition_label": IPAD_DAMAGE_LABELS.get(payload.condition, payload.condition),
+        "device_result_status": _device_status_for_condition(payload.condition),
         "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
         "note": payload.note,
     }, current_user)
@@ -458,7 +557,7 @@ def create_year_end_return_appendix(
     ensure_no_pending_appendix(db, act.id)
     assignments = db.query(IpadStudentAssignment).filter(
         IpadStudentAssignment.act_id == act.id,
-        IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
+        IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES),
     ).with_for_update().all()
     if any(item.student_status != "ACTIVE" or item.status != "ISSUED" for item in assignments):
         raise HTTPException(status_code=409, detail="Сначала завершите все ожидающие и поздние возвраты iPad")
@@ -473,16 +572,14 @@ def create_year_end_return_appendix(
     items = []
     for assignment in assignments:
         result = supplied[str(assignment.id)]
-        condition = result.condition.strip()
-        if not condition:
-            raise HTTPException(status_code=422, detail=f"Укажите состояние iPad ученика {assignment.student_name}")
         items.append({
             "assignment_id": str(assignment.id),
             "device_id": str(assignment.ipad_device_id),
             "student_name": assignment.student_name,
             "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
-            "device_result_status": result.device_result_status,
-            "condition": condition,
+            "device_result_status": _device_status_for_condition(result.condition),
+            "condition": result.condition,
+            "condition_label": IPAD_DAMAGE_LABELS.get(result.condition, result.condition),
         })
     appendix = _create_appendix(db, act, "YEAR_END_RETURN", responsible, issuer, {
         "returned_at": payload.returned_at.isoformat(),
@@ -527,8 +624,13 @@ def sign_appendix(
     if party == "issuer":
         apply_appendix(db, appendix, current_user)
         create_appendix_pdf(appendix, appendix.act)
+        # Подписи приложения переносятся в акт: актуальная ревизия подписана
+        # теми, кто оформил изменение, а не только исходными подписями выдачи.
+        _sync_act_signatures_from_appendix(db, act, appendix)
+        # Каждое применённое приложение порождает новую ревизию основного акта:
+        # старый PDF остаётся в истории, актуальный отражает текущий состав iPad.
+        version, pdf_asset = _add_event_version(db, act, current_user, _appendix_change_note(appendix))
         if appendix.operation_type == "YEAR_END_RETURN":
-            version, pdf_asset = _add_event_version(db, act, current_user, "Годовой возврат Advisory завершён")
             record_audit(db, current_user, "ACT", act.id, "IPAD_YEAR_END_RETURN_COMPLETED", {"version": act.current_version})
     record_audit(db, current_user, "IPAD_APPENDIX", appendix.id, f"IPAD_APPENDIX_{party.upper()}_SIGNED")
     db.commit()
@@ -567,127 +669,6 @@ def download_appendix_pdf(
     if not appendix or not appendix.pdf_storage_path:
         raise HTTPException(status_code=404, detail="PDF приложения не найден")
     path = resolve_storage_path(appendix.pdf_storage_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл PDF приложения отсутствует в хранилище")
     return FileResponse(path, media_type="application/pdf", filename=f"appendix_{appendix.appendix_number}.pdf")
-
-
-@router.post("/{act_id}/students/{assignment_id}/departure")
-def record_student_departure(
-    act_id: UUID,
-    assignment_id: UUID,
-    payload: IpadStudentDepartureRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_guest_or_admin_user),
-):
-    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
-    if act:
-        ensure_no_pending_appendix(db, act.id)
-    assignment = db.query(IpadStudentAssignment).filter(
-        IpadStudentAssignment.id == assignment_id,
-        IpadStudentAssignment.act_id == act_id,
-    ).with_for_update().first()
-    if not act or not act.ipad_profile or not assignment:
-        raise HTTPException(status_code=404, detail="Назначение ученика не найдено")
-    if act.status != ActStatus.COMPLETED:
-        raise HTTPException(status_code=409, detail="Выбытие оформляется только в действующем подписанном акте")
-    if assignment.student_status != "ACTIVE":
-        raise HTTPException(status_code=409, detail="Ученик уже выбыл")
-    assignment.student_status = "DEPARTED"
-    assignment.status = "RETURNED" if payload.ipad_returned else "RETURN_PENDING"
-    assignment.returned_at = datetime.utcnow() if payload.ipad_returned else None
-    device = db.query(IpadDevice).filter(IpadDevice.id == assignment.ipad_device_id).with_for_update().first()
-    if device:
-        if payload.ipad_returned:
-            condition = (payload.return_condition or "").strip().casefold()
-            device.status = "MAINTENANCE" if condition and condition not in {"исправен", "хорошее", "рабочее"} else "AVAILABLE"
-        else:
-            device.status = "RETURN_PENDING"
-    event = IpadAssignmentEvent(
-        assignment_id=assignment.id,
-        event_type="STUDENT_DEPARTED",
-        data_json={
-            "departure_date": payload.departure_date.isoformat(),
-            "reason": payload.reason.strip(),
-            "ipad_returned": payload.ipad_returned,
-            "return_condition": payload.return_condition,
-        },
-        note=payload.note,
-        created_by=current_user.id,
-    )
-    db.add(event)
-    db.flush()
-    version, pdf_asset = _add_event_version(db, act, current_user, f"Выбытие ученика: {assignment.student_name}")
-    record_audit(db, current_user, "ACT", act.id, "IPAD_STUDENT_DEPARTED", {"assignment_id": str(assignment.id)})
-    db.commit()
-    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
-    db.refresh(act)
-    return _serialize(act)
-
-
-@router.post("/{act_id}/students/{assignment_id}/replacement")
-def replace_student_ipad(
-    act_id: UUID,
-    assignment_id: UUID,
-    payload: IpadReplacementRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_guest_or_admin_user),
-):
-    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
-    if act:
-        ensure_no_pending_appendix(db, act.id)
-    assignment = db.query(IpadStudentAssignment).filter(
-        IpadStudentAssignment.id == assignment_id,
-        IpadStudentAssignment.act_id == act_id,
-    ).with_for_update().first()
-    if not act or not act.ipad_profile or not assignment:
-        raise HTTPException(status_code=404, detail="Назначение ученика не найдено")
-    if act.status != ActStatus.COMPLETED or assignment.student_status != "ACTIVE" or assignment.status != "ISSUED":
-        raise HTTPException(status_code=409, detail="Замена доступна только для активного ученика с выданным iPad")
-    new_device = db.query(IpadDevice).filter(IpadDevice.id == payload.ipad_device_id).with_for_update().first()
-    old_device = db.query(IpadDevice).filter(IpadDevice.id == assignment.ipad_device_id).with_for_update().first()
-    if not new_device or new_device.status != "AVAILABLE":
-        raise HTTPException(status_code=409, detail="Новый iPad недоступен")
-    old = {
-        "ipad_name": assignment.ipad_name,
-        "ipad_model": assignment.ipad_model,
-        "ipad_tag": assignment.ipad_tag,
-        "serial_number": assignment.serial_number,
-        "imei": assignment.imei,
-        "condition": payload.old_condition,
-    }
-    if old_device:
-        old_device.status = "MAINTENANCE" if payload.old_condition.strip() else "AVAILABLE"
-    new_device.status = "ISSUED"
-    assignment.ipad_device_id = new_device.id
-    assignment.ipad_name = new_device.device_name
-    assignment.ipad_model = new_device.model
-    assignment.ipad_tag = new_device.tag
-    assignment.serial_number = new_device.serial_number
-    assignment.imei = None
-    event = IpadAssignmentEvent(
-        assignment_id=assignment.id,
-        event_type="IPAD_REPLACED",
-        data_json={
-            "replacement_date": payload.replacement_date.isoformat(),
-            "reason": payload.reason.strip(),
-            "old": old,
-            "new": {
-                "ipad_name": assignment.ipad_name,
-                "ipad_model": assignment.ipad_model,
-                "ipad_tag": assignment.ipad_tag,
-                "serial_number": assignment.serial_number,
-                "imei": assignment.imei,
-            },
-        },
-        note=payload.note,
-        created_by=current_user.id,
-    )
-    db.add(event)
-    db.flush()
-    version, pdf_asset = _add_event_version(db, act, current_user, f"Замена iPad: {assignment.student_name}")
-    record_audit(db, current_user, "ACT", act.id, "IPAD_REPLACED", {"assignment_id": str(assignment.id), "old_tag": old["ipad_tag"], "new_tag": new_device.tag})
-    db.commit()
-    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
-    db.refresh(act)
-    return _serialize(act)

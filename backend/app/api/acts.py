@@ -1,12 +1,13 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status, Query
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
 import shutil
 from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_admin_user, get_current_guest_or_admin_user
+from app.db.states import ACTIVE_IPAD_ASSIGNMENT_STATUSES
 from app.db.models import (
     Act,
     ActVersion,
@@ -30,6 +31,16 @@ from app.db.models import (
 )
 from app.schemas.schemas import ActCreate, ActUpdate, ActResponse, ActListResponse, ManualFinalEmailRequest, SignatureRequest, ActVersionResponse, ReturnStartRequest
 from app.services.pdf_service import build_act_snapshot, create_pdf_asset_for_version
+from app.services.recipients import extract_recipients
+from app.services.act_shared import (
+    PARTY1_PARTICIPANT_ID_KEY,
+    RECIPIENTS_KEY,
+    build_party2_summary,
+    get_primary_recipient_email,
+    get_selectable_participant,
+    require_active_template,
+    validate_signature,
+)
 from app.services.pdf_backup_service import backup_pdf_by_ids
 from app.services.audit_service import record_audit
 from app.services.email_outbox_service import (
@@ -40,6 +51,13 @@ from app.services.email_outbox_service import (
 from app.utils.storage import resolve_storage_path, save_data_url_file, validate_signature_data_url
 
 router = APIRouter()
+
+
+def _kiosk_audit_context(request: Request | None) -> dict:
+    kiosk = getattr(request.state, "kiosk_device", None) if request is not None else None
+    if not kiosk:
+        return {}
+    return {"kiosk_id": str(kiosk.id), "kiosk_name": kiosk.name}
 
 
 RESERVED_ACT_FIELDS = {
@@ -53,8 +71,6 @@ RESERVED_ACT_FIELDS = {
 
 EQUIPMENT_LIST_KEY = "equipment_list"
 ACCESSORIES_KEY = "accessories"
-RECIPIENTS_KEY = "recipients"
-PARTY1_PARTICIPANT_ID_KEY = "party1_participant_id"
 INVENTORY_CATEGORY_KEY = "inventory_category"
 IPAD_ADVISORY_KEY = "advisory_note"
 
@@ -103,25 +119,8 @@ def _normalize_recipients(recipients: object, preserve_signature_state: bool = T
 
 
 def _extract_recipients(extra_data: Optional[dict], fallback_name: str, fallback_email: str) -> list[dict]:
-    payload = extra_data or {}
-    recipients = _normalize_recipients(payload.get(RECIPIENTS_KEY))
-    if recipients:
-        return recipients
-
-    fallback_name = (fallback_name or "").strip()
-    fallback_email = (fallback_email or "").strip()
-    if not fallback_name and not fallback_email:
-        return []
-
-    return [{
-        "participant_id": None,
-        "full_name": fallback_name,
-        "email": fallback_email,
-        "signed_at": None,
-        "signature_file_path": None,
-        "return_signed_at": None,
-        "return_signature_file_path": None,
-    }]
+    """Чтение получателей делегировано доменному модулю recipients."""
+    return extract_recipients(extra_data, fallback_name, fallback_email)
 
 
 def _manual_email_recipients(db: Session, act: Act) -> list[dict]:
@@ -211,20 +210,9 @@ def _manual_email_history(db: Session, act_id: UUID) -> list[dict]:
     return result
 
 
-def _build_party2_summary(recipients: list[dict]) -> str:
-    if not recipients:
-        return ""
-    if len(recipients) == 1:
-        return recipients[0]["full_name"]
-    return f"{recipients[0]['full_name']} и еще {len(recipients) - 1}"
-
-
-def _get_primary_recipient_email(recipients: list[dict]) -> str:
-    for recipient in recipients:
-        email = str(recipient.get("email", "")).strip()
-        if email:
-            return email
-    return ""
+# Делегировано в app.services.act_shared; алиасы сохраняют внутренний API модуля.
+_build_party2_summary = build_party2_summary
+_get_primary_recipient_email = get_primary_recipient_email
 
 
 def _inventory_category_for_serial(db: Session, serial_number: str | None) -> str | None:
@@ -354,12 +342,7 @@ def _transition_act_devices(db: Session, act: Act, target_status: str) -> None:
             device.assigned_to = None
 
 
-def _require_active_template(template: Template) -> None:
-    if not template.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Выбранный шаблон отключён и недоступен для новых актов",
-        )
+_require_active_template = require_active_template
 
 
 def _normalize_accessories(value: object) -> list[dict]:
@@ -429,39 +412,7 @@ def _transition_ipad_assignments(db: Session, act: Act, target_status: str) -> N
             assignment.returned_at = now
 
 
-def _get_selectable_participant(
-    db: Session,
-    participant_id: object,
-    allowed_kinds: set[ParticipantKind],
-    label: str,
-) -> Participant:
-    try:
-        normalized_id = UUID(str(participant_id))
-    except (TypeError, ValueError, AttributeError):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Выберите {label} из справочника участников",
-        )
-
-    participant = db.query(Participant).filter(Participant.id == normalized_id).first()
-    if not participant:
-        raise HTTPException(status_code=404, detail=f"{label.capitalize()} не найден")
-    if participant.employment_status == ParticipantEmploymentStatus.DEPARTED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Нельзя создать новый акт: {participant.full_name} выбыл",
-        )
-    if not participant.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Нельзя создать новый акт: {participant.full_name} неактивен",
-        )
-    if participant.kind not in allowed_kinds:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Участник {participant.full_name} не подходит для роли «{label}»",
-        )
-    return participant
+_get_selectable_participant = get_selectable_participant
 
 
 def _validate_new_act_participants(
@@ -668,14 +619,7 @@ def _validate_party1_signer(act: Act, participant_id: object) -> None:
         )
 
 
-def _validate_signature(signature_data: str) -> None:
-    try:
-        validate_signature_data_url(signature_data)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        )
+_validate_signature = validate_signature
 
 
 def _sign_recipient(
@@ -738,13 +682,26 @@ async def list_acts(
     party2: Optional[str] = Query(None),
     item_name: Optional[str] = Query(None),
     email: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    template_code: Optional[str] = Query(None),
+    pending: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_guest_or_admin_user)
 ):
-    query = db.query(Act)
-    
+    query = db.query(Act).options(
+        selectinload(Act.template),
+        selectinload(Act.ipad_profile),
+        selectinload(Act.ipad_assignments),
+    )
+
+    pending_statuses = [ActStatus.DRAFT, ActStatus.SIGNED_PARTY1, ActStatus.SIGNED_PARTY2]
+    if pending is True:
+        query = query.filter(Act.status.in_(pending_statuses))
+    elif pending is False:
+        query = query.filter(Act.status.notin_(pending_statuses))
+
     if party1:
         query = query.filter(Act.party1_name.ilike(f"%{party1}%"))
     if party2:
@@ -753,6 +710,16 @@ async def list_acts(
         query = query.filter(Act.item_name.ilike(f"%{item_name}%"))
     if email:
         query = query.filter(Act.receiver_email.ilike(f"%{email}%"))
+    if search:
+        value = f"%{search}%"
+        query = query.filter(
+            Act.item_name.ilike(value)
+            | Act.party1_name.ilike(value)
+            | Act.party2_name.ilike(value)
+            | Act.receiver_email.ilike(value)
+        )
+    if template_code:
+        query = query.join(Template, Template.id == Act.template_id).filter(Template.code == template_code)
     
     total = query.count()
     acts = query.order_by(Act.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -1061,7 +1028,7 @@ async def delete_act(
 
     ipad_assignments = db.query(IpadStudentAssignment).filter(
         IpadStudentAssignment.act_id == act.id,
-        IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
+        IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES),
     ).with_for_update().all()
     for assignment in ipad_assignments:
         if not assignment.ipad_device_id:
@@ -1089,7 +1056,8 @@ async def sign_party1(
     signature: SignatureRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_guest_or_admin_user)
+    current_user: User = Depends(get_current_guest_or_admin_user),
+    request: Request = None,
 ):
     act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
     
@@ -1166,6 +1134,7 @@ async def sign_party1(
     record_audit(db, current_user, "ACT", act.id, action, {
         "participant_id": str(signature.participant_id) if signature.participant_id else None,
         "version": act.current_version,
+        **_kiosk_audit_context(request),
     })
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
@@ -1179,7 +1148,8 @@ async def sign_party2(
     signature: SignatureRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_guest_or_admin_user)
+    current_user: User = Depends(get_current_guest_or_admin_user),
+    request: Request = None,
 ):
     act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
     
@@ -1261,6 +1231,7 @@ async def sign_party2(
         "participant_id": str(signature.participant_id) if signature.participant_id else None,
         "recipient": signed_recipient_name,
         "version": act.current_version,
+        **_kiosk_audit_context(request),
     })
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)

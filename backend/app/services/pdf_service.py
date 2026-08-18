@@ -20,9 +20,24 @@ def build_act_snapshot(act: Act) -> dict:
             for item in act.accessories
         ]
     if getattr(act, "ipad_profile", None):
+        applied_appendices = sorted(
+            (item for item in getattr(act, "ipad_appendices", []) if item.status == "APPLIED"),
+            key=lambda item: item.appendix_number,
+        )
         base_extra["ipad_advisory"] = {
             "advisory_group": act.ipad_profile.advisory_group,
             "academic_year": act.ipad_profile.academic_year,
+            # Применённые приложения: юридическое основание каждого изменения
+            # состава с датами подписей обеих сторон (для блока в PDF ревизии).
+            "appendices": [{
+                "appendix_number": item.appendix_number,
+                "operation_type": item.operation_type,
+                "student_name": (item.payload_json or {}).get("student_name"),
+                "responsible_name": item.responsible.full_name if item.responsible else None,
+                "responsible_signed_at": item.responsible_signed_at.isoformat() if item.responsible_signed_at else None,
+                "issuer_name": item.issuer.full_name if item.issuer else None,
+                "issuer_signed_at": item.issuer_signed_at.isoformat() if item.issuer_signed_at else None,
+            } for item in applied_appendices],
             "students": [{
                 "id": str(item.id),
                 "student_name": item.student_name,

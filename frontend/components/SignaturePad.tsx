@@ -33,31 +33,35 @@ export default function SignaturePad({ onSave, onClear }: SignaturePadProps) {
   };
 
   return (
-    <div className="border border-gray-300 rounded-lg p-4 bg-white">
+    <div className="border border-gray-300 rounded-lg p-3 sm:p-4 bg-white">
       <div
-        className="border-2 border-dashed border-gray-300 rounded mb-4"
+        className="border-2 border-dashed border-gray-300 rounded mb-4 touch-none"
         onPointerDown={() => setHasInk(true)}
       >
         <SignatureCanvas
           ref={sigCanvas}
+          // clearOnResize=false: поворот телефона / схлопывание адресной строки
+          // вызывает resize и по умолчанию молча стирает нарисованную подпись.
+          // Проп существует в рантайме, но отсутствует в типах пакета 1.0.6.
+          {...({ clearOnResize: false } as Record<string, unknown>)}
           canvasProps={{
-            className: 'w-full h-48',
+            className: 'w-full h-48 touch-none',
           }}
         />
       </div>
       {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={save}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          className="min-h-11 flex-1 rounded bg-blue-600 px-4 font-medium text-white hover:bg-blue-700"
         >
           Сохранить подпись
         </button>
         <button
           type="button"
           onClick={clear}
-          className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700"
+          className="min-h-11 rounded bg-gray-600 px-4 font-medium text-white hover:bg-gray-700"
         >
           Очистить
         </button>

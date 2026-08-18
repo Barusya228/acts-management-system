@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
 from app.db.models import IpadDevice, IpadStudentAssignment, User
+from app.db.states import ACTIVE_IPAD_ASSIGNMENT_STATUSES
 from app.schemas.schemas import IpadDeviceBulkCreate, IpadDeviceCreate, IpadDeviceUpdate
 from app.services.audit_service import record_audit
 
@@ -100,7 +101,7 @@ def list_ipads(
     device_ids = [item.id for item in devices]
     assignments = db.query(IpadStudentAssignment).filter(
         IpadStudentAssignment.ipad_device_id.in_(device_ids),
-        IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
+        IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES),
     ).all() if device_ids else []
     assignment_by_device = {item.ipad_device_id: item for item in assignments}
     tag_counts = dict(db.query(IpadDevice.tag, func.count(IpadDevice.id)).filter(
@@ -153,7 +154,7 @@ def bulk_create_ipads(data: IpadDeviceBulkCreate, db: Session = Depends(get_db),
 def update_ipad(device_id: UUID, data: IpadDeviceUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
     device = db.query(IpadDevice).filter(IpadDevice.id == device_id).first()
     if not device: raise HTTPException(status_code=404, detail="iPad не найден")
-    active = db.query(IpadStudentAssignment.id).filter(IpadStudentAssignment.ipad_device_id == device.id, IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"])).first()
+    active = db.query(IpadStudentAssignment.id).filter(IpadStudentAssignment.ipad_device_id == device.id, IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES)).first()
     updates = data.model_dump(exclude_unset=True)
     if active and any(key in updates for key in ("tag", "serial_number", "status")):
         raise HTTPException(status_code=409, detail="Активный iPad управляется через акт")

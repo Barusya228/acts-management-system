@@ -6,6 +6,7 @@ from typing import Optional
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user
 from app.db.models import Act, ActStatus, User
+from app.services.recipients import act_recipients
 
 router = APIRouter()
 
@@ -115,62 +116,25 @@ async def get_top_recipients(
     """
     Возвращает топ получателей по количеству выданной техники.
     """
-    # Получаем все акты
+    # Один проход по актам; извлечение получателей — через доменный модуль.
     acts = db.query(Act).all()
-    
-    # Подсчитываем количество актов на каждого получателя
-    recipient_counts = {}
-    
+    recipient_counts: dict = {}
+
     for act in acts:
-        extra_data = act.extra_data_json or {}
-        recipients = extra_data.get("recipients") if isinstance(extra_data, dict) else None
-        
-        if isinstance(recipients, list) and recipients:
-            for recipient in recipients:
-                if not isinstance(recipient, dict):
-                    continue
-                full_name = str(recipient.get("full_name", "")).strip()
-                email = str(recipient.get("email", "")).strip()
-                
-                if not full_name:
-                    continue
-                
-                key = (full_name, email)
-                if key not in recipient_counts:
-                    recipient_counts[key] = {
-                        "full_name": full_name,
-                        "email": email,
-                        "total_acts": 0,
-                        "active_acts": 0,
-                        "returned_acts": 0,
-                    }
-                
-                recipient_counts[key]["total_acts"] += 1
-                
-                if act.status == ActStatus.COMPLETED:
-                    recipient_counts[key]["active_acts"] += 1
-                elif act.status == ActStatus.RETURNED:
-                    recipient_counts[key]["returned_acts"] += 1
-        else:
-            # Fallback для старых актов
-            full_name = act.party2_name
-            email = act.receiver_email
-            
+        for recipient in act_recipients(act):
+            full_name = recipient["full_name"]
             if not full_name:
                 continue
-            
-            key = (full_name, email)
+            key = (full_name, recipient["email"])
             if key not in recipient_counts:
                 recipient_counts[key] = {
                     "full_name": full_name,
-                    "email": email,
+                    "email": recipient["email"],
                     "total_acts": 0,
                     "active_acts": 0,
                     "returned_acts": 0,
                 }
-            
             recipient_counts[key]["total_acts"] += 1
-            
             if act.status == ActStatus.COMPLETED:
                 recipient_counts[key]["active_acts"] += 1
             elif act.status == ActStatus.RETURNED:

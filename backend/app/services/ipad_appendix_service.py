@@ -1,20 +1,19 @@
 from datetime import date, datetime
 from io import BytesIO
+from xml.sax.saxutils import escape as xml_escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image as PdfImage, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.models import Act, ActStatus, IpadActAppendix, IpadAssignmentEvent, IpadDevice, IpadStudentAssignment, Participant, User
+from app.db.states import ACTIVE_IPAD_ASSIGNMENT_STATUSES, PENDING_APPENDIX_STATUSES
 from app.services.audit_service import record_audit
-from app.utils.storage import save_bytes, save_data_url_file
+from app.utils.storage import resolve_storage_path, save_bytes, save_data_url_file
 from app.utils.pdf import _register_font, _resolve_bold_font_name
-
-
-PENDING_APPENDIX_STATUSES = {"WAITING_RESPONSIBLE", "WAITING_ISSUER"}
 
 
 def serialize_appendix(item: IpadActAppendix) -> dict:
@@ -78,8 +77,9 @@ def apply_appendix(db: Session, appendix: IpadActAppendix, current_user: User) -
         if not assignment or assignment.student_status != "ACTIVE":
             raise HTTPException(status_code=409, detail="Ученик уже выбыл")
         assignment.student_status = "DEPARTED"
-        assignment.status = "RETURNED" if payload["ipad_returned"] else "RETURN_PENDING"
-        assignment.returned_at = now if payload["ipad_returned"] else None
+        ipad_returned = payload.get("ipad_returned", True)
+        assignment.status = "RETURNED" if ipad_returned else "RETURN_PENDING"
+        assignment.returned_at = now if ipad_returned else None
         if device:
             device.status = payload["device_result_status"]
     elif operation == "STUDENT_ADDITION":
@@ -110,7 +110,7 @@ def apply_appendix(db: Session, appendix: IpadActAppendix, current_user: User) -
     elif operation == "YEAR_END_RETURN":
         outstanding = db.query(IpadStudentAssignment).filter(
             IpadStudentAssignment.act_id == appendix.act_id,
-            IpadStudentAssignment.status.in_(["RESERVED", "ISSUED", "RETURN_PENDING"]),
+            IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES),
         ).with_for_update().all()
         expected_ids = {str(item["assignment_id"]) for item in payload["items"]}
         if {str(item.id) for item in outstanding} != expected_ids:
@@ -168,6 +168,96 @@ def save_appendix_signature(appendix: IpadActAppendix, party: str, signature_dat
         appendix.issuer_signed_at = now
 
 
+APPENDIX_OPERATION_TITLES = {
+    "IPAD_REPLACEMENT": "Замена iPad",
+    "STUDENT_DEPARTURE": "Выбытие ученика",
+    "STUDENT_ADDITION": "Добавление ученика",
+    "LATE_RETURN": "Поздний возврат iPad",
+    "YEAR_END_RETURN": "Годовой возврат Advisory",
+}
+
+_DAMAGE_LABELS = {
+    "OK": "Всё в порядке",
+    "BENT_BODY": "Погнутый корпус",
+    "CRACKED_SCREEN": "Треснутый экран",
+    "LOST": "Потерян",
+    "WEAK_BATTERY": "Слабый аккумулятор",
+    "DAMAGED_DISPLAY": "Повреждена матрица",
+    "NOT_RETURNED": "iPad не сдан (ожидается возврат)",
+}
+
+_RESULT_STATUS_LABELS = {
+    "AVAILABLE": "Готов к выдаче",
+    "MAINTENANCE": "На обслуживание",
+    "RETIRED": "Списан",
+    "RETURN_PENDING": "Ожидает возврата",
+}
+
+
+def _format_pdf_date(value) -> str:
+    try:
+        return date.fromisoformat(str(value)).strftime("%d.%m.%Y")
+    except (TypeError, ValueError):
+        return str(value or "—")
+
+
+def _format_ipad(info) -> str:
+    if not isinstance(info, dict):
+        return "—"
+    model = info.get("model") or "iPad"
+    return f"{model} · Tag {info.get('tag', '—')} · SN {info.get('serial_number', '—')}"
+
+
+def _appendix_pdf_rows(appendix: IpadActAppendix) -> list[list[str]]:
+    """Человекочитаемые строки «Поле/Значение» для PDF приложения."""
+    payload = appendix.payload_json or {}
+    operation = appendix.operation_type
+    rows: list[list[str]] = []
+    if payload.get("student_name"):
+        rows.append(["Ученик", payload["student_name"]])
+    if operation == "IPAD_REPLACEMENT":
+        rows.append(["Дата замены", _format_pdf_date(payload.get("replacement_date"))])
+        rows.append(["Причина замены", payload.get("reason_label") or _DAMAGE_LABELS.get(payload.get("reason"), payload.get("reason", "—"))])
+        rows.append(["Старый iPad", _format_ipad(payload.get("old_ipad"))])
+        rows.append(["Результат по старому iPad", _RESULT_STATUS_LABELS.get(payload.get("old_result_status"), payload.get("old_result_status", "—"))])
+        rows.append(["Новый iPad", _format_ipad(payload.get("new_ipad"))])
+    elif operation == "STUDENT_DEPARTURE":
+        rows.append(["Дата выбытия", _format_pdf_date(payload.get("departure_date"))])
+        rows.append(["iPad", _format_ipad(payload.get("ipad"))])
+        rows.append(["Состояние возвращённого iPad", payload.get("return_condition_label") or _DAMAGE_LABELS.get(payload.get("return_condition"), payload.get("return_condition", "—"))])
+        rows.append(["Результат", _RESULT_STATUS_LABELS.get(payload.get("device_result_status"), payload.get("device_result_status", "—"))])
+    elif operation == "STUDENT_ADDITION":
+        rows.append(["Дата добавления", _format_pdf_date(payload.get("added_at"))])
+        rows.append(["Причина", payload.get("reason") or "—"])
+        rows.append(["iPad", _format_ipad(payload.get("ipad"))])
+    elif operation == "LATE_RETURN":
+        rows.append(["Дата возврата", _format_pdf_date(payload.get("returned_at"))])
+        rows.append(["iPad", _format_ipad(payload.get("ipad"))])
+        rows.append(["Состояние", payload.get("condition_label") or _DAMAGE_LABELS.get(payload.get("condition"), payload.get("condition", "—"))])
+        rows.append(["Результат", _RESULT_STATUS_LABELS.get(payload.get("device_result_status"), payload.get("device_result_status", "—"))])
+    elif operation == "YEAR_END_RETURN":
+        rows.append(["Дата возврата", _format_pdf_date(payload.get("returned_at"))])
+        for item in payload.get("items", []):
+            condition = item.get("condition_label") or _DAMAGE_LABELS.get(item.get("condition"), item.get("condition", "—"))
+            result = _RESULT_STATUS_LABELS.get(item.get("device_result_status"), item.get("device_result_status", "—"))
+            rows.append([
+                item.get("student_name", "—"),
+                f"{_format_ipad(item.get('ipad'))} · {condition} · {result}",
+            ])
+    if payload.get("note"):
+        rows.append(["Примечание", str(payload["note"])])
+    return rows
+
+
+def _signature_cell(signature_path: str | None, styles) -> object:
+    """Картинка подписи для таблицы подписей, либо прочерк."""
+    if signature_path:
+        path = resolve_storage_path(signature_path)
+        if path.is_file():
+            return PdfImage(str(path), width=110, height=38, kind="proportional")
+    return Paragraph("Нет подписи", styles["Normal"])
+
+
 def create_appendix_pdf(appendix: IpadActAppendix, act: Act) -> None:
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=42, rightMargin=42, topMargin=42, bottomMargin=42)
@@ -178,19 +268,18 @@ def create_appendix_pdf(appendix: IpadActAppendix, act: Act) -> None:
         style.fontName = font_name
     styles["Title"].fontName = bold_font_name
     styles["Heading2"].fontName = bold_font_name
+    operation_title = APPENDIX_OPERATION_TITLES.get(appendix.operation_type, appendix.operation_type)
     story = [
         Paragraph(f"Приложение №{appendix.appendix_number} к акту ACT-{str(act.id).split('-')[0].upper()}", styles["Title"]),
         Spacer(1, 12),
-        Paragraph(f"Advisory: {act.ipad_profile.advisory_group} · {act.ipad_profile.academic_year}", styles["Normal"]),
-        Paragraph(f"Операция: {appendix.operation_type}", styles["Heading2"]),
+        Paragraph(f"Advisory: {act.ipad_profile.advisory_group} · Учебный год: {act.ipad_profile.academic_year}", styles["Normal"]),
+        Paragraph(operation_title, styles["Heading2"]),
         Spacer(1, 8),
     ]
-    rows = [["Поле", "Значение"]]
-    for key, value in appendix.payload_json.items():
-        if key.endswith("_id"):
-            continue
-        rows.append([key.replace("_", " ").title(), str(value if value is not None else "—")])
-    table = Table(rows, colWidths=[150, 360])
+    # Paragraph трактует текст как мини-XML: пользовательские данные с <, & и т.п.
+    # обязаны быть экранированы, иначе paraparser падает с ValueError.
+    rows = [["Поле", "Значение"]] + [[Paragraph(xml_escape(str(label)), styles["Normal"]), Paragraph(xml_escape(str(value)), styles["Normal"])] for label, value in _appendix_pdf_rows(appendix)]
+    table = Table(rows, colWidths=[170, 340])
     table.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
@@ -199,9 +288,28 @@ def create_appendix_pdf(appendix: IpadActAppendix, act: Act) -> None:
         ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
         ("PADDING", (0, 0), (-1, -1), 6),
     ]))
-    story.extend([table, Spacer(1, 18)])
-    story.append(Paragraph(f"Ответственное лицо: {appendix.responsible.full_name} · подписано {appendix.responsible_signed_at}", styles["Normal"]))
-    story.append(Paragraph(f"IT: {appendix.issuer.full_name} · подписано {appendix.issuer_signed_at}", styles["Normal"]))
+    story.extend([table, Spacer(1, 22)])
+
+    # Блок подписей: картинки подписей сторон с ФИО и датой, как в основном акте.
+    def _signed_at(value) -> str:
+        return value.strftime("%d.%m.%Y %H:%M") if value else "—"
+
+    signature_table = Table([
+        [Paragraph("Ответственное лицо", styles["Normal"]), Paragraph("Сотрудник IT", styles["Normal"])],
+        [Paragraph(f"<b>{xml_escape(appendix.responsible.full_name)}</b>", styles["Normal"]), Paragraph(f"<b>{xml_escape(appendix.issuer.full_name)}</b>", styles["Normal"])],
+        [_signature_cell(appendix.responsible_signature_path, styles), _signature_cell(appendix.issuer_signature_path, styles)],
+        [Paragraph(f"Подписано: {_signed_at(appendix.responsible_signed_at)}", styles["Normal"]), Paragraph(f"Подписано: {_signed_at(appendix.issuer_signed_at)}", styles["Normal"])],
+    ], colWidths=[255, 255])
+    signature_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 2), (-1, 2), "CENTER"),
+        ("FONTNAME", (0, 0), (-1, -1), font_name),
+        ("FONTNAME", (0, 0), (-1, 0), bold_font_name),
+        ("PADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(signature_table)
     doc.build(story)
     path, _size, _sha = save_bytes(
         relative_dir=f"acts/{appendix.act_id}/appendices/{appendix.id}",

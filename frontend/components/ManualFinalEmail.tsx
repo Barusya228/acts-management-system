@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import api from '@/lib/api';
+import { apiErrorMessage } from '@/lib/apiError';
 import { useToast } from '@/contexts/ToastContext';
 
 interface Recipient {
@@ -125,12 +126,4 @@ export default function ManualFinalEmail({ actId }: { actId: string }) {
   </>;
 }
 
-function apiErrorMessage(error: unknown, fallback: string): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-  if (typeof detail === 'string') return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail.map(item => item && typeof item === 'object' && 'msg' in item ? String(item.msg) : '').filter(Boolean);
-    if (messages.length) return messages.join('; ');
-  }
-  return fallback;
-}
+

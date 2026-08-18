@@ -416,6 +416,21 @@ class IpadActAppendix(Base):
     issuer = relationship("Participant", foreign_keys=[issuer_participant_id])
 
 
+class KioskDevice(Base):
+    __tablename__ = "kiosk_devices"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="PENDING", index=True)
+    enrollment_code = Column(String, nullable=True, index=True)
+    enrollment_expires_at = Column(DateTime, nullable=True)
+    enrolled_at = Column(DateTime, nullable=True)
+    last_seen_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class InventoryCategory(Base):
     __tablename__ = "inventory_categories"
 
