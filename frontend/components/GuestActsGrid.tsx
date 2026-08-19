@@ -31,7 +31,7 @@ type ActTypeFilter = 'ALL' | 'GENERIC_ONE' | 'GENERIC_MULTI' | 'IPAD';
 
 const PAGE_SIZE = 24;
 
-export default function GuestActsGrid({ adminMode = false }: { adminMode?: boolean }) {
+export default function GuestActsGrid() {
   const router = useRouter();
   const [pendingActs, setPendingActs] = useState<Act[]>([]);
   const [doneActs, setDoneActs] = useState<Act[]>([]);
@@ -126,14 +126,11 @@ export default function GuestActsGrid({ adminMode = false }: { adminMode?: boole
 
   const getTemplateUrl = (code: string) => {
     if (code === 'IPAD') return '/acts/create/ipad';
-    if (!adminMode) {
-      const map: Record<string, string> = {
-        GENERIC_ONE: '/acts/create/one',
-        GENERIC_MULTI: '/acts/create/multi',
-      };
-      if (map[code]) return map[code];
-    }
-    return `/acts/create?code=${code}`;
+    const map: Record<string, string> = {
+      GENERIC_ONE: '/acts/create/one',
+      GENERIC_MULTI: '/acts/create/multi',
+    };
+    return map[code] || `/acts/create?code=${code}`;
   };
 
   const getActUrl = (act: Act) => {

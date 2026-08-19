@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import AdminLayout from '@/components/AdminLayout';
-import GuestActsGrid from '@/components/GuestActsGrid';
+import AdminActsTable from '@/components/AdminActsTable';
 
 export default function AdminActsPage() {
   const { user, loading } = useAuth();
@@ -26,7 +26,7 @@ export default function AdminActsPage() {
 
   return (
     <AdminLayout>
-      <GuestActsGrid adminMode />
+      <AdminActsTable />
     </AdminLayout>
   );
 }
