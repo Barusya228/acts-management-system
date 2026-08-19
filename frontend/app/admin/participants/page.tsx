@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import AdminLayout from '@/components/AdminLayout';
-import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
@@ -188,12 +187,6 @@ export default function ParticipantsPage() {
   return (
     <AdminLayout>
       <div className="mx-auto max-w-7xl">
-        <PageHeader
-          eyebrow="Администрирование"
-          title="Участники"
-          description="Справочник сотрудников: кто выдаёт и кто получает технику."
-        />
-
         {/* Filters */}
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
           <input type="text" placeholder="Поиск по имени или отделу..." value={search} onChange={e => setSearch(e.target.value)}
@@ -254,61 +247,86 @@ export default function ParticipantsPage() {
           )}
         </div>
 
-        {/* Participants list */}
+        {/* Participants table */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm text-slate-500">Людей: {filtered.length}</span>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700"
+          >
+            + Добавить
+          </button>
+        </div>
         {loading ? (
           <div className="rounded-2xl bg-white px-5 py-16 text-center shadow-sm">
             <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
             <p className="text-sm text-slate-500">Загрузка участников...</p>
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+            <p className="font-black text-slate-700">Никого не найдено</p>
+            <p className="mt-1 text-sm text-slate-400">Измените фильтры или добавьте участника.</p>
+          </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <button
-              type="button"
-              onClick={openCreate}
-              className="flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-slate-400 shadow-sm transition hover:border-blue-400 hover:text-blue-500"
-            >
-              <span className="text-3xl">+</span>
-              <span className="text-sm font-medium">Добавить участника</span>
-            </button>
-            {filtered.map(p => (
-              <div key={p.id} className={`group rounded-2xl border bg-white p-4 shadow-sm transition hover:shadow-md ${p.employment_status === 'DEPARTED' ? 'border-amber-200 bg-amber-50/40' : p.is_active ? 'border-gray-200' : 'border-gray-100 bg-gray-50 opacity-70'}`}>
-                <div className="flex items-start gap-3">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-2xl">{p.sticker_emoji || '👤'}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-slate-800 truncate">{p.full_name}</p>
-                    {p.department && <p className="text-xs text-slate-500">{p.department}</p>}
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${kindBadge(p.kind)}`}>{kindShort(p.kind)}</span>
-                      {p.title && <span className="text-[10px] text-slate-400">{p.title}</span>}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 gap-1 opacity-100 transition lg:opacity-0 lg:group-hover:opacity-100">
-                    <button onClick={() => openEdit(p)}
-                      className="rounded-lg bg-slate-100 p-1.5 text-xs text-slate-600 hover:bg-blue-100 hover:text-blue-700">✎</button>
-                  </div>
-                </div>
-                {p.email && <p className="mt-2 text-xs text-slate-400 truncate">{p.email}</p>}
-                <div className="mt-2.5 flex items-center justify-between border-t border-gray-100 pt-2.5">
-                  <span className={`text-xs font-medium ${p.employment_status === 'DEPARTED' ? 'text-amber-700' : p.is_active ? 'text-emerald-600' : 'text-slate-400'}`}>
-                    {p.employment_status === 'DEPARTED' ? 'Выбыл' : p.is_active ? 'Активен' : 'Неактивен'}
-                  </span>
-                  {p.employment_status === 'ACTIVE' && (
-                    <button onClick={() => handleToggleActive(p)}
-                      className={`relative h-5 w-9 rounded-full transition ${p.is_active ? 'bg-emerald-500' : 'bg-gray-300'}`}>
-                      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${p.is_active ? 'left-[18px]' : 'left-0.5'}`} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={openCreate}
-              className="flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-slate-400 shadow-sm transition hover:border-blue-400 hover:text-blue-500"
-            >
-              <span className="text-3xl">+</span>
-              <span className="text-sm font-medium">Добавить участника</span>
-            </button>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3 font-semibold">Сотрудник</th>
+                  <th className="px-4 py-3 font-semibold">Email</th>
+                  <th className="px-4 py-3 font-semibold">Отдел / должность</th>
+                  <th className="px-4 py-3 font-semibold">Роль</th>
+                  <th className="px-4 py-3 font-semibold">Статус</th>
+                  <th className="px-4 py-3 text-right font-semibold">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(p => (
+                  <tr key={p.id} className={`border-b border-slate-100 last:border-b-0 hover:bg-slate-50 ${p.employment_status === 'DEPARTED' ? 'bg-amber-50/40' : !p.is_active ? 'opacity-60' : ''}`}>
+                    <td className="max-w-[240px] px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="shrink-0 text-lg" aria-hidden>{p.sticker_emoji || '👤'}</span>
+                        <span className="truncate font-bold text-slate-900">{p.full_name}</span>
+                      </div>
+                    </td>
+                    <td className="max-w-[220px] px-4 py-3">
+                      <span className="block truncate text-slate-600">{p.email || '—'}</span>
+                    </td>
+                    <td className="max-w-[200px] px-4 py-3">
+                      <span className="block truncate text-slate-700">{p.department || '—'}</span>
+                      {p.title && <span className="block truncate text-xs text-slate-400">{p.title}</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${kindBadge(p.kind)}`}>{kindShort(p.kind)}</span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      {p.employment_status === 'DEPARTED' ? (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">Выбыл</span>
+                      ) : (
+                        <button
+                          onClick={() => handleToggleActive(p)}
+                          title={p.is_active ? 'Деактивировать' : 'Активировать'}
+                          className={`relative h-6 w-11 rounded-full transition ${p.is_active ? 'bg-emerald-500' : 'bg-gray-300'}`}
+                        >
+                          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${p.is_active ? 'left-[22px]' : 'left-0.5'}`} />
+                        </button>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => openEdit(p)}
+                          className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-blue-100 hover:text-blue-700"
+                        >
+                          ✎ Изменить
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

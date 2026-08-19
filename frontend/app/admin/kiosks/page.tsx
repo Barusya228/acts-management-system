@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminLayout from '@/components/AdminLayout';
-import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import api from '@/lib/api';
@@ -90,12 +89,6 @@ export default function KiosksPage() {
   return (
     <AdminLayout>
       <div className="mx-auto max-w-5xl">
-        <PageHeader
-          eyebrow="Безопасность"
-          title="Устройства подписания"
-          description="Только привязанные планшеты могут открывать акты и собирать подписи. Отзыв устройства мгновенно блокирует его токен."
-        />
-
         <section className="mb-6 rounded-2xl border border-blue-200 bg-blue-50 p-5">
           <p className="font-black text-blue-950">Добавить планшет</p>
           <p className="mt-1 text-sm text-blue-700">Создайте код, откройте на планшете страницу /kiosk и введите его.</p>
@@ -124,34 +117,58 @@ export default function KiosksPage() {
             <p className="mt-1 text-sm text-slate-400">Создайте первый код привязки для планшета в кабинете.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {kiosks.map(kiosk => (
-              <article key={kiosk.id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-black text-slate-900">{kiosk.name}</p>
-                    <span className={`rounded-full px-3 py-1 text-xs font-black ${statusMeta[kiosk.status].cls}`}>{statusMeta[kiosk.status].label}</span>
-                  </div>
-                  <div className="mt-1 space-y-0.5 text-xs text-slate-500">
-                    {kiosk.enrolled_at && <p>Привязано: {new Date(kiosk.enrolled_at).toLocaleString('ru-RU')}</p>}
-                    {kiosk.last_seen_at && <p>Последняя активность: {new Date(kiosk.last_seen_at).toLocaleString('ru-RU')}</p>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {kiosk.status === 'PENDING' && kiosk.enrollment_code && (
-                    <span className="rounded-xl bg-slate-900 px-4 py-2 font-mono text-lg font-black tracking-[0.2em] text-white">{kiosk.enrollment_code}</span>
-                  )}
-                  {kiosk.status !== 'REVOKED' && (
-                    <button
-                      onClick={() => setRevokeTarget(kiosk)}
-                      className="min-h-11 rounded-xl bg-red-50 px-4 text-sm font-bold text-red-700 hover:bg-red-100"
-                    >
-                      Отозвать
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3 font-semibold">Устройство</th>
+                  <th className="px-4 py-3 font-semibold">Статус</th>
+                  <th className="px-4 py-3 font-semibold">Код привязки</th>
+                  <th className="px-4 py-3 font-semibold">Привязано</th>
+                  <th className="px-4 py-3 font-semibold">Активность</th>
+                  <th className="px-4 py-3 text-right font-semibold">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {kiosks.map(kiosk => (
+                  <tr key={kiosk.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50">
+                    <td className="max-w-[220px] px-4 py-3">
+                      <span className="block truncate font-bold text-slate-900">📱 {kiosk.name}</span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-black ${statusMeta[kiosk.status].cls}`}>{statusMeta[kiosk.status].label}</span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      {kiosk.status === 'PENDING' && kiosk.enrollment_code ? (
+                        <span className="rounded-lg bg-slate-900 px-3 py-1.5 font-mono text-sm font-black tracking-[0.2em] text-white">{kiosk.enrollment_code}</span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                      {kiosk.enrolled_at ? new Date(kiosk.enrolled_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                      {kiosk.last_seen_at ? new Date(kiosk.last_seen_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <div className="flex justify-end">
+                        {kiosk.status !== 'REVOKED' ? (
+                          <button
+                            onClick={() => setRevokeTarget(kiosk)}
+                            className="min-h-11 rounded-xl bg-red-50 px-4 text-sm font-bold text-red-700 hover:bg-red-100"
+                          >
+                            Отозвать
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-400">Отозвано</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

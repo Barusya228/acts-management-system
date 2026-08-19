@@ -37,7 +37,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <div className="flex min-w-0 items-center gap-2 md:gap-4">
             <Link href="/guest" className="shrink-0 text-base font-bold text-slate-900 md:text-lg">
-              Acts Digitalization
+              SmartAct
             </Link>
             <div className="flex items-center gap-1">
               <Link

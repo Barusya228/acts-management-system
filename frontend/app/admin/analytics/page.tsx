@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import AdminLayout from '@/components/AdminLayout';
-import PageHeader from '@/components/ui/PageHeader';
 import SurfaceCard from '@/components/ui/SurfaceCard';
 import api from '@/lib/api';
 
@@ -104,12 +103,6 @@ export default function AnalyticsPage() {
   return (
     <AdminLayout>
       <div className="mx-auto max-w-7xl">
-        <PageHeader
-          eyebrow="Администрирование"
-          title="Аналитика и статистика"
-          description="Общая статистика по актам, графики выдачи и возврата техники, топ получателей"
-        />
-
         {/* Общая статистика */}
         <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-5">
           <SurfaceCard className="p-4">

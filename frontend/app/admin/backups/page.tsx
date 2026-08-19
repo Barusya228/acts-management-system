@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminLayout from '@/components/AdminLayout';
-import PageHeader from '@/components/ui/PageHeader';
 import api from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -92,21 +91,16 @@ export default function BackupsPage() {
 
   return (
     <AdminLayout>
-      <PageHeader
-        eyebrow="Хранение"
-        title="Резервные копии"
-        description="Полное восстановление PostgreSQL и файлов, а также отдельные копии финальных PDF."
-        actions={(
-          <button
-            type="button"
-            onClick={runSync}
-            disabled={syncing || !data?.enabled}
-            className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-slate-900 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {syncing ? 'Копирование...' : 'Скопировать финальные PDF'}
-          </button>
-        )}
-      />
+      <div className="mb-4 flex justify-end">
+        <button
+          type="button"
+          onClick={runSync}
+          disabled={syncing || !data?.enabled}
+          className="min-h-11 rounded-xl bg-white px-4 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {syncing ? 'Копирование...' : 'Копировать финальные PDF'}
+        </button>
+      </div>
 
       {loading ? (
         <div className="rounded-2xl bg-white p-12 text-center text-sm text-slate-500 shadow-sm">Загрузка истории...</div>

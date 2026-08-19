@@ -11,7 +11,6 @@ import ConfirmModal from '@/components/ConfirmModal';
 import RecipientsEditor, { type EditableRecipient } from '@/components/RecipientsEditor';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
-import PageHeader from '@/components/ui/PageHeader';
 import SurfaceCard from '@/components/ui/SurfaceCard';
 import StatusPill from '@/components/ui/StatusPill';
 import { normalizeActRecipients, getSignedRecipientsCount, type ActRecipient } from '@/lib/actRecipients';
@@ -845,41 +844,37 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
   return (
     <AdminLayout>
       <div className="mx-auto max-w-5xl">
-        <PageHeader
-          eyebrow="Акт"
-          title="Просмотр акта"
-          description="Проверьте детали документа, следите за статусом подписания, работайте с PDF и запускайте возврат техники при завершении выдачи."
-          actions={
-            <>
-              {canEditIpadDraft && !editing && (
-                <button
-                  type="button"
-                  onClick={startEdit}
-                  className="rounded-xl bg-emerald-600 px-4 py-3 font-medium text-white transition hover:bg-emerald-700"
-                >
-                  Редактировать
-                </button>
-              )}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-xl font-bold text-slate-900 md:text-2xl">Просмотр акта</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            {canEditIpadDraft && !editing && (
               <button
                 type="button"
-                onClick={handleDownloadCurrentPdf}
-                disabled={pdfLoading !== null}
-                className="rounded-xl bg-white px-4 py-3 font-medium text-slate-900 transition hover:bg-slate-100"
+                onClick={startEdit}
+                className="min-h-11 rounded-xl bg-emerald-600 px-4 font-medium text-white transition hover:bg-emerald-700"
               >
-                {pdfLoading === 'download' ? 'Скачивание...' : 'Скачать PDF'}
+                Редактировать
               </button>
-              {isAdminUser && (
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteModal(true)}
-                  className="rounded-xl border border-red-300 bg-red-600 px-4 py-3 font-medium text-white transition hover:bg-red-700"
-                >
-                  Удалить навсегда
-                </button>
-              )}
-            </>
-          }
-        />
+            )}
+            <button
+              type="button"
+              onClick={handleDownloadCurrentPdf}
+              disabled={pdfLoading !== null}
+              className="min-h-11 rounded-xl bg-white px-4 font-medium text-slate-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-slate-100"
+            >
+              {pdfLoading === 'download' ? 'Скачивание...' : 'Скачать PDF'}
+            </button>
+            {isAdminUser && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="min-h-11 rounded-xl bg-red-600 px-4 font-medium text-white transition hover:bg-red-700"
+              >
+                Удалить навсегда
+              </button>
+            )}
+          </div>
+        </div>
 
         <div className="mb-6 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <SurfaceCard className="p-6">

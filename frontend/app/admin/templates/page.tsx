@@ -6,7 +6,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import AdminLayout from '@/components/AdminLayout';
 import api from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
-import PageHeader from '@/components/ui/PageHeader';
 
 interface TemplateField {
   name: string;
@@ -85,12 +84,6 @@ export default function TemplatesPage() {
   return (
     <AdminLayout>
       <div className="max-w-7xl mx-auto">
-        <PageHeader
-          eyebrow="Администрирование"
-          title="Шаблоны актов"
-          description="Управляйте активностью шаблонов для выдачи и возврата техники."
-        />
-
         {loading ? (
           <div className="rounded-2xl bg-white p-12 text-center shadow-sm ring-1 ring-gray-100">
             <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />

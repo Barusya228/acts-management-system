@@ -4,7 +4,7 @@ import { ToastProvider } from '@/contexts/ToastContext';
 import './globals.css';
 
 export const metadata = {
-  title: 'Acts Digitalization',
+  title: 'SmartAct',
   description: 'System for digitalizing equipment issuance acts',
 };
 

@@ -56,7 +56,7 @@ function LoginForm() {
       <div className="w-full max-w-md">
         <div className="space-y-4">
           <div className="rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-blue-900 p-5 text-white shadow-lg">
-            <p className="text-xs uppercase tracking-[0.24em] text-blue-200">Acts Digitalization</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-blue-200">SmartAct</p>
             <h1 className="mt-2 text-xl font-bold tracking-tight">Вход администратора</h1>
           </div>
 

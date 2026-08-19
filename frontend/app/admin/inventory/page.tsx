@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import AdminLayout from '@/components/AdminLayout';
-import PageHeader from '@/components/ui/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
@@ -477,17 +476,12 @@ export default function InventoryPage() {
   return (
     <AdminLayout>
       <div className="mx-auto max-w-7xl">
-        <PageHeader
-          eyebrow="Администрирование"
-          title="Инвентарь"
-          description="Учёт устройств: серийные номера, статусы, местоположение."
-          actions={(
-            <button type="button" onClick={() => setShowCategoryModal(true)}
-              className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-slate-900 transition hover:bg-blue-50">
-              Категории
-            </button>
-          )}
-        />
+        <div className="mb-4 flex justify-end">
+          <button type="button" onClick={() => setShowCategoryModal(true)}
+            className="min-h-11 rounded-xl bg-white px-4 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-blue-50">
+            Категории
+          </button>
+        </div>
 
         <div className="mb-5 grid grid-cols-3 rounded-xl bg-slate-100 p-1">
           <button type="button" onClick={() => { setInventoryView('devices'); setPage(1); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'devices' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Инвентарные устройства</button>

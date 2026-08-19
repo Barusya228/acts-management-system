@@ -7,7 +7,7 @@ from app.api import auth, acts, templates, participants, reminders, analytics, a
 FRONTEND_URL = "http://127.0.0.1:3000"
 
 app = FastAPI(
-    title="Acts Digitalization API",
+    title="SmartAct API",
     description="API for digitalizing equipment issuance acts",
     version="1.0.0"
 )

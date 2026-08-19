@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status, Query
 from fastapi.responses import FileResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 from typing import Optional
 from uuid import UUID
@@ -723,10 +724,28 @@ async def list_acts(
     
     total = query.count()
     acts = query.order_by(Act.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    # Дата последней успешной отправки финального письма по каждому акту
+    # (для колонки «Письмо» в админ-таблицах) — одним запросом.
+    act_ids = [act.id for act in acts]
+    last_sent_by_act: dict = {}
+    if act_ids:
+        sent_rows = db.query(
+            EmailOutbox.act_id,
+            func.max(EmailOutbox.sent_at),
+        ).filter(
+            EmailOutbox.act_id.in_(act_ids),
+            EmailOutbox.kind.in_([ISSUE_COMPLETED, RETURN_COMPLETED]),
+            EmailOutbox.sent_at.isnot(None),
+        ).group_by(EmailOutbox.act_id).all()
+        last_sent_by_act = {row[0]: row[1] for row in sent_rows}
+
     items = []
     for act in acts:
         item = ActResponse.model_validate(act).model_dump()
         item["template_code"] = act.template.code if act.template else None
+        last_sent = last_sent_by_act.get(act.id)
+        item["final_email_last_sent_at"] = last_sent.isoformat() if last_sent else None
         if act.ipad_profile:
             item["advisory_group"] = act.ipad_profile.advisory_group
             item["student_count"] = len(act.ipad_assignments)
