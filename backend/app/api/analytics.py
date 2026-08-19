@@ -1,14 +1,88 @@
+import csv
+from io import StringIO
+
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import func, extract
 from datetime import datetime, timedelta
 from typing import Optional
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user
-from app.db.models import Act, ActStatus, User
+from app.db.models import Act, ActStatus, InventoryDevice, IpadDevice, User
 from app.services.recipients import act_recipients
 
 router = APIRouter()
+
+_ACT_STATUS_RU = {
+    "DRAFT": "Черновик",
+    "SIGNED_PARTY1": "На подписи",
+    "SIGNED_PARTY2": "На подписи",
+    "COMPLETED": "Завершено",
+    "RETURN_INITIATED": "Возврат начат",
+    "RETURN_SIGNED_PARTY1": "Возврат: подписал IT",
+    "RETURN_SIGNED_PARTY2": "Возврат: подписал получатель",
+    "RETURNED": "Возвращено",
+}
+
+
+def _csv_response(filename: str, header: list[str], rows: list[list]) -> StreamingResponse:
+    """CSV с BOM — чтобы Excel корректно открывал кириллицу."""
+    buffer = StringIO()
+    buffer.write("\ufeff")
+    writer = csv.writer(buffer, delimiter=";")
+    writer.writerow(header)
+    writer.writerows(rows)
+    buffer.seek(0)
+    return StreamingResponse(
+        iter([buffer.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/export/acts.csv")
+async def export_acts_csv(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    acts = db.query(Act).options(selectinload(Act.template)).order_by(Act.created_at.desc()).all()
+    rows = [[
+        f"ACT-{str(act.id).split('-')[0].upper()}",
+        act.template.name if act.template else "",
+        act.item_name,
+        act.party1_name,
+        act.party2_name,
+        act.issue_date.strftime("%d.%m.%Y") if act.issue_date else "",
+        _ACT_STATUS_RU.get(act.status.value if hasattr(act.status, "value") else str(act.status), str(act.status)),
+        act.return_date.strftime("%d.%m.%Y") if act.return_date else "",
+    ] for act in acts]
+    return _csv_response(
+        f"acts_{datetime.utcnow().strftime('%Y%m%d')}.csv",
+        ["Номер", "Шаблон", "Документ", "Выдал", "Получатель", "Дата выдачи", "Статус", "Дата возврата"],
+        rows,
+    )
+
+
+@router.get("/export/inventory.csv")
+async def export_inventory_csv(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    devices = db.query(InventoryDevice).order_by(InventoryDevice.name).all()
+    ipads = db.query(IpadDevice).order_by(IpadDevice.tag).all()
+    rows = [[
+        "Техника", device.name, device.model or "", device.serial_number or "",
+        device.inventory_number or "", device.status, device.assigned_to or "",
+    ] for device in devices] + [[
+        "iPad", ipad.device_name, ipad.model or "", ipad.serial_number,
+        ipad.tag, ipad.status, "",
+    ] for ipad in ipads]
+    return _csv_response(
+        f"inventory_{datetime.utcnow().strftime('%Y%m%d')}.csv",
+        ["Тип", "Название", "Модель", "Серийный номер", "Инв. номер / Tag", "Статус", "Закреплено за"],
+        rows,
+    )
 
 
 @router.get("/overview")

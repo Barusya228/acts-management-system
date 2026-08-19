@@ -166,6 +166,33 @@ def update_ipad(device_id: UUID, data: IpadDeviceUpdate, db: Session = Depends(g
     db.refresh(device); return _serialize(device)
 
 
+@router.post("/{device_id}/repair-complete")
+def complete_ipad_repair(
+    device_id: UUID,
+    note: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Ремонтный цикл: iPad с обслуживания возвращается в выдачу.
+
+    Единственный законный переход MAINTENANCE → AVAILABLE через UI,
+    с обязательной записью в аудит (что чинили — в note).
+    """
+    device = db.query(IpadDevice).filter(IpadDevice.id == device_id).with_for_update().first()
+    if not device:
+        raise HTTPException(status_code=404, detail="iPad не найден")
+    if device.status != "MAINTENANCE":
+        raise HTTPException(status_code=409, detail=f"iPad не на обслуживании (статус: {device.status})")
+    device.status = "AVAILABLE"
+    if note and note.strip():
+        stamp = f"Ремонт завершён: {note.strip()}"
+        device.notes = f"{device.notes}\n{stamp}" if device.notes else stamp
+    record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_REPAIR_COMPLETED", {"tag": device.tag, "note": note})
+    db.commit()
+    db.refresh(device)
+    return _serialize(device)
+
+
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_ipad(device_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
     device = db.query(IpadDevice).filter(IpadDevice.id == device_id).first()

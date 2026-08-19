@@ -20,6 +20,7 @@ const settingsNav = [
   { href: '/admin/reminders', icon: '✉️', label: 'Отправка документов', hint: 'Финальные письма получателям и история отправок' },
   { href: '/admin/kiosks', icon: '📱', label: 'Планшеты для подписи', hint: 'Привязка устройств для подписания' },
   { href: '/admin/backups', icon: '💾', label: 'Резервные копии', hint: 'Статус бэкапов БД и PDF' },
+  { href: '/admin/audit', icon: '🕐', label: 'Журнал действий', hint: 'Кто и что делал в системе' },
   { href: '/admin/help', icon: '🆘', label: 'Поддержка', hint: 'Справка по разделам и связь с разработчиком' },
 ];
 

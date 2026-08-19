@@ -17,19 +17,46 @@ router = APIRouter()
 ENROLLMENT_CODE_TTL_MINUTES = 10
 KIOSK_TOKEN_DAYS = 180
 
+# Простая защита от перебора пароля: не более N неудачных попыток с одного IP
+# за окно. In-memory — достаточно для единственного uvicorn-процесса.
+LOGIN_MAX_FAILURES = 10
+LOGIN_WINDOW_SECONDS = 300
+_login_failures: dict[str, list[float]] = {}
+
+
+def _check_login_rate_limit(client_ip: str) -> None:
+    now = datetime.utcnow().timestamp()
+    attempts = [ts for ts in _login_failures.get(client_ip, []) if now - ts < LOGIN_WINDOW_SECONDS]
+    _login_failures[client_ip] = attempts
+    if len(attempts) >= LOGIN_MAX_FAILURES:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Слишком много попыток входа. Повторите через несколько минут.",
+        )
+
+
+def _record_login_failure(client_ip: str) -> None:
+    _login_failures.setdefault(client_ip, []).append(datetime.utcnow().timestamp())
+
 
 @router.post("/login", response_model=Token)
 async def login(
     login_data: LoginRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    _check_login_rate_limit(client_ip)
+
     user = db.query(User).filter(User.username == login_data.username).first()
     
     if not user or not verify_password(login_data.password, user.password_hash):
+        _record_login_failure(client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный логин или пароль"
         )
+    _login_failures.pop(client_ip, None)
     
     if not user.is_active:
         raise HTTPException(

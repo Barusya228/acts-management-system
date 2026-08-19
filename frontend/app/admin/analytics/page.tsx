@@ -100,9 +100,33 @@ export default function AnalyticsPage() {
     return months[month - 1] || '';
   };
 
+  const downloadCsv = async (path: string, filename: string) => {
+    try {
+      const response = await api.get(path, { responseType: 'blob' });
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      // молча: тосты на этой странице не подключены
+    }
+  };
+
   return (
     <AdminLayout>
       <div className="mx-auto max-w-7xl">
+        <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+          <button type="button" onClick={() => downloadCsv('/api/analytics/export/acts.csv', 'acts.csv')}
+            className="min-h-11 rounded-xl bg-white px-4 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-blue-50">
+            ⬇ Акты в CSV
+          </button>
+          <button type="button" onClick={() => downloadCsv('/api/analytics/export/inventory.csv', 'inventory.csv')}
+            className="min-h-11 rounded-xl bg-white px-4 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-blue-50">
+            ⬇ Инвентарь в CSV
+          </button>
+        </div>
         {/* Общая статистика */}
         <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-5">
           <SurfaceCard className="p-4">
