@@ -37,6 +37,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Sliding session: пока вкладка открыта и пользователь авторизован,
+  // раз в 20 минут тихо обмениваем токен на свежий с полным сроком.
+  // Киоскам сервер отвечает 403 — их не трогаем.
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(async () => {
+      try {
+        const response = await api.post('/api/auth/refresh');
+        const { access_token } = response.data;
+        if (access_token) {
+          localStorage.setItem('token', access_token);
+          api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+        }
+      } catch {
+        // 401 обработает глобальный интерсептор, 403 (киоск) игнорируем
+      }
+    }, 20 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [user]);
+
   const fetchUser = async () => {
     try {
       const res = await api.get('/api/auth/me');

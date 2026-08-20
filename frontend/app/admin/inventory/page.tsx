@@ -570,10 +570,77 @@ export default function InventoryPage() {
         ) : loadError ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{loadError}</div>
         ) : inventoryView === 'ipads' ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <button type="button" onClick={() => { setIpadForm({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' }); setIpadBulk(false); setShowIpadModal(true); }} className="flex min-h-[170px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50 font-bold text-blue-700"><span className="text-3xl">+</span>Добавить iPad</button>
-            {ipadItems.map(item => <div key={item.id} className={`rounded-2xl border bg-white p-4 shadow-sm ${item.duplicate_tag_count > 1 ? 'border-amber-300 ring-2 ring-amber-100' : ''}`}><div className="flex justify-between gap-3"><div><p className="font-bold text-slate-800">{item.device_name}</p><p className="text-sm text-slate-500">{item.model || 'Без модели'}</p></div><span className={`h-fit rounded-full px-2 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'Косячный' : 'Списан'}</span></div>{item.duplicate_tag_count > 1 && <div className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800">Дубликат Tag · записей: {item.duplicate_tag_count}</div>}<div className="mt-4 space-y-1 font-mono text-sm text-slate-600"><p>Tag: {item.tag}</p><p>Serial: {item.serial_number}</p></div>{item.student_name && <div className="mt-3 rounded-xl bg-blue-50 p-3 text-sm"><p className="font-bold text-blue-900">{item.student_name}</p>{item.act_id && <Link href={`/admin/acts/${item.act_id}`} className="text-blue-600">Открыть акт</Link>}</div>}{item.notes && <p className="mt-3 text-sm text-slate-500">{item.notes}</p>}{item.status === 'MAINTENANCE' && <button type="button" onClick={() => { const note = window.prompt('Что было отремонтировано? (необязательно)') ?? ''; void api.post(`/api/ipad-inventory/${item.id}/repair-complete${note.trim() ? `?note=${encodeURIComponent(note.trim())}` : ''}`).then(() => { showToast('iPad возвращён в выдачу', 'success'); fetchIpads(); }).catch(() => showToast('Не удалось завершить ремонт', 'error')); }} className="mt-3 min-h-11 w-full rounded-xl bg-emerald-600 text-sm font-bold text-white transition hover:bg-emerald-700">✓ Ремонт завершён — в выдачу</button>}<button type="button" onClick={() => openIpadHistory(item.id)} className="mt-3 min-h-11 w-full rounded-xl bg-slate-100 text-sm font-bold text-slate-700 transition hover:bg-slate-200">📖 Паспорт устройства</button></div>)}
-          </div>
+          <>
+            <div className="mb-3 flex justify-end">
+              <button type="button" onClick={() => { setIpadForm({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' }); setIpadBulk(false); setShowIpadModal(true); }}
+                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700">
+                + Добавить iPad
+              </button>
+            </div>
+            {ipadItems.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+                <p className="font-black text-slate-700">iPad не найдены</p>
+                <p className="mt-1 text-sm text-slate-400">Измените фильтры или добавьте iPad.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <table className="w-full min-w-[860px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                      <th className="px-4 py-3 font-semibold">iPad</th>
+                      <th className="px-4 py-3 font-semibold">Tag</th>
+                      <th className="px-4 py-3 font-semibold">Serial</th>
+                      <th className="px-4 py-3 font-semibold">Статус</th>
+                      <th className="px-4 py-3 font-semibold">У кого</th>
+                      <th className="px-4 py-3 text-right font-semibold">Действия</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ipadItems.map(item => (
+                      <tr key={item.id} className={`border-b border-slate-100 last:border-b-0 hover:bg-slate-50 ${item.duplicate_tag_count > 1 ? 'bg-amber-50/60' : ''}`}>
+                        <td className="max-w-[200px] px-4 py-3">
+                          <span className="block truncate font-bold text-slate-900" title={item.notes || undefined}>📱 {item.device_name}{item.notes ? ' 📝' : ''}</span>
+                          <span className="block truncate text-xs text-slate-400">{item.model || 'Без модели'}</span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-700">
+                          {item.tag}
+                          {item.duplicate_tag_count > 1 && <span className="ml-2 rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-800">×{item.duplicate_tag_count}</span>}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{item.serial_number}</td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : item.status === 'RETIRED' ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'}`}>
+                            {item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'На ремонте' : 'Списан'}
+                          </span>
+                        </td>
+                        <td className="max-w-[180px] px-4 py-3">
+                          {item.student_name ? (
+                            item.act_id
+                              ? <Link href={`/admin/acts/${item.act_id}`} className="block truncate font-bold text-blue-700 hover:text-blue-800">{item.student_name}</Link>
+                              : <span className="block truncate text-slate-700">{item.student_name}</span>
+                          ) : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <div className="flex justify-end gap-2">
+                            {item.status === 'MAINTENANCE' && (
+                              <button type="button" title="Ремонт завершён — в выдачу"
+                                onClick={() => { const note = window.prompt('Что было отремонтировано? (необязательно)') ?? ''; void api.post(`/api/ipad-inventory/${item.id}/repair-complete${note.trim() ? `?note=${encodeURIComponent(note.trim())}` : ''}`).then(() => { showToast('iPad возвращён в выдачу', 'success'); fetchIpads(); }).catch(() => showToast('Не удалось завершить ремонт', 'error')); }}
+                                className="min-h-11 rounded-xl bg-emerald-600 px-3 text-sm font-bold text-white transition hover:bg-emerald-700">
+                                ✓ Ремонт
+                              </button>
+                            )}
+                            <button type="button" title="Паспорт устройства" onClick={() => openIpadHistory(item.id)}
+                              className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200">
+                              📖
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         ) : inventoryView === 'accessories' ? (
           smallEquipmentGroups.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
@@ -591,39 +658,67 @@ export default function InventoryPage() {
             </div>
           )
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <button type="button" onClick={openCreate} disabled={categoriesLoading}
-              className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-slate-400 shadow-sm transition hover:border-blue-400 hover:text-blue-500 disabled:cursor-not-allowed disabled:opacity-50">
-              <span className="text-3xl">+</span>
-              <span className="text-sm font-medium">Добавить устройство</span>
-            </button>
-            {devices.map(d => (
-              <div key={d.id} className="group rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition hover:shadow-md">
-                <div className="flex items-start gap-3">
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-2xl">{getCategoryIcon(d.category)}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-slate-800 truncate">{d.name}</p>
-                    {d.model && <p className="text-xs text-slate-500 truncate">{d.model}</p>}
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${getStatusBadge(d.status)}`}>{getStatusLabel(d.status)}</span>
-                      <span className="text-[10px] text-slate-400">{getCategoryLabel(d.category)}</span>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 gap-1 opacity-100 transition lg:opacity-0 lg:group-hover:opacity-100">
-                    <button onClick={() => openEdit(d)} className="rounded-lg bg-slate-100 p-1.5 text-xs text-slate-600 hover:bg-blue-100 hover:text-blue-700">✎</button>
-                    <button onClick={() => setDeleteTarget({ id: d.id, name: d.name })} className="rounded-lg bg-slate-100 p-1.5 text-xs text-slate-600 hover:bg-red-100 hover:text-red-700">✕</button>
-                  </div>
-                </div>
-                <div className="mt-2.5 space-y-1">
-                  <p className="text-xs text-slate-400">Инв: <span className="font-mono text-slate-600">{d.inventory_number}</span></p>
-                  <p className="text-xs text-slate-400">ШК: <span className="font-mono text-slate-600">{d.barcode || '—'}</span></p>
-                  {d.assigned_to && <p className="text-xs text-slate-500">👤 {d.assigned_to}</p>}
-                  {d.status === 'paper_issued' && (d.paper_act_number || d.paper_issue_date) && <p className="text-xs text-violet-600">Бумажный акт{d.paper_act_number ? ` № ${d.paper_act_number}` : ''}{d.paper_issue_date ? ` · ${new Date(d.paper_issue_date).toLocaleDateString('ru-RU')}` : ''}</p>}
-                  {d.notes?.trim() && <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 ring-1 ring-amber-100"><p className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Заметка</p><p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-amber-900">{d.notes}</p></div>}
-                </div>
+          <>
+            <div className="mb-3 flex justify-end">
+              <button type="button" onClick={openCreate} disabled={categoriesLoading}
+                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
+                + Добавить устройство
+              </button>
+            </div>
+            {devices.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+                <p className="font-black text-slate-700">Устройств не найдено</p>
+                <p className="mt-1 text-sm text-slate-400">Измените фильтры или добавьте устройство.</p>
               </div>
-            ))}
-          </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <table className="w-full min-w-[860px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                      <th className="px-4 py-3 font-semibold">Устройство</th>
+                      <th className="px-4 py-3 font-semibold">Категория</th>
+                      <th className="px-4 py-3 font-semibold">Инв. номер</th>
+                      <th className="px-4 py-3 font-semibold">Штрихкод</th>
+                      <th className="px-4 py-3 font-semibold">Статус</th>
+                      <th className="px-4 py-3 font-semibold">Закреплено</th>
+                      <th className="px-4 py-3 text-right font-semibold">Действия</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {devices.map(d => (
+                      <tr key={d.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50">
+                        <td className="max-w-[240px] px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="shrink-0 text-lg" aria-hidden>{getCategoryIcon(d.category)}</span>
+                            <span className="min-w-0">
+                              <span className="block truncate font-bold text-slate-900" title={d.notes?.trim() ? `Заметка: ${d.notes}` : undefined}>{d.name}{d.notes?.trim() ? ' 📝' : ''}</span>
+                              {d.model && <span className="block truncate text-xs text-slate-400">{d.model}</span>}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-600">{getCategoryLabel(d.category)}</td>
+                        <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{d.inventory_number}</td>
+                        <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{d.barcode || '—'}</td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadge(d.status)}`}>{getStatusLabel(d.status)}</span>
+                          {d.status === 'paper_issued' && (d.paper_act_number || d.paper_issue_date) && <span className="mt-0.5 block text-[11px] text-violet-600">Бум. акт{d.paper_act_number ? ` №${d.paper_act_number}` : ''}</span>}
+                        </td>
+                        <td className="max-w-[160px] px-4 py-3">
+                          <span className="block truncate text-slate-600">{d.assigned_to || '—'}</span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => openEdit(d)} className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-blue-100 hover:text-blue-700">✎</button>
+                            <button onClick={() => setDeleteTarget({ id: d.id, name: d.name })} className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-red-100 hover:text-red-700">✕</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
         {(inventoryView === 'devices' ? total : inventoryView === 'accessories' ? manualTotal : ipadTotal) > 24 && !loading && !loadError && (
           <div className="mt-5 flex items-center justify-between rounded-xl bg-white px-4 py-3 ring-1 ring-gray-100">

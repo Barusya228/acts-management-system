@@ -80,6 +80,26 @@ async def get_current_user_info(
     return current_user
 
 
+@router.post("/refresh", response_model=Token)
+async def refresh_token(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Sliding session: действующий токен обменивается на новый с полным сроком.
+
+    Киоск-токены не продлеваются здесь — у них свой длинный срок (KIOSK_TOKEN_DAYS)
+    и отзыв через статус устройства.
+    """
+    kiosk = getattr(request.state, "kiosk_device", None)
+    if kiosk is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Киоск-токен не продлевается")
+    access_token = create_access_token(
+        data={"sub": str(current_user.id)},
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 def _generate_enrollment_code() -> str:
     """Six digits, grouped for reading aloud across the room."""
     return f"{secrets.randbelow(1000):03d}-{secrets.randbelow(1000):03d}"
