@@ -113,6 +113,20 @@ export default function InventoryPage() {
   const [duplicateIpadTagsOnly, setDuplicateIpadTagsOnly] = useState(false);
   const [ipadBulk, setIpadBulk] = useState(false);
   const [ipadForm, setIpadForm] = useState({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' });
+  const [ipadHistory, setIpadHistory] = useState<{ device: IpadInventoryItem; events: { type: string; title: string; detail: string; status: string; act_id: string; created_at: string }[] } | null>(null);
+  const [ipadHistoryLoading, setIpadHistoryLoading] = useState(false);
+
+  const openIpadHistory = async (deviceId: string) => {
+    setIpadHistoryLoading(true);
+    try {
+      const response = await api.get(`/api/ipad-inventory/${deviceId}/history`);
+      setIpadHistory(response.data);
+    } catch {
+      showToast('Не удалось загрузить историю iPad', 'error');
+    } finally {
+      setIpadHistoryLoading(false);
+    }
+  };
 
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -558,7 +572,7 @@ export default function InventoryPage() {
         ) : inventoryView === 'ipads' ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <button type="button" onClick={() => { setIpadForm({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' }); setIpadBulk(false); setShowIpadModal(true); }} className="flex min-h-[170px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50 font-bold text-blue-700"><span className="text-3xl">+</span>Добавить iPad</button>
-            {ipadItems.map(item => <div key={item.id} className={`rounded-2xl border bg-white p-4 shadow-sm ${item.duplicate_tag_count > 1 ? 'border-amber-300 ring-2 ring-amber-100' : ''}`}><div className="flex justify-between gap-3"><div><p className="font-bold text-slate-800">{item.device_name}</p><p className="text-sm text-slate-500">{item.model || 'Без модели'}</p></div><span className={`h-fit rounded-full px-2 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'Косячный' : 'Списан'}</span></div>{item.duplicate_tag_count > 1 && <div className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800">Дубликат Tag · записей: {item.duplicate_tag_count}</div>}<div className="mt-4 space-y-1 font-mono text-sm text-slate-600"><p>Tag: {item.tag}</p><p>Serial: {item.serial_number}</p></div>{item.student_name && <div className="mt-3 rounded-xl bg-blue-50 p-3 text-sm"><p className="font-bold text-blue-900">{item.student_name}</p>{item.act_id && <Link href={`/admin/acts/${item.act_id}`} className="text-blue-600">Открыть акт</Link>}</div>}{item.notes && <p className="mt-3 text-sm text-slate-500">{item.notes}</p>}{item.status === 'MAINTENANCE' && <button type="button" onClick={() => { const note = window.prompt('Что было отремонтировано? (необязательно)') ?? ''; void api.post(`/api/ipad-inventory/${item.id}/repair-complete${note.trim() ? `?note=${encodeURIComponent(note.trim())}` : ''}`).then(() => { showToast('iPad возвращён в выдачу', 'success'); fetchIpads(); }).catch(() => showToast('Не удалось завершить ремонт', 'error')); }} className="mt-3 min-h-11 w-full rounded-xl bg-emerald-600 text-sm font-bold text-white transition hover:bg-emerald-700">✓ Ремонт завершён — в выдачу</button>}</div>)}
+            {ipadItems.map(item => <div key={item.id} className={`rounded-2xl border bg-white p-4 shadow-sm ${item.duplicate_tag_count > 1 ? 'border-amber-300 ring-2 ring-amber-100' : ''}`}><div className="flex justify-between gap-3"><div><p className="font-bold text-slate-800">{item.device_name}</p><p className="text-sm text-slate-500">{item.model || 'Без модели'}</p></div><span className={`h-fit rounded-full px-2 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'Косячный' : 'Списан'}</span></div>{item.duplicate_tag_count > 1 && <div className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-xs font-bold text-amber-800">Дубликат Tag · записей: {item.duplicate_tag_count}</div>}<div className="mt-4 space-y-1 font-mono text-sm text-slate-600"><p>Tag: {item.tag}</p><p>Serial: {item.serial_number}</p></div>{item.student_name && <div className="mt-3 rounded-xl bg-blue-50 p-3 text-sm"><p className="font-bold text-blue-900">{item.student_name}</p>{item.act_id && <Link href={`/admin/acts/${item.act_id}`} className="text-blue-600">Открыть акт</Link>}</div>}{item.notes && <p className="mt-3 text-sm text-slate-500">{item.notes}</p>}{item.status === 'MAINTENANCE' && <button type="button" onClick={() => { const note = window.prompt('Что было отремонтировано? (необязательно)') ?? ''; void api.post(`/api/ipad-inventory/${item.id}/repair-complete${note.trim() ? `?note=${encodeURIComponent(note.trim())}` : ''}`).then(() => { showToast('iPad возвращён в выдачу', 'success'); fetchIpads(); }).catch(() => showToast('Не удалось завершить ремонт', 'error')); }} className="mt-3 min-h-11 w-full rounded-xl bg-emerald-600 text-sm font-bold text-white transition hover:bg-emerald-700">✓ Ремонт завершён — в выдачу</button>}<button type="button" onClick={() => openIpadHistory(item.id)} className="mt-3 min-h-11 w-full rounded-xl bg-slate-100 text-sm font-bold text-slate-700 transition hover:bg-slate-200">📖 Паспорт устройства</button></div>)}
           </div>
         ) : inventoryView === 'accessories' ? (
           smallEquipmentGroups.length === 0 ? (
@@ -861,6 +875,46 @@ export default function InventoryPage() {
             <button disabled={deletingSmallEquipment} onClick={() => setDeleteSmallEquipmentTarget(null)} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">Отмена</button>
           </div>
         </Modal>
+      )}
+
+      {/* Паспорт iPad: вся история устройства */}
+      {(ipadHistory || ipadHistoryLoading) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" onClick={() => { setIpadHistory(null); setIpadHistoryLoading(false); }}>
+          <div className="flex max-h-[90dvh] w-full max-w-2xl flex-col rounded-3xl bg-white p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+            {ipadHistoryLoading || !ipadHistory ? (
+              <p className="py-12 text-center text-sm text-slate-400">Загрузка истории...</p>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-widest text-blue-600">Паспорт устройства</p>
+                    <h2 className="mt-1 truncate text-xl font-black">{ipadHistory.device.model || ipadHistory.device.device_name}</h2>
+                    <p className="mt-1 font-mono text-sm text-slate-500">Tag {ipadHistory.device.tag} · SN {ipadHistory.device.serial_number}</p>
+                  </div>
+                  <button onClick={() => setIpadHistory(null)} className="min-h-11 shrink-0 rounded-xl bg-slate-100 px-4 font-bold">Закрыть</button>
+                </div>
+                <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto">
+                  {ipadHistory.events.length === 0 ? (
+                    <div className="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-400">Событий пока нет — iPad ещё не выдавался.</div>
+                  ) : (
+                    ipadHistory.events.map((event, index) => (
+                      <div key={`${event.act_id}-${index}`} className="rounded-2xl bg-slate-50 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-900">{event.title}</p>
+                            {event.detail && <p className="mt-0.5 truncate text-sm text-slate-500">{event.detail}</p>}
+                          </div>
+                          <span className="shrink-0 text-xs text-slate-400">{new Date(event.created_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                        {event.act_id && <Link href={`/admin/acts/${event.act_id}`} className="mt-2 inline-block text-sm font-bold text-blue-600 hover:text-blue-700">Открыть акт →</Link>}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </AdminLayout>
   );

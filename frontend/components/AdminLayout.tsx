@@ -9,6 +9,7 @@ import LogoutModal from '@/components/LogoutModal';
 // Навигация по частоте использования: ежедневные разделы — на виду,
 // редко используемые (конфигурация системы) — в дропдауне «Настройки».
 const mainNav = [
+  { href: '/admin', icon: '🏠', label: 'Главная' },
   { href: '/admin/acts', icon: '📄', label: 'Акты' },
   { href: '/admin/inventory', icon: '💻', label: 'Техника' },
   { href: '/admin/participants', icon: '👥', label: 'Люди' },
@@ -52,6 +53,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   };
 
   const isActive = (href: string) => {
+    if (href === '/admin') return pathname === '/admin';
     if (href === '/admin/acts') return pathname === '/admin/acts' || pathname.startsWith('/admin/acts/');
     return pathname.startsWith(href);
   };

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
-from app.db.models import IpadDevice, IpadStudentAssignment, User
+from app.db.models import Act, IpadActAppendix, IpadDevice, IpadStudentAssignment, User
 from app.db.states import ACTIVE_IPAD_ASSIGNMENT_STATUSES
 from app.schemas.schemas import IpadDeviceBulkCreate, IpadDeviceCreate, IpadDeviceUpdate
 from app.services.audit_service import record_audit
@@ -164,6 +164,75 @@ def update_ipad(device_id: UUID, data: IpadDeviceUpdate, db: Session = Depends(g
     except IntegrityError:
         db.rollback(); raise HTTPException(status_code=409, detail="Serial Number уже используется")
     db.refresh(device); return _serialize(device)
+
+
+@router.get("/{device_id}/history")
+def ipad_history(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Паспорт устройства: все выдачи, повреждения, замены и ремонты iPad."""
+    device = db.query(IpadDevice).filter(IpadDevice.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="iPad не найден")
+
+    events: list[dict] = []
+
+    # Выдачи: каждое назначение ученику через акт.
+    assignments = db.query(IpadStudentAssignment).filter(
+        IpadStudentAssignment.ipad_device_id == device.id
+    ).all()
+    act_ids = {item.act_id for item in assignments}
+    acts = {act.id: act for act in db.query(Act).filter(Act.id.in_(act_ids)).all()} if act_ids else {}
+    for item in assignments:
+        act = acts.get(item.act_id)
+        events.append({
+            "type": "ASSIGNMENT",
+            "title": f"Выдан ученику: {item.student_name}",
+            "detail": f"Акт ACT-{str(item.act_id).split('-')[0].upper()}" + (f" · {act.item_name}" if act else ""),
+            "status": item.status,
+            "act_id": str(item.act_id),
+            "created_at": item.created_at.isoformat(),
+        })
+
+    # Приложения: замены (старый/новый), выбытия, поздние возвраты — по payload.
+    device_id_str = str(device.id)
+    appendices = db.query(IpadActAppendix).filter(IpadActAppendix.status == "APPLIED").all()
+    for appendix in appendices:
+        payload = appendix.payload_json or {}
+        related = device_id_str in {
+            str(payload.get("old_device_id")), str(payload.get("new_device_id")), str(payload.get("device_id")),
+        }
+        if not related and appendix.operation_type == "YEAR_END_RETURN":
+            related = any(str(item.get("device_id")) == device_id_str for item in payload.get("items", []) if isinstance(item, dict))
+        if not related:
+            continue
+        titles = {
+            "IPAD_REPLACEMENT": "Замена iPad",
+            "STUDENT_DEPARTURE": "Выбытие ученика",
+            "STUDENT_ADDITION": "Добавление ученика",
+            "LATE_RETURN": "Поздний возврат",
+            "YEAR_END_RETURN": "Годовой возврат",
+        }
+        role = ""
+        if appendix.operation_type == "IPAD_REPLACEMENT":
+            role = " (заменён)" if str(payload.get("old_device_id")) == device_id_str else " (выдан взамен)"
+        condition = payload.get("reason_label") or payload.get("return_condition_label") or payload.get("condition_label")
+        events.append({
+            "type": "APPENDIX",
+            "title": titles.get(appendix.operation_type, appendix.operation_type) + role,
+            "detail": (payload.get("student_name") or "") + (f" · {condition}" if condition else ""),
+            "status": appendix.operation_type,
+            "act_id": str(appendix.act_id),
+            "created_at": (appendix.applied_at or appendix.created_at).isoformat(),
+        })
+
+    events.sort(key=lambda item: item["created_at"], reverse=True)
+    return {
+        "device": _serialize(device),
+        "events": events,
+    }
 
 
 @router.post("/{device_id}/repair-complete")

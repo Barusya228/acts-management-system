@@ -85,6 +85,61 @@ async def export_inventory_csv(
     )
 
 
+@router.get("/dashboard")
+async def get_dashboard(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    """Сводка для стартового экрана админки: акты, iPad-парк, последние события."""
+    pending_acts = db.query(Act).filter(
+        Act.status.in_([ActStatus.DRAFT, ActStatus.SIGNED_PARTY1, ActStatus.SIGNED_PARTY2])
+    ).count()
+    completed_acts = db.query(Act).filter(Act.status == ActStatus.COMPLETED).count()
+    return_in_progress = db.query(Act).filter(Act.status.in_([
+        ActStatus.RETURN_INITIATED, ActStatus.RETURN_SIGNED_PARTY1, ActStatus.RETURN_SIGNED_PARTY2,
+    ])).count()
+
+    ipad_counts = dict(
+        db.query(IpadDevice.status, func.count(IpadDevice.id)).group_by(IpadDevice.status).all()
+    )
+    device_counts = {
+        (key.value if hasattr(key, "value") else str(key)): value
+        for key, value in db.query(InventoryDevice.status, func.count(InventoryDevice.id)).group_by(InventoryDevice.status).all()
+    }
+
+    from app.db.models import AuditLog
+    recent = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(8).all()
+    actor_ids = {item.user_id for item in recent if item.user_id}
+    actors = {u.id: u.full_name for u in db.query(User).filter(User.id.in_(actor_ids)).all()} if actor_ids else {}
+
+    return {
+        "acts": {
+            "pending": pending_acts,
+            "completed": completed_acts,
+            "return_in_progress": return_in_progress,
+        },
+        "ipads": {
+            "available": ipad_counts.get("AVAILABLE", 0),
+            "issued": ipad_counts.get("ISSUED", 0),
+            "reserved": ipad_counts.get("RESERVED", 0),
+            "return_pending": ipad_counts.get("RETURN_PENDING", 0),
+            "maintenance": ipad_counts.get("MAINTENANCE", 0),
+            "retired": ipad_counts.get("RETIRED", 0),
+        },
+        "devices": {
+            "available": device_counts.get("available", 0),
+            "issued": device_counts.get("issued", 0),
+        },
+        "recent_actions": [{
+            "id": str(item.id),
+            "actor": actors.get(item.user_id),
+            "action": item.action,
+            "entity_type": item.entity_type,
+            "created_at": item.created_at.isoformat(),
+        } for item in recent],
+    }
+
+
 @router.get("/overview")
 async def get_analytics_overview(
     db: Session = Depends(get_db),
