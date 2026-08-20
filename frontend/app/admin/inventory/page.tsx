@@ -609,7 +609,7 @@ export default function InventoryPage() {
                         <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{item.serial_number}</td>
                         <td className="whitespace-nowrap px-4 py-3">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : item.status === 'RETIRED' ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'}`}>
-                            {item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'На ремонте' : 'Списан'}
+                            {item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'Косячный' : 'Списан'}
                           </span>
                         </td>
                         <td className="max-w-[180px] px-4 py-3">
@@ -621,13 +621,6 @@ export default function InventoryPage() {
                         </td>
                         <td className="whitespace-nowrap px-4 py-3">
                           <div className="flex justify-end gap-2">
-                            {item.status === 'MAINTENANCE' && (
-                              <button type="button" title="Ремонт завершён — в выдачу"
-                                onClick={() => { const note = window.prompt('Что было отремонтировано? (необязательно)') ?? ''; void api.post(`/api/ipad-inventory/${item.id}/repair-complete${note.trim() ? `?note=${encodeURIComponent(note.trim())}` : ''}`).then(() => { showToast('iPad возвращён в выдачу', 'success'); fetchIpads(); }).catch(() => showToast('Не удалось завершить ремонт', 'error')); }}
-                                className="min-h-11 rounded-xl bg-emerald-600 px-3 text-sm font-bold text-white transition hover:bg-emerald-700">
-                                ✓ Ремонт
-                              </button>
-                            )}
                             <button type="button" title="Паспорт устройства" onClick={() => openIpadHistory(item.id)}
                               className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200">
                               📖

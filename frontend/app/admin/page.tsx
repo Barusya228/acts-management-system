@@ -22,7 +22,6 @@ const actionLabels: Record<string, string> = {
   IPAD_ACT_CREATED: 'Создан iPad-акт',
   IPAD_APPENDIX_CREATED: 'Создано приложение',
   IPAD_APPENDIX_APPLIED: 'Применено приложение',
-  IPAD_REPAIR_COMPLETED: 'Ремонт iPad завершён',
   KIOSK_ENROLLED: 'Планшет привязан',
   KIOSK_REVOKED: 'Планшет отозван',
   MANUAL_FINAL_EMAIL_QUEUED: 'Отправлено письмо',
@@ -86,7 +85,7 @@ export default function AdminDashboardPage() {
                 <Stat label="Выдано" value={data.ipads.issued} tone="text-blue-700" />
                 <Stat label="Зарезервировано" value={data.ipads.reserved} tone="text-amber-700" />
                 <Stat label="Ожидают возврата" value={data.ipads.return_pending} tone="text-violet-700" />
-                <Stat label="На ремонте" value={data.ipads.maintenance} tone="text-red-700" />
+                <Stat label="Косячные" value={data.ipads.maintenance} tone="text-red-700" />
                 <Stat label="Списано" value={data.ipads.retired} tone="text-slate-500" />
               </div>
             </section>
