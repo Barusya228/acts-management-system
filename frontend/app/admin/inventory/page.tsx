@@ -105,6 +105,7 @@ export default function InventoryPage() {
   const [catFilter, setCatFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [ipadStatusFilter, setIpadStatusFilter] = useState('');
+  const [ipadTagOrder, setIpadTagOrder] = useState<'asc' | 'desc'>('asc');
   const [filtersReady, setFiltersReady] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -170,9 +171,11 @@ export default function InventoryPage() {
     const params = new URLSearchParams(window.location.search);
     const view = params.get('view');
     const status = params.get('status');
+    const tagOrder = params.get('tag_order');
     if (view === 'devices' || view === 'accessories' || view === 'ipads') setInventoryView(view);
     if (status && view === 'ipads') setIpadStatusFilter(status.toUpperCase());
     if (status && view === 'devices') setStatusFilter(status.toLowerCase());
+    if (tagOrder === 'asc' || tagOrder === 'desc') setIpadTagOrder(tagOrder);
     setFiltersReady(true);
   }, []);
   useEffect(() => {
@@ -181,7 +184,7 @@ export default function InventoryPage() {
       else if (inventoryView === 'accessories') fetchManualAccessories();
       else fetchIpads();
     }
-  }, [user, filtersReady, inventoryView, catFilter, statusFilter, ipadStatusFilter, selectedGroup, selectedIpadGroup, duplicateIpadTagsOnly, page, refreshKey]);
+  }, [user, filtersReady, inventoryView, catFilter, statusFilter, ipadStatusFilter, ipadTagOrder, selectedGroup, selectedIpadGroup, duplicateIpadTagsOnly, page, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN' && filtersReady && inventoryView === 'ipads') fetchIpadGroups();
   }, [user, filtersReady, inventoryView, ipadStatusFilter, duplicateIpadTagsOnly, refreshKey]);
@@ -253,7 +256,6 @@ export default function InventoryPage() {
     try {
       const params = new URLSearchParams({ page: String(page), page_size: '24' });
       if (search) params.set('search', search);
-      if (ipadStatusFilter) params.set('status', ipadStatusFilter);
       const response = await api.get(`/api/inventory/small-equipment/catalog?${params.toString()}`);
       const items = Array.isArray(response.data) ? response.data : [];
       setSmallEquipmentGroups(items);
@@ -272,6 +274,8 @@ export default function InventoryPage() {
     try {
       const params = new URLSearchParams({ page: String(page), page_size: '24' });
       if (search) params.set('search', search);
+      if (ipadStatusFilter) params.set('status', ipadStatusFilter);
+      params.set('tag_order', ipadTagOrder);
       if (duplicateIpadTagsOnly) params.set('duplicate_tags_only', 'true');
       const activeGroup = ipadGroups.find(group => `${group.device_name}\u0000${group.model}` === selectedIpadGroup);
       if (activeGroup) params.set('model', activeGroup.model);
@@ -667,7 +671,17 @@ export default function InventoryPage() {
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                       <th className="px-4 py-3 font-semibold">iPad</th>
-                      <th className="px-4 py-3 font-semibold">Tag</th>
+                       <th className="px-4 py-3 font-semibold" aria-sort={ipadTagOrder === 'asc' ? 'ascending' : 'descending'}>
+                         <button
+                           type="button"
+                           onClick={() => { setIpadTagOrder(order => order === 'asc' ? 'desc' : 'asc'); setPage(1); }}
+                           className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 transition hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                           title={ipadTagOrder === 'asc' ? 'Сортировать Tag по убыванию' : 'Сортировать Tag по возрастанию'}
+                         >
+                           Tag
+                           <span className="text-base leading-none text-blue-600" aria-hidden>{ipadTagOrder === 'asc' ? '↑' : '↓'}</span>
+                         </button>
+                       </th>
                       <th className="px-4 py-3 font-semibold">Serial</th>
                       <th className="px-4 py-3 font-semibold">Статус</th>
                       <th className="px-4 py-3 font-semibold">У кого</th>

@@ -1,9 +1,9 @@
 import uuid
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_
+from sqlalchemy import BigInteger, case, cast, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -78,6 +78,7 @@ def list_ipads(
     status_value: Optional[str] = Query(None, alias="status"),
     model: Optional[str] = None,
     duplicate_tags_only: bool = Query(False),
+    tag_order: Literal["asc", "desc"] = Query("asc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -97,7 +98,30 @@ def list_ipads(
         )
         query = query.filter(IpadDevice.tag.in_(duplicate_tags))
     total = query.count()
-    devices = query.order_by(IpadDevice.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    tag_is_numeric = IpadDevice.tag.op("~")(r"^[0-9]+$")
+    numeric_bucket = case((tag_is_numeric, 0), else_=1)
+    tag_letters = func.lower(func.regexp_replace(IpadDevice.tag, r"[0-9]+", "", "g"))
+    tag_number = cast(
+        func.nullif(func.regexp_replace(IpadDevice.tag, r"[^0-9]+", "", "g"), ""),
+        BigInteger,
+    )
+    if tag_order == "desc":
+        ordering = (
+            numeric_bucket.asc(),
+            tag_letters.desc(),
+            tag_number.desc().nullslast(),
+            func.lower(IpadDevice.tag).desc(),
+            IpadDevice.created_at.desc(),
+        )
+    else:
+        ordering = (
+            numeric_bucket.asc(),
+            tag_letters.asc(),
+            tag_number.asc().nullslast(),
+            func.lower(IpadDevice.tag).asc(),
+            IpadDevice.created_at.desc(),
+        )
+    devices = query.order_by(*ordering).offset((page - 1) * page_size).limit(page_size).all()
     device_ids = [item.id for item in devices]
     assignments = db.query(IpadStudentAssignment).filter(
         IpadStudentAssignment.ipad_device_id.in_(device_ids),
