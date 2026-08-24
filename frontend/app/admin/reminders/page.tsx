@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AdminLayout from '@/components/AdminLayout';
-import ManualFinalEmail from '@/components/ManualFinalEmail';
+import ManualFinalEmailModal from '@/components/ManualFinalEmailModal';
 import StatusPill from '@/components/ui/StatusPill';
 import { getActStatusLabel } from '@/lib/actStatus';
 import { useAuth } from '@/contexts/AuthContext';
@@ -150,7 +150,7 @@ export default function AdminDocumentDispatchPage() {
                   <td className="whitespace-nowrap px-4 py-3">
                     <StatusPill status={act.status} label={getActStatusLabel(act.status)} />
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3">
+                  <td className="px-4 py-3">
                     {emailSent(act) || act.final_email_last_sent_at ? (
                       <span className="inline-flex flex-col">
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">✓ Отправлено</span>
@@ -176,7 +176,7 @@ export default function AdminDocumentDispatchPage() {
                       <button
                         type="button"
                         onClick={() => setEmailAct(act)}
-                        className="min-h-11 rounded-xl bg-blue-600 px-3 text-sm font-black text-white transition hover:bg-blue-700"
+                        className="min-h-11 whitespace-nowrap rounded-xl bg-blue-600 px-2.5 text-sm font-black text-white transition hover:bg-blue-700 lg:px-3"
                       >
                         ✉ Отправить
                       </button>
@@ -191,18 +191,7 @@ export default function AdminDocumentDispatchPage() {
     </div>
 
     {emailAct && (
-      <div className="fixed inset-0 z-40 overflow-y-auto bg-slate-950/70 p-3 sm:p-6">
-        <div className="mx-auto max-w-3xl">
-          <div className="mb-3 flex items-center justify-between rounded-2xl bg-white p-3">
-            <div className="min-w-0 px-2">
-              <p className="truncate font-black">{actTitle(emailAct)}</p>
-              <p className="text-xs text-slate-400">{shortId(emailAct)}</p>
-            </div>
-            <button onClick={closeEmailModal} className="min-h-11 shrink-0 rounded-xl bg-slate-100 px-4 text-sm font-bold">Закрыть</button>
-          </div>
-          <ManualFinalEmail actId={emailAct.id} />
-        </div>
-      </div>
+      <ManualFinalEmailModal actId={emailAct.id} title={actTitle(emailAct)} reference={shortId(emailAct)} onClose={closeEmailModal} />
     )}
   </AdminLayout>;
 }

@@ -68,8 +68,17 @@ const statusOptions = [
   { value: 'available', label: 'Не выдан', cls: 'bg-emerald-100 text-emerald-700' },
   { value: 'assigned', label: 'Выдан под акт', cls: 'bg-amber-100 text-amber-700' },
   { value: 'paper_issued', label: 'Выдан по бумажному акту', cls: 'bg-violet-100 text-violet-700' },
-  { value: 'maintenance', label: 'Косячный', cls: 'bg-red-100 text-red-700' },
+  { value: 'maintenance', label: 'На обслуживании', cls: 'bg-red-100 text-red-700' },
   { value: 'retired', label: 'Списан', cls: 'bg-gray-200 text-gray-600' },
+];
+
+const ipadStatusOptions = [
+  { value: 'AVAILABLE', label: 'Не выдан' },
+  { value: 'RESERVED', label: 'Зарезервирован' },
+  { value: 'ISSUED', label: 'Выдан' },
+  { value: 'RETURN_PENDING', label: 'Ожидает возврата' },
+  { value: 'MAINTENANCE', label: 'На обслуживании' },
+  { value: 'RETIRED', label: 'Списан' },
 ];
 
 const normalizedStatus = (status: string) => status === 'reserved' || status === 'issued' ? 'assigned' : status;
@@ -95,6 +104,8 @@ export default function InventoryPage() {
   const [search, setSearch] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [ipadStatusFilter, setIpadStatusFilter] = useState('');
+  const [filtersReady, setFiltersReady] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loadError, setLoadError] = useState('');
@@ -110,6 +121,9 @@ export default function InventoryPage() {
   const [ipadGroups, setIpadGroups] = useState<IpadGroup[]>([]);
   const [selectedIpadGroup, setSelectedIpadGroup] = useState('');
   const [showIpadModal, setShowIpadModal] = useState(false);
+  const [showSmallEquipmentModal, setShowSmallEquipmentModal] = useState(false);
+  const [smallEquipmentSaving, setSmallEquipmentSaving] = useState(false);
+  const [smallEquipmentForm, setSmallEquipmentForm] = useState({ name: '', model: '' });
   const [duplicateIpadTagsOnly, setDuplicateIpadTagsOnly] = useState(false);
   const [ipadBulk, setIpadBulk] = useState(false);
   const [ipadForm, setIpadForm] = useState({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' });
@@ -126,6 +140,12 @@ export default function InventoryPage() {
     } finally {
       setIpadHistoryLoading(false);
     }
+  };
+
+  const openCreateIpad = () => {
+    setIpadForm({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' });
+    setIpadBulk(false);
+    setShowIpadModal(true);
   };
 
   const [showModal, setShowModal] = useState(false);
@@ -147,15 +167,24 @@ export default function InventoryPage() {
     if (user && user.role !== 'ADMIN') { router.push('/guest'); }
   }, [user, router]);
   useEffect(() => {
-    if (user?.role === 'ADMIN') {
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get('view');
+    const status = params.get('status');
+    if (view === 'devices' || view === 'accessories' || view === 'ipads') setInventoryView(view);
+    if (status && view === 'ipads') setIpadStatusFilter(status.toUpperCase());
+    if (status && view === 'devices') setStatusFilter(status.toLowerCase());
+    setFiltersReady(true);
+  }, []);
+  useEffect(() => {
+    if (user?.role === 'ADMIN' && filtersReady) {
       if (inventoryView === 'devices') fetchDevices();
       else if (inventoryView === 'accessories') fetchManualAccessories();
       else fetchIpads();
     }
-  }, [user, inventoryView, catFilter, statusFilter, selectedGroup, selectedIpadGroup, duplicateIpadTagsOnly, page, refreshKey]);
+  }, [user, filtersReady, inventoryView, catFilter, statusFilter, ipadStatusFilter, selectedGroup, selectedIpadGroup, duplicateIpadTagsOnly, page, refreshKey]);
   useEffect(() => {
-    if (user?.role === 'ADMIN' && inventoryView === 'ipads') fetchIpadGroups();
-  }, [user, inventoryView, duplicateIpadTagsOnly, refreshKey]);
+    if (user?.role === 'ADMIN' && filtersReady && inventoryView === 'ipads') fetchIpadGroups();
+  }, [user, filtersReady, inventoryView, ipadStatusFilter, duplicateIpadTagsOnly, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchGroups();
   }, [user, catFilter, statusFilter, refreshKey]);
@@ -224,6 +253,7 @@ export default function InventoryPage() {
     try {
       const params = new URLSearchParams({ page: String(page), page_size: '24' });
       if (search) params.set('search', search);
+      if (ipadStatusFilter) params.set('status', ipadStatusFilter);
       const response = await api.get(`/api/inventory/small-equipment/catalog?${params.toString()}`);
       const items = Array.isArray(response.data) ? response.data : [];
       setSmallEquipmentGroups(items);
@@ -253,7 +283,9 @@ export default function InventoryPage() {
 
   const fetchIpadGroups = async () => {
     try {
-      const response = await api.get('/api/ipad-inventory/groups');
+      const params = new URLSearchParams();
+      if (ipadStatusFilter) params.set('status', ipadStatusFilter);
+      const response = await api.get(`/api/ipad-inventory/groups?${params}`);
       const nextGroups = Array.isArray(response.data) ? response.data : [];
       setIpadGroups(nextGroups);
       if (selectedIpadGroup && !nextGroups.some((group: IpadGroup) => `${group.device_name}\u0000${group.model}` === selectedIpadGroup)) {
@@ -300,8 +332,10 @@ export default function InventoryPage() {
     setSearch('');
     setCatFilter('');
     setStatusFilter('');
+    setIpadStatusFilter('');
     setPage(1);
     setSelectedGroup('');
+    setSelectedIpadGroup('');
     setRefreshKey(value => value + 1);
   };
 
@@ -482,6 +516,28 @@ export default function InventoryPage() {
     }
   };
 
+  const handleCreateSmallEquipment = async () => {
+    if (!smallEquipmentForm.name.trim()) {
+      showToast('Введите название мелкой техники', 'error');
+      return;
+    }
+    setSmallEquipmentSaving(true);
+    try {
+      await api.post('/api/inventory/small-equipment/catalog', {
+        name: smallEquipmentForm.name.trim(),
+        model: smallEquipmentForm.model.trim() || null,
+      });
+      setSmallEquipmentForm({ name: '', model: '' });
+      setShowSmallEquipmentModal(false);
+      await fetchManualAccessories();
+      showToast('Позиция мелкой техники добавлена', 'success');
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Не удалось добавить мелкую технику', 'error');
+    } finally {
+      setSmallEquipmentSaving(false);
+    }
+  };
+
   const getCategoryIcon = (code: string) => categories.find(category => category.code === code)?.icon || '📦';
   const getCategoryLabel = (code: string) => categories.find(category => category.code === code)?.name || code;
 
@@ -490,17 +546,41 @@ export default function InventoryPage() {
   return (
     <AdminLayout>
       <div className="mx-auto max-w-7xl">
-        <div className="mb-4 flex justify-end">
-          <button type="button" onClick={() => setShowCategoryModal(true)}
-            className="min-h-11 rounded-xl bg-white px-4 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-blue-50">
-            Категории
-          </button>
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">Техника</h1>
+            <p className="mt-1 text-sm text-slate-500">Инвентарные устройства, мелкая техника и парк iPad.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setShowCategoryModal(true)}
+              className="min-h-11 rounded-xl bg-white px-4 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-blue-50">
+              Категории
+            </button>
+            {inventoryView === 'devices' && (
+              <button type="button" onClick={openCreate} disabled={categoriesLoading}
+                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
+                + Добавить устройство
+              </button>
+            )}
+            {inventoryView === 'accessories' && (
+              <button type="button" onClick={() => setShowSmallEquipmentModal(true)}
+                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700">
+                + Добавить позицию
+              </button>
+            )}
+            {inventoryView === 'ipads' && (
+              <button type="button" onClick={openCreateIpad}
+                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700">
+                + Добавить iPad
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="mb-5 grid grid-cols-3 rounded-xl bg-slate-100 p-1">
-          <button type="button" onClick={() => { setInventoryView('devices'); setPage(1); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'devices' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Инвентарные устройства</button>
-          <button type="button" onClick={() => { setInventoryView('accessories'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'accessories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Мелкая техника · вручную</button>
-          <button type="button" onClick={() => { setInventoryView('ipads'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-4 text-sm font-bold transition ${inventoryView === 'ipads' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>iPad</button>
+          <button type="button" onClick={() => { setInventoryView('devices'); setPage(1); }} className={`min-h-12 rounded-lg px-2 text-xs font-bold transition md:text-sm lg:px-4 ${inventoryView === 'devices' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Инвентарные устройства</button>
+          <button type="button" onClick={() => { setInventoryView('accessories'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-2 text-xs font-bold transition md:text-sm lg:px-4 ${inventoryView === 'accessories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Мелкая техника · вручную</button>
+          <button type="button" onClick={() => { setInventoryView('ipads'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-2 text-xs font-bold transition md:text-sm lg:px-4 ${inventoryView === 'ipads' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>iPad</button>
         </div>
 
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -517,7 +597,12 @@ export default function InventoryPage() {
             <option value="">Все статусы</option>
             {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>}
-          {(search || catFilter || statusFilter) && (
+          {inventoryView === 'ipads' && <select value={ipadStatusFilter} onChange={e => { setIpadStatusFilter(e.target.value); setSelectedIpadGroup(''); setPage(1); }}
+            className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
+            <option value="">Все статусы</option>
+            {ipadStatusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>}
+          {(search || catFilter || statusFilter || ipadStatusFilter) && (
             <button type="button" onClick={resetFilters}
               className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-200">
               Сбросить фильтры
@@ -571,12 +656,6 @@ export default function InventoryPage() {
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{loadError}</div>
         ) : inventoryView === 'ipads' ? (
           <>
-            <div className="mb-3 flex justify-end">
-              <button type="button" onClick={() => { setIpadForm({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' }); setIpadBulk(false); setShowIpadModal(true); }}
-                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700">
-                + Добавить iPad
-              </button>
-            </div>
             {ipadItems.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
                 <p className="font-black text-slate-700">iPad не найдены</p>
@@ -584,7 +663,7 @@ export default function InventoryPage() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <table className="w-full min-w-[860px] text-left text-sm">
+                <table className="w-full min-w-[760px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                       <th className="px-4 py-3 font-semibold">iPad</th>
@@ -609,7 +688,7 @@ export default function InventoryPage() {
                         <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{item.serial_number}</td>
                         <td className="whitespace-nowrap px-4 py-3">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : item.status === 'RETIRED' ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'}`}>
-                            {item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'Косячный' : 'Списан'}
+                            {item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'На обслуживании' : 'Списан'}
                           </span>
                         </td>
                         <td className="max-w-[180px] px-4 py-3">
@@ -638,7 +717,10 @@ export default function InventoryPage() {
           smallEquipmentGroups.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
               <p className="font-semibold text-slate-700">Ручные позиции не найдены</p>
-              <p className="mt-1 text-sm text-slate-400">Они появятся после создания акта с мелкой техникой.</p>
+              <p className="mt-1 text-sm text-slate-400">Добавьте позицию в каталог, а количество укажите при создании акта.</p>
+              <button type="button" onClick={() => setShowSmallEquipmentModal(true)} className="mt-4 min-h-11 rounded-xl bg-blue-600 px-5 text-sm font-bold text-white hover:bg-blue-700">
+                + Добавить позицию
+              </button>
             </div>
           ) : (
             <div className="grid gap-3 lg:grid-cols-2">
@@ -652,12 +734,6 @@ export default function InventoryPage() {
           )
         ) : (
           <>
-            <div className="mb-3 flex justify-end">
-              <button type="button" onClick={openCreate} disabled={categoriesLoading}
-                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
-                + Добавить устройство
-              </button>
-            </div>
             {devices.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
                 <p className="font-black text-slate-700">Устройств не найдено</p>
@@ -665,16 +741,16 @@ export default function InventoryPage() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <table className="w-full min-w-[860px] text-left text-sm">
+                <table className="w-full min-w-[800px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                      <th className="px-4 py-3 font-semibold">Устройство</th>
-                      <th className="px-4 py-3 font-semibold">Категория</th>
-                      <th className="px-4 py-3 font-semibold">Инв. номер</th>
-                      <th className="px-4 py-3 font-semibold">Штрихкод</th>
-                      <th className="px-4 py-3 font-semibold">Статус</th>
-                      <th className="px-4 py-3 font-semibold">Закреплено</th>
-                      <th className="px-4 py-3 text-right font-semibold">Действия</th>
+                      <th className="px-3 py-3 font-semibold xl:px-4">Устройство</th>
+                      <th className="px-3 py-3 font-semibold xl:px-4">Категория</th>
+                      <th className="px-3 py-3 font-semibold xl:px-4">Инв. номер</th>
+                      <th className="px-3 py-3 font-semibold xl:px-4">Штрихкод</th>
+                      <th className="px-3 py-3 font-semibold xl:px-4">Статус</th>
+                      <th className="px-3 py-3 font-semibold xl:px-4">Закреплено</th>
+                      <th className="px-3 py-3 text-right font-semibold xl:px-4">Действия</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -689,11 +765,11 @@ export default function InventoryPage() {
                             </span>
                           </div>
                         </td>
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-600">{getCategoryLabel(d.category)}</td>
-                        <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{d.inventory_number}</td>
-                        <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{d.barcode || '—'}</td>
-                        <td className="whitespace-nowrap px-4 py-3">
-                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadge(d.status)}`}>{getStatusLabel(d.status)}</span>
+                        <td className="whitespace-nowrap px-3 py-3 text-slate-600 xl:px-4">{getCategoryLabel(d.category)}</td>
+                        <td className="whitespace-nowrap px-3 py-3 font-mono text-slate-600 xl:px-4">{d.inventory_number}</td>
+                        <td className="whitespace-nowrap px-3 py-3 font-mono text-slate-600 xl:px-4">{d.barcode || '—'}</td>
+                        <td className="px-3 py-3 lg:whitespace-nowrap xl:px-4">
+                          <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadge(d.status)}`}>{getStatusLabel(d.status)}</span>
                           {d.status === 'paper_issued' && (d.paper_act_number || d.paper_issue_date) && <span className="mt-0.5 block text-[11px] text-violet-600">Бум. акт{d.paper_act_number ? ` №${d.paper_act_number}` : ''}</span>}
                         </td>
                         <td className="max-w-[160px] px-4 py-3">
@@ -723,6 +799,39 @@ export default function InventoryPage() {
           </div>
         )}
       </div>
+
+      {showSmallEquipmentModal && (
+        <Modal onClose={() => { if (!smallEquipmentSaving) setShowSmallEquipmentModal(false); }} title="Добавить мелкую технику">
+          <p className="mb-5 text-sm leading-6 text-slate-500">Создайте позицию справочника. Количество, получатель и возврат указываются позже в акте.</p>
+          <div className="space-y-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Название *</span>
+              <input
+                value={smallEquipmentForm.name}
+                onChange={event => setSmallEquipmentForm(current => ({ ...current, name: event.target.value }))}
+                placeholder="Например, мышь Logitech"
+                className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                autoFocus
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Модель <span className="font-normal text-slate-400">(необязательно)</span></span>
+              <input
+                value={smallEquipmentForm.model}
+                onChange={event => setSmallEquipmentForm(current => ({ ...current, model: event.target.value }))}
+                placeholder="Например, M185"
+                className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+          </div>
+          <div className="mt-6 flex gap-3">
+            <button type="button" onClick={handleCreateSmallEquipment} disabled={smallEquipmentSaving} className="min-h-12 flex-1 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+              {smallEquipmentSaving ? 'Добавление...' : 'Добавить позицию'}
+            </button>
+            <button type="button" onClick={() => setShowSmallEquipmentModal(false)} disabled={smallEquipmentSaving} className="min-h-12 rounded-xl bg-slate-100 px-5 text-sm font-bold text-slate-700 disabled:opacity-50">Отмена</button>
+          </div>
+        </Modal>
+      )}
 
       {showModal && (
         <Modal onClose={() => setShowModal(false)} title={editId ? 'Редактировать устройство' : bulkMode ? 'Добавить несколько устройств' : 'Добавить устройство'}>
@@ -848,7 +957,7 @@ export default function InventoryPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button type="button" onClick={() => setIpadBulk(false)} className={`min-h-10 rounded-lg text-sm font-bold ${!ipadBulk ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Один iPad</button><button type="button" onClick={() => setIpadBulk(true)} className={`min-h-10 rounded-lg text-sm font-bold ${ipadBulk ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Несколько iPad</button></div>
             <div className="grid grid-cols-2 gap-2"><input value={ipadForm.device_name} onChange={e => setIpadForm({...ipadForm, device_name:e.target.value})} placeholder="Device name *" className="min-h-11 rounded-xl border px-3"/><input value={ipadForm.model} onChange={e => setIpadForm({...ipadForm, model:e.target.value})} placeholder="Model" className="min-h-11 rounded-xl border px-3"/></div>
-            <select value={ipadForm.status} onChange={e => setIpadForm({...ipadForm, status:e.target.value})} className="min-h-11 w-full rounded-xl border px-3"><option value="AVAILABLE">Не выдан</option><option value="MAINTENANCE">Косячный</option><option value="RETIRED">Списан</option></select>
+            <select value={ipadForm.status} onChange={e => setIpadForm({...ipadForm, status:e.target.value})} className="min-h-11 w-full rounded-xl border px-3"><option value="AVAILABLE">Не выдан</option><option value="MAINTENANCE">На обслуживании</option><option value="RETIRED">Списан</option></select>
             {ipadBulk ? <textarea value={ipadForm.list} onChange={e => setIpadForm({...ipadForm, list:e.target.value})} rows={9} placeholder={'Tag    Serial Number\n116563 DMPFJS82Q1GG'} className="w-full rounded-xl border p-3 font-mono text-sm"/> : <><div className="grid grid-cols-2 gap-2"><input value={ipadForm.tag} onChange={e => setIpadForm({...ipadForm, tag:e.target.value})} placeholder="Tag *" className="min-h-11 rounded-xl border px-3"/><input value={ipadForm.serial_number} onChange={e => setIpadForm({...ipadForm, serial_number:e.target.value})} placeholder="Serial Number *" className="min-h-11 rounded-xl border px-3"/></div><textarea value={ipadForm.notes} onChange={e => setIpadForm({...ipadForm, notes:e.target.value})} rows={3} placeholder="Заметка" className="w-full rounded-xl border p-3 text-sm"/></>}
           </div><div className="mt-5 flex gap-2"><button disabled={saving} onClick={saveIpads} className="min-h-12 flex-1 rounded-xl bg-slate-900 font-bold text-white">{saving ? 'Сохранение...' : 'Добавить'}</button><button onClick={() => setShowIpadModal(false)} className="min-h-12 rounded-xl bg-slate-100 px-4">Отмена</button></div>
         </Modal>
@@ -1010,11 +1119,11 @@ export default function InventoryPage() {
 
 function Modal({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold">{title}</h2>
-          <button onClick={onClose} className="rounded-lg p-1 text-gray-400 hover:text-gray-600">✕</button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <h2 className="text-lg font-black text-slate-900">{title}</h2>
+          <button onClick={onClose} aria-label="Закрыть" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-700">✕</button>
         </div>
         {children}
       </div>

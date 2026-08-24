@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
+import ThemeToggle from '@/components/ThemeToggle';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, loginAsGuest } = useAuth();
@@ -32,7 +33,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-100 text-slate-900">
+    <div className="theme-shell min-h-screen flex flex-col bg-gray-100 text-slate-900">
       <nav className="bg-white border-b border-gray-200 px-4 py-2.5 shadow-sm">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <div className="flex min-w-0 items-center gap-2 md:gap-4">
@@ -55,6 +56,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <span className="font-medium text-slate-900">{user.full_name || user.email}</span>
               <span className="ml-2 text-slate-400">Гость</span>
             </div>
+            <ThemeToggle />
             <button
               type="button"
               onClick={handleAdminClick}

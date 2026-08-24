@@ -125,7 +125,7 @@ class ActBase(BaseModel):
 
 class ActCreate(ActBase):
     party1_participant_id: UUID4
-    inventory_device_id: UUID4
+    inventory_device_id: Optional[UUID4] = None
 
 
 class ActUpdate(BaseModel):
@@ -146,6 +146,10 @@ class ActResponse(ActBase):
     template_code: Optional[str] = None
     advisory_group: Optional[str] = None
     student_count: Optional[int] = None
+    item_barcode: Optional[str] = None
+    final_email_last_sent_at: Optional[datetime] = None
+    final_email_status: Optional[str] = None
+    final_email_status_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True

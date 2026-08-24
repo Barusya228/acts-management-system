@@ -77,10 +77,10 @@ export default function CreateIpad() {
     } finally { setSaving(false); }
   };
 
-  if (!user) return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-400">Загрузка...</div>;
+  if (!user) return <div className="theme-shell flex min-h-screen items-center justify-center bg-slate-50 text-slate-400">Загрузка...</div>;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="theme-shell min-h-screen bg-slate-50 text-slate-900">
       <header className="flex items-center justify-between gap-2 bg-white px-3 py-3 shadow-sm sm:px-5"><Link href={user.role === 'ADMIN' ? '/admin/acts' : '/guest'} className="flex min-h-11 shrink-0 items-center text-sm text-slate-500">← Назад</Link><h1 className="min-w-0 truncate font-bold">Акт iPad для advisory</h1><span /></header>
       <main className="mx-auto max-w-5xl space-y-5 p-4 lg:p-6">
         <section className="rounded-2xl bg-gradient-to-br from-indigo-700 to-blue-600 p-5 text-white shadow-lg">

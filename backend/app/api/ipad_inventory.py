@@ -193,7 +193,7 @@ def ipad_history(
             "detail": f"Акт ACT-{str(item.act_id).split('-')[0].upper()}" + (f" · {act.item_name}" if act else ""),
             "status": item.status,
             "act_id": str(item.act_id),
-            "created_at": item.created_at.isoformat(),
+            "created_at": item.assigned_at.isoformat(),
         })
 
     # Приложения: замены (старый/новый), выбытия, поздние возвраты — по payload.

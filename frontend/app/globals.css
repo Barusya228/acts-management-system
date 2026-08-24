@@ -1,4 +1,4 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -8,4 +8,205 @@
     padding-left: env(safe-area-inset-left);
     padding-right: env(safe-area-inset-right);
   }
+}
+
+/* Тёмная тема применяется к контейнерам .theme-shell: админка, гостевые страницы
+   и страницы актов. Kiosk-экраны остаются светлыми (там нет .theme-shell). */
+html[data-admin-theme='dark'] .theme-shell {
+  color-scheme: dark;
+  background-color: rgb(2 6 23);
+  color: rgb(226 232 240);
+}
+
+/* Произвольный светлый фон страниц просмотра актов (bg-[#eef2f6]) */
+html[data-admin-theme='dark'] .theme-shell.bg-\[\#eef2f6\],
+html[data-admin-theme='dark'] .theme-shell .bg-\[\#eef2f6\] {
+  background-color: rgb(2 6 23);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-white,
+html[data-admin-theme='dark'] .theme-shell .bg-white\/80,
+html[data-admin-theme='dark'] .theme-shell .bg-white\/95 {
+  background-color: rgb(15 23 42);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-gray-50,
+html[data-admin-theme='dark'] .theme-shell .bg-slate-50 {
+  background-color: rgb(15 23 42);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-gray-100,
+html[data-admin-theme='dark'] .theme-shell .bg-slate-100 {
+  background-color: rgb(30 41 59);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-gray-200,
+html[data-admin-theme='dark'] .theme-shell .bg-slate-200 {
+  background-color: rgb(51 65 85);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-amber-50,
+html[data-admin-theme='dark'] .theme-shell .bg-amber-100,
+html[data-admin-theme='dark'] .theme-shell .bg-yellow-50,
+html[data-admin-theme='dark'] .theme-shell .bg-yellow-100 {
+  background-color: rgb(120 53 15 / 0.38);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-amber-50\/40 {
+  background-color: rgb(120 53 15 / 0.14);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-amber-50\/60 {
+  background-color: rgb(120 53 15 / 0.22);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-orange-50,
+html[data-admin-theme='dark'] .theme-shell .bg-orange-100 {
+  background-color: rgb(124 45 18 / 0.38);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-emerald-50,
+html[data-admin-theme='dark'] .theme-shell .bg-emerald-100,
+html[data-admin-theme='dark'] .theme-shell .bg-green-50,
+html[data-admin-theme='dark'] .theme-shell .bg-green-100 {
+  background-color: rgb(6 78 59 / 0.38);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-blue-50,
+html[data-admin-theme='dark'] .theme-shell .bg-blue-100,
+html[data-admin-theme='dark'] .theme-shell .bg-sky-50,
+html[data-admin-theme='dark'] .theme-shell .bg-sky-100,
+html[data-admin-theme='dark'] .theme-shell .bg-cyan-50,
+html[data-admin-theme='dark'] .theme-shell .bg-cyan-100 {
+  background-color: rgb(30 64 175 / 0.3);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-violet-50,
+html[data-admin-theme='dark'] .theme-shell .bg-violet-100,
+html[data-admin-theme='dark'] .theme-shell .bg-purple-50,
+html[data-admin-theme='dark'] .theme-shell .bg-purple-100,
+html[data-admin-theme='dark'] .theme-shell .bg-indigo-50,
+html[data-admin-theme='dark'] .theme-shell .bg-indigo-100 {
+  background-color: rgb(76 29 149 / 0.34);
+}
+
+html[data-admin-theme='dark'] .theme-shell .bg-red-50,
+html[data-admin-theme='dark'] .theme-shell .bg-red-100,
+html[data-admin-theme='dark'] .theme-shell .bg-rose-50,
+html[data-admin-theme='dark'] .theme-shell .bg-rose-100,
+html[data-admin-theme='dark'] .theme-shell .bg-pink-50,
+html[data-admin-theme='dark'] .theme-shell .bg-pink-100 {
+  background-color: rgb(127 29 29 / 0.36);
+}
+
+html[data-admin-theme='dark'] .theme-shell .text-gray-900,
+html[data-admin-theme='dark'] .theme-shell .text-slate-900,
+html[data-admin-theme='dark'] .theme-shell .text-gray-800,
+html[data-admin-theme='dark'] .theme-shell .text-slate-800 {
+  color: rgb(248 250 252);
+}
+
+html[data-admin-theme='dark'] .theme-shell .text-gray-700,
+html[data-admin-theme='dark'] .theme-shell .text-slate-700,
+html[data-admin-theme='dark'] .theme-shell .text-gray-600,
+html[data-admin-theme='dark'] .theme-shell .text-slate-600 {
+  color: rgb(203 213 225);
+}
+
+html[data-admin-theme='dark'] .theme-shell .text-gray-500,
+html[data-admin-theme='dark'] .theme-shell .text-slate-500 {
+  color: rgb(148 163 184);
+}
+
+html[data-admin-theme='dark'] .theme-shell .text-gray-400,
+html[data-admin-theme='dark'] .theme-shell .text-slate-400,
+html[data-admin-theme='dark'] .theme-shell .text-gray-300,
+html[data-admin-theme='dark'] .theme-shell .text-slate-300 {
+  color: rgb(148 163 184);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.text-blue-600, .text-blue-700, .text-blue-800, .text-sky-600, .text-sky-700, .text-cyan-700) {
+  color: rgb(147 197 253);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.text-emerald-600, .text-emerald-700, .text-emerald-800, .text-green-600, .text-green-700, .text-green-800) {
+  color: rgb(110 231 183);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.text-amber-600, .text-amber-700, .text-amber-800, .text-yellow-700, .text-yellow-800, .text-orange-600, .text-orange-700, .text-orange-800) {
+  color: rgb(253 186 116);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.text-red-600, .text-red-700, .text-red-800, .text-rose-600, .text-rose-700, .text-rose-800) {
+  color: rgb(252 165 165);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.text-violet-600, .text-violet-700, .text-violet-800, .text-violet-900, .text-purple-600, .text-purple-700, .text-indigo-600, .text-indigo-700) {
+  color: rgb(196 181 253);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.border-gray-100, .border-gray-200, .border-gray-300, .border-slate-100, .border-slate-200, .border-slate-300) {
+  border-color: rgb(51 65 85);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.border-blue-100, .border-blue-200, .border-blue-300) {
+  border-color: rgb(30 64 175);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.border-emerald-100, .border-emerald-200, .border-green-200) {
+  border-color: rgb(6 95 70);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.border-amber-100, .border-amber-200, .border-orange-200, .border-orange-300, .border-yellow-200) {
+  border-color: rgb(146 64 14);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.border-red-100, .border-red-200, .border-red-300, .border-rose-200) {
+  border-color: rgb(153 27 27);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.border-violet-100, .border-violet-200, .border-purple-200, .border-indigo-200) {
+  border-color: rgb(91 33 182);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(.ring-gray-100, .ring-gray-200, .ring-slate-100, .ring-slate-200) {
+  --tw-ring-color: rgb(51 65 85);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(input, select, textarea) {
+  background-color: rgb(15 23 42);
+  color: rgb(241 245 249);
+}
+
+html[data-admin-theme='dark'] .theme-shell :is(input, textarea)::placeholder {
+  color: rgb(100 116 139);
+}
+
+html[data-admin-theme='dark'] .theme-shell .from-blue-50 {
+  --tw-gradient-from: rgb(23 37 84) var(--tw-gradient-from-position);
+  --tw-gradient-to: rgb(23 37 84 / 0) var(--tw-gradient-to-position);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+
+html[data-admin-theme='dark'] .theme-shell .to-white {
+  --tw-gradient-to: rgb(15 23 42) var(--tw-gradient-to-position);
+}
+
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-gray-50:hover,
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-slate-50:hover,
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-gray-100:hover,
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-slate-100:hover,
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-gray-200:hover,
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-slate-200:hover {
+  background-color: rgb(51 65 85);
+}
+
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-blue-50:hover,
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-blue-100:hover {
+  background-color: rgb(30 64 175 / 0.42);
+}
+
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-red-50:hover,
+html[data-admin-theme='dark'] .theme-shell .hover\:bg-red-100:hover {
+  background-color: rgb(127 29 29 / 0.5);
 }

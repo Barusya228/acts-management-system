@@ -753,13 +753,14 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
           };
         })
     : [];
+  const accessoriesOnly = act.extra_data_json?.accessories_only === true;
   const mergedEquipmentList: Array<EquipmentItem & { source: string }> = [
-    {
+    ...(!accessoriesOnly ? [{
       name: String(act.item_name ?? ''),
       serial: String(act.item_serial ?? ''),
       imei: String(act.extra_data_json?.imei ?? ''),
       source: 'Основное',
-    },
+    }] : []),
     ...equipmentList.map((item) => ({
       ...item,
       source: 'Доп.',
@@ -780,7 +781,7 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
     : [mergedEquipmentList];
   const advisoryNote = String(act.extra_data_json?.advisory_note ?? '').trim();
   const extraEntries = Object.entries(act.extra_data_json || {}).filter(
-    ([key]) => key !== 'equipment_list' && key !== 'accessories' && key !== 'recipients' && key !== 'advisory_note' && key !== 'party1_participant_id' && key !== 'inventory_category'
+    ([key]) => key !== 'equipment_list' && key !== 'accessories' && key !== 'accessories_only' && key !== 'recipients' && key !== 'advisory_note' && key !== 'party1_participant_id' && key !== 'inventory_category'
   );
   const party1Email = participants.find((participant) => participant.full_name === act.party1_name)?.email || '—';
   const party2Email = recipients.map((recipient) => recipient.email).filter(Boolean).join(', ') || act.receiver_email || '—';
@@ -1283,22 +1284,22 @@ export default function ActViewPage({ params }: { params: Promise<{ id: string }
                   </p>
                 )}
                 {isIpadTemplate ? (
-                  <div className={`grid gap-4 ${ipadEquipmentColumns.length > 1 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
+                  <div className={`grid gap-4 ${ipadEquipmentColumns.length > 1 ? 'xl:grid-cols-2' : 'grid-cols-1'}`}>
                     {ipadEquipmentColumns.map((columnItems, columnIndex) => {
                       const startIndex = columnIndex === 0 ? 0 : Math.ceil(mergedEquipmentList.length / 2);
                       return (
-                        <div key={`ipad-column-${columnIndex}`} className="overflow-hidden rounded border border-gray-200">
-                          <table className="w-full text-sm">
+                        <div key={`ipad-column-${columnIndex}`} className="overflow-x-auto rounded border border-gray-200">
+                          <table className="w-full min-w-[440px] text-sm">
                             <thead className="bg-gray-50">
                               <tr>
                                 <th className="w-16 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">№</th>
                                 <th className="border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
                                   Student name
                                 </th>
-                                <th className="w-56 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
+                                <th className="w-40 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600 xl:w-56">
                                   iPad Tag
                                 </th>
-                                <th className="w-48 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600">
+                                <th className="w-36 border-b border-gray-200 px-3 py-2 text-left text-xs font-semibold text-gray-600 xl:w-48">
                                   IMEI
                                 </th>
                               </tr>

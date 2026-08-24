@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import api from '@/lib/api';
 import { apiErrorMessage } from '@/lib/apiError';
+import { auditActionLabel, auditEntityLabel, auditEntityLabels } from '@/lib/auditLabels';
 
 interface AuditEntry {
   id: string;
@@ -19,42 +20,6 @@ interface AuditEntry {
 }
 
 const PAGE_SIZE = 50;
-
-const entityLabels: Record<string, string> = {
-  ACT: 'Акт',
-  TEMPLATE: 'Шаблон',
-  PARTICIPANT: 'Участник',
-  INVENTORY: 'Техника',
-  IPAD_DEVICE: 'iPad',
-  IPAD_APPENDIX: 'Приложение iPad',
-  KIOSK: 'Планшет',
-  USER: 'Пользователь',
-};
-
-// Человекочитаемые подписи действий; неизвестные показываем как есть.
-const actionLabels: Record<string, string> = {
-  ACT_CREATED: 'Создан акт',
-  ACT_UPDATED: 'Изменён акт',
-  ACT_DELETED: 'Удалён акт',
-  ACT_SIGNED_PARTY1: 'Подписал IT',
-  ACT_SIGNED_PARTY2: 'Подписал получатель',
-  RETURN_STARTED: 'Начат возврат',
-  IPAD_ACT_CREATED: 'Создан iPad-акт',
-  IPAD_APPENDIX_CREATED: 'Создано приложение',
-  IPAD_APPENDIX_APPLIED: 'Применено приложение',
-  IPAD_APPENDIX_CANCELLED: 'Отменено приложение',
-  IPAD_APPENDIX_RESPONSIBLE_SIGNED: 'Приложение: подписал ответственный',
-  IPAD_APPENDIX_ISSUER_SIGNED: 'Приложение: подписал IT',
-  IPAD_YEAR_END_RETURN_COMPLETED: 'Годовой возврат завершён',
-  KIOSK_ENROLLMENT_CREATED: 'Создан код привязки',
-  KIOSK_ENROLLED: 'Планшет привязан',
-  KIOSK_REVOKED: 'Планшет отозван',
-  MANUAL_FINAL_EMAIL_QUEUED: 'Отправлено финальное письмо',
-  REMINDER_SENT: 'Отправлено напоминание',
-};
-
-const actionLabel = (action: string) => actionLabels[action] || action.replace(/_/g, ' ').toLowerCase();
-const entityLabel = (entity: string) => entityLabels[entity] || entity;
 
 export default function AdminAuditPage() {
   const { user, loading: authLoading } = useAuth();
@@ -108,7 +73,7 @@ export default function AdminAuditPage() {
             className="min-h-11 rounded-xl border border-gray-200 bg-white px-4 text-sm outline-none focus:border-blue-400"
           >
             <option value="">Все объекты</option>
-            {Object.entries(entityLabels).map(([value, label]) => (
+            {Object.entries(auditEntityLabels).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
@@ -143,12 +108,12 @@ export default function AdminAuditPage() {
                       <span className="block truncate font-bold text-slate-900">{item.actor || 'Система'}</span>
                     </td>
                     <td className="max-w-[240px] px-4 py-3">
-                      <span className="block truncate text-slate-700">{actionLabel(item.action)}</span>
+                      <span className="block truncate text-slate-700">{auditActionLabel(item.action)}</span>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{entityLabel(item.entity_type)}</span>
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{auditEntityLabel(item.entity_type)}</span>
                     </td>
-                    <td className="max-w-[280px] px-4 py-3">
+                    <td className="max-w-[200px] px-4 py-3 xl:max-w-[280px]">
                       <span className="block truncate text-xs text-slate-500" title={JSON.stringify(item.metadata)}>
                         {Object.entries(item.metadata || {})
                           .filter(([, value]) => typeof value !== 'object')

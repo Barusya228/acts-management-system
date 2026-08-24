@@ -215,10 +215,10 @@ export default function IpadActPage() {
   }, [pdfUrl]);
 
   if (loadError) {
-    return <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-center text-red-600"><p>{loadError}</p><button onClick={retryLoad} className="min-h-11 rounded-xl bg-slate-900 px-5 font-bold text-white">Повторить</button></div>;
+    return <div className="theme-shell flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 p-6 text-center text-red-600"><p>{loadError}</p><button onClick={retryLoad} className="min-h-11 rounded-xl bg-slate-900 px-5 font-bold text-white">Повторить</button></div>;
   }
   if (!act) {
-    return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-400">Загрузка...</div>;
+    return <div className="theme-shell flex min-h-screen items-center justify-center bg-slate-50 text-slate-400">Загрузка...</div>;
   }
 
   const pendingResponsible = act.responsibles.find(item => !item.signed_at);
@@ -463,7 +463,7 @@ export default function IpadActPage() {
         ? `Подтверждает IT: ${act.issuer}`
         : statusLabel;
 
-  return <div className="min-h-screen bg-[#eef2f6] text-slate-900">
+  return <div className="theme-shell min-h-screen bg-[#eef2f6] text-slate-900">
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-4">
         <Link href={user?.role === 'ADMIN' ? '/admin/acts' : '/guest'} className="flex h-11 shrink-0 items-center rounded-xl px-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 sm:px-3">←<span className="hidden sm:inline"> К актам</span></Link>
@@ -472,7 +472,7 @@ export default function IpadActPage() {
       </div>
     </header>
     <main className="mx-auto grid max-w-7xl gap-4 p-3 sm:p-4 lg:grid-cols-[46%_54%] lg:gap-5 lg:p-5">
-      <section className="space-y-4 lg:max-h-[calc(100vh-104px)] lg:overflow-y-auto lg:pr-1">
+      <section className="space-y-4 lg:pr-1">
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-black text-blue-800">{statusLabel}</span><p className="mt-3 text-sm text-slate-500">Advisory {act.advisory_group} · учебный год {act.academic_year}</p></div><div className="text-right"><p className="text-xs text-slate-400">Дата выдачи</p><p className="font-black">{new Date(act.issue_date).toLocaleDateString('ru-RU')}</p></div></div>
           <div className="mt-5 grid grid-cols-3 items-start gap-2 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-center"><Progress active label={`Ответственные ${signedCount}/${act.responsibles.length}`} /><span className="hidden h-px bg-slate-200 sm:block"/><Progress active={act.status !== 'DRAFT'} label="Подтверждение IT"/><span className="hidden h-px bg-slate-200 sm:block"/><Progress active={act.status === 'COMPLETED' || act.status === 'RETURNED'} label="Завершено"/></div>

@@ -4,12 +4,12 @@ from io import StringIO
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import func, extract
+from sqlalchemy import String, cast, extract, func
 from datetime import datetime, timedelta
 from typing import Optional
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user
-from app.db.models import Act, ActStatus, InventoryDevice, IpadDevice, User
+from app.db.models import Act, ActStatus, AuditLog, EmailOutbox, InventoryDevice, IpadDevice, User
 from app.services.recipients import act_recipients
 
 router = APIRouter()
@@ -102,13 +102,19 @@ async def get_dashboard(
     ipad_counts = dict(
         db.query(IpadDevice.status, func.count(IpadDevice.id)).group_by(IpadDevice.status).all()
     )
+    # В старых базах статусы инвентаря могли сохраниться в верхнем регистре
+    # (AVAILABLE), тогда как текущий Enum использует lowercase (available).
+    # CAST обходит enum-конвертер SQLAlchemy и позволяет поддержать оба формата.
+    status_text = cast(InventoryDevice.status, String)
     device_counts = {
-        (key.value if hasattr(key, "value") else str(key)): value
-        for key, value in db.query(InventoryDevice.status, func.count(InventoryDevice.id)).group_by(InventoryDevice.status).all()
+        str(key).lower(): value
+        for key, value in db.query(status_text, func.count(InventoryDevice.id)).group_by(status_text).all()
     }
+    email_counts = dict(
+        db.query(EmailOutbox.status, func.count(EmailOutbox.id)).group_by(EmailOutbox.status).all()
+    )
 
-    from app.db.models import AuditLog
-    recent = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(8).all()
+    recent = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(5).all()
     actor_ids = {item.user_id for item in recent if item.user_id}
     actors = {u.id: u.full_name for u in db.query(User).filter(User.id.in_(actor_ids)).all()} if actor_ids else {}
 
@@ -129,6 +135,13 @@ async def get_dashboard(
         "devices": {
             "available": device_counts.get("available", 0),
             "issued": device_counts.get("issued", 0),
+            "maintenance": device_counts.get("maintenance", 0),
+            "retired": device_counts.get("retired", 0),
+            "paper_issued": device_counts.get("paper_issued", 0),
+        },
+        "email": {
+            "queued": email_counts.get("PENDING", 0) + email_counts.get("PROCESSING", 0),
+            "errors": email_counts.get("DEAD", 0),
         },
         "recent_actions": [{
             "id": str(item.id),

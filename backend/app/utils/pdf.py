@@ -409,8 +409,13 @@ def build_act_pdf_bytes(
     line(f"Передающая сторона: {act_data['party1_name']}")
     line(f"Получающая сторона: {act_data['party2_name']}")
     line(f"Дата выдачи: {act_data['issue_date']}")
-    line(f"Наименование техники: {act_data['item_name']}")
-    if act_data.get("item_serial"):
+    extra_data = act_data.get("extra_data_json") or {}
+    accessories_only = isinstance(extra_data, dict) and extra_data.get("accessories_only") is True
+    if accessories_only:
+        line("Состав: мелкая техника (см. перечень)")
+    else:
+        line(f"Наименование техники: {act_data['item_name']}")
+    if not accessories_only and act_data.get("item_serial"):
         line(f"Серийный номер: {act_data['item_serial']}")
     line(f"Email получателя: {act_data['receiver_email']}")
 
@@ -421,11 +426,25 @@ def build_act_pdf_bytes(
         if act_data.get("return_note"):
             line(f"Комментарий возврата: {act_data['return_note']}")
 
-    extra_data = act_data.get("extra_data_json") or {}
     if extra_data:
         line("")
         line("Дополнительные поля:", 12, 20)
         for key, value in extra_data.items():
+            if key == "accessories_only":
+                continue
+            if accessories_only and key == "accessories" and isinstance(value, list):
+                line("Мелкая техника:", 11, 18)
+                for index, item in enumerate(value, start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    details = str(item.get("name", "") or "—")
+                    if item.get("model"):
+                        details += f", модель: {item['model']}"
+                    details += f", количество: {item.get('quantity', 1)}"
+                    if item.get("note"):
+                        details += f", заметка: {item['note']}"
+                    line(f"{index}. {details}", 10, 18)
+                continue
             line(f"{key}: {value}", 11, 18)
 
     line("")
@@ -564,6 +583,7 @@ def build_act_pdf_v2(
     y -= 30
     
     extra_data = act_data.get("extra_data_json") or {}
+    accessories_only = isinstance(extra_data, dict) and extra_data.get("accessories_only") is True
     recipients = extra_data.get("recipients", []) if isinstance(extra_data, dict) else []
     normalized_recipients = []
     if isinstance(recipients, list):
@@ -608,12 +628,16 @@ def build_act_pdf_v2(
     clause1 = "1. Настоящий Акт приема-передачи оборудования удостоверяет, что Сторона 1 передала,"
     pdf.drawString(margin_left, y, clause1)
     y -= 15
-    pdf.drawString(margin_left + 10, y, "а Сторона 2 приняла во временное пользование следующие основные средства")
-    y -= 15
-    pdf.drawString(margin_left + 10, y, "(далее - ОС):")
-    y -= 20
+    if accessories_only:
+        pdf.drawString(margin_left + 10, y, "а Сторона 2 приняла во временное пользование оборудование и имущество:")
+        y -= 20
+    else:
+        pdf.drawString(margin_left + 10, y, "а Сторона 2 приняла во временное пользование следующие основные средства")
+        y -= 15
+        pdf.drawString(margin_left + 10, y, "(далее - ОС):")
+        y -= 20
 
-    if is_ipad_template:
+    if is_ipad_template and not accessories_only:
         pdf.setFont(bold_font_name, 11)
         ipad_advisory = extra_data.get("ipad_advisory") if isinstance(extra_data.get("ipad_advisory"), dict) else {}
         advisory_label = ipad_advisory.get("advisory_group") or extra_data.get('advisory_note', '') or '______________________________'
@@ -624,7 +648,9 @@ def build_act_pdf_v2(
         y -= 20
     
     # Таблица оборудования
-    if is_ipad_template:
+    if accessories_only:
+        pass
+    elif is_ipad_template:
         ipad_rows = _build_ipad_rows(act_data, extra_data)
     else:
         table_data = [
@@ -634,14 +660,16 @@ def build_act_pdf_v2(
     
     # Добавляем дополнительное оборудование из extra_data_json если есть
     equipment_list = extra_data.get("equipment_list", [])
-    if not is_ipad_template and equipment_list and isinstance(equipment_list, list):
+    if not accessories_only and not is_ipad_template and equipment_list and isinstance(equipment_list, list):
         for idx, item in enumerate(equipment_list, start=2):
             if isinstance(item, dict):
                 item_name = item.get('name', '')
                 item_serial = item.get('serial', '')
                 table_data.append([str(idx), item_name, item_serial or '—'])
 
-    if is_ipad_template:
+    if accessories_only:
+        pass
+    elif is_ipad_template:
         ipad_split_into_two = len(ipad_rows) >= 4
         ipad_left_count = (len(ipad_rows) + 1) // 2 if ipad_split_into_two else len(ipad_rows)
         ipad_max_rows = max(ipad_left_count, len(ipad_rows) - ipad_left_count)

@@ -10,13 +10,14 @@ from fastapi import BackgroundTasks, HTTPException
 from PIL import Image, ImageDraw
 from sqlalchemy import text
 
-from app.api.acts import create_act, delete_act, get_manual_final_email, send_manual_final_email, sign_party1, sign_party2, start_return_flow
+from app.api.acts import create_act, delete_act, get_manual_final_email, list_acts, send_manual_final_email, sign_party1, sign_party2, start_return_flow
 from app.api.inventory import delete_small_equipment_catalog_item, list_available_devices, update_device
 from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
     ActDeviceAssignment,
     ActAccessory,
     Act,
+    ActVersion,
     DeviceStatus,
     EmailOutbox,
     InventoryDevice,
@@ -75,6 +76,7 @@ def lifecycle_data():
     )
     device = InventoryDevice(
         inventory_number="TEST-001",
+        barcode="TEST-BARCODE-001",
         name="Test laptop",
         category="laptop",
         serial_number="SERIAL-TEST-001",
@@ -105,7 +107,7 @@ async def _create(lifecycle_data):
                 "participant_id": str(recipient.id),
                 "full_name": recipient.full_name,
                 "email": recipient.email,
-            }], "accessories": [{
+            }], "accessories_only": True, "accessories": [{
                 "name": "Мышь Logitech",
                 "model": "M185",
                 "quantity": 1,
@@ -123,6 +125,7 @@ async def _create(lifecycle_data):
 async def test_full_issue_and_return_lifecycle(lifecycle_data):
     db, user, manager, recipient, _template, device = lifecycle_data
     act = await _create(lifecycle_data)
+    assert "accessories_only" not in act.extra_data_json
     db.refresh(device)
     assert device.status == DeviceStatus.RESERVED
     accessory = db.query(ActAccessory).filter(ActAccessory.act_id == act.id).one()
@@ -156,6 +159,159 @@ async def test_full_issue_and_return_lifecycle(lifecycle_data):
 
 
 @pytest.mark.asyncio
+async def test_accessories_only_act_full_issue_and_return_lifecycle(lifecycle_data):
+    db, user, manager, recipient, template, _device = lifecycle_data
+    catalog_item = SmallEquipmentCatalog(name="Тестовая гарнитура", model="USB")
+    db.add(catalog_item)
+    db.commit()
+    db.refresh(catalog_item)
+
+    act = await create_act(
+        ActCreate(
+            template_id=template.id,
+            party1_participant_id=manager.id,
+            party1_name=manager.full_name,
+            party2_name=recipient.full_name,
+            issue_date=date.today(),
+            item_name="Будет заменено backend",
+            item_serial="IGNORED",
+            receiver_email=recipient.email,
+            extra_data_json={
+                "recipients": [{
+                    "participant_id": str(recipient.id),
+                    "full_name": recipient.full_name,
+                    "email": recipient.email,
+                }],
+                "accessories_only": False,
+                "accessories": [{
+                    "catalog_item_id": str(catalog_item.id),
+                    "name": catalog_item.name,
+                    "model": catalog_item.model,
+                    "quantity": 1,
+                }],
+            },
+        ),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+
+    assert act.inventory_device_id is None
+    assert act.item_name == f"Мелкая техника: {catalog_item.name}"
+    assert act.item_serial is None
+    assert act.extra_data_json["accessories_only"] is True
+    assert db.query(ActDeviceAssignment).filter(ActDeviceAssignment.act_id == act.id).count() == 0
+    accessory = db.query(ActAccessory).filter(ActAccessory.act_id == act.id).one()
+    assert accessory.catalog_item_id == catalog_item.id
+    assert accessory.status == "RESERVED"
+    initial_version = db.query(ActVersion).filter(
+        ActVersion.act_id == act.id,
+        ActVersion.version_number == 1,
+    ).one()
+    assert initial_version.pdf_file_id is not None
+    assert initial_version.data_json["extra_data_json"]["accessories_only"] is True
+
+    await sign_party2(
+        act.id,
+        SignatureRequest(signature_data=_signature(), participant_id=recipient.id),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+    completed = await sign_party1(
+        act.id,
+        SignatureRequest(signature_data=_signature(), participant_id=manager.id),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+    assert completed.status.value == "COMPLETED"
+    db.refresh(accessory)
+    assert accessory.status == "ISSUED"
+
+    await start_return_flow(
+        act.id,
+        ReturnStartRequest(return_date=date.today()),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+    await sign_party1(
+        act.id,
+        SignatureRequest(signature_data=_signature(), participant_id=manager.id),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+    returned = await sign_party2(
+        act.id,
+        SignatureRequest(signature_data=_signature(), participant_id=recipient.id),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+    assert returned.status.value == "RETURNED"
+    db.refresh(accessory)
+    assert accessory.status == "RETURNED"
+    latest_version = db.query(ActVersion).filter(ActVersion.act_id == act.id).order_by(
+        ActVersion.version_number.desc()
+    ).first()
+    assert latest_version is not None
+    assert latest_version.pdf_file_id is not None
+    assert latest_version.data_json["extra_data_json"]["accessories_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_act_without_primary_device_or_accessories_is_rejected(lifecycle_data):
+    db, user, manager, recipient, template, device = lifecycle_data
+    base_data = {
+        "template_id": template.id,
+        "party1_participant_id": manager.id,
+        "party1_name": manager.full_name,
+        "party2_name": recipient.full_name,
+        "issue_date": date.today(),
+        "item_name": "Нет состава",
+        "receiver_email": recipient.email,
+    }
+    recipients = [{
+        "participant_id": str(recipient.id),
+        "full_name": recipient.full_name,
+        "email": recipient.email,
+    }]
+
+    with pytest.raises(HTTPException) as empty_error:
+        await create_act(
+            ActCreate(**base_data, extra_data_json={"recipients": recipients}),
+            BackgroundTasks(),
+            db,
+            user,
+        )
+    assert empty_error.value.status_code == 422
+    assert empty_error.value.detail == "Добавьте основное устройство или мелкую технику"
+
+    with pytest.raises(HTTPException) as equipment_error:
+        await create_act(
+            ActCreate(
+                **base_data,
+                extra_data_json={
+                    "recipients": recipients,
+                    "equipment_list": [{
+                        "inventory_device_id": str(device.id),
+                        "name": device.name,
+                        "serial": device.inventory_number,
+                    }],
+                    "accessories": [{"name": "Кабель", "quantity": 1}],
+                },
+            ),
+            BackgroundTasks(),
+            db,
+            user,
+        )
+    assert equipment_error.value.status_code == 422
+    assert "без основного устройства" in equipment_error.value.detail
+
+
+@pytest.mark.asyncio
 async def test_admin_can_permanently_delete_completed_act(lifecycle_data):
     db, user, manager, recipient, _template, device = lifecycle_data
     act = await _create(lifecycle_data)
@@ -174,7 +330,7 @@ async def test_admin_can_permanently_delete_completed_act(lifecycle_data):
 
 @pytest.mark.asyncio
 async def test_final_documents_are_sent_only_by_admin_action(lifecycle_data):
-    db, user, manager, recipient, _template, _device = lifecycle_data
+    db, user, manager, recipient, _template, device = lifecycle_data
     act = await _create(lifecycle_data)
     await sign_party2(act.id, SignatureRequest(signature_data=_signature(), participant_id=recipient.id), BackgroundTasks(), db, user)
     await sign_party1(act.id, SignatureRequest(signature_data=_signature(), participant_id=manager.id), BackgroundTasks(), db, user)
@@ -209,6 +365,24 @@ async def test_final_documents_are_sent_only_by_admin_action(lifecycle_data):
     assert all(row.requested_by == user.id for row in rows)
     assert all(row.attachment_storage_path for row in rows)
     assert sum(row.custom_message == "Keep this document." for row in rows) == 2
+
+    listing = await list_acts(
+        party1=None,
+        party2=None,
+        item_name=None,
+        email=None,
+        search=None,
+        template_code=None,
+        pending=None,
+        page=1,
+        page_size=20,
+        db=db,
+        current_user=user,
+    )
+    listed_act = next(item for item in listing["items"] if item["id"] == act.id)
+    assert listed_act["item_barcode"] == device.barcode
+    assert listed_act["final_email_status"] == "PENDING"
+    assert listed_act["final_email_status_at"] is not None
 
     with pytest.raises(HTTPException) as error:
         send_manual_final_email(

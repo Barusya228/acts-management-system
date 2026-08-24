@@ -145,10 +145,10 @@ export default function KiosksPage() {
                         <span className="text-slate-400">—</span>
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                    <td className="px-4 py-3 text-slate-600 lg:whitespace-nowrap">
                       {kiosk.enrolled_at ? new Date(kiosk.enrolled_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                    <td className="px-4 py-3 text-slate-600 lg:whitespace-nowrap">
                       {kiosk.last_seen_at ? new Date(kiosk.last_seen_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">

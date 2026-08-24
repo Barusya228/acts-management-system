@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 from typing import Optional
 from uuid import UUID
@@ -72,6 +72,7 @@ RESERVED_ACT_FIELDS = {
 
 EQUIPMENT_LIST_KEY = "equipment_list"
 ACCESSORIES_KEY = "accessories"
+ACCESSORIES_ONLY_KEY = "accessories_only"
 INVENTORY_CATEGORY_KEY = "inventory_category"
 IPAD_ADVISORY_KEY = "advisory_note"
 
@@ -211,6 +212,48 @@ def _manual_email_history(db: Session, act_id: UUID) -> list[dict]:
     return result
 
 
+def _latest_manual_email_statuses(db: Session, act_ids: list[UUID]) -> dict[UUID, dict]:
+    if not act_ids:
+        return {}
+    rows = db.query(
+        EmailOutbox.act_id,
+        EmailOutbox.dispatch_id,
+        EmailOutbox.status,
+        EmailOutbox.created_at,
+    ).filter(
+        EmailOutbox.act_id.in_(act_ids),
+        EmailOutbox.dispatch_id.isnot(None),
+        EmailOutbox.kind.in_([ISSUE_COMPLETED, RETURN_COMPLETED]),
+    ).order_by(EmailOutbox.act_id, EmailOutbox.created_at.desc()).all()
+
+    latest_dispatch_by_act: dict[UUID, UUID] = {}
+    grouped: dict[UUID, dict] = {}
+    for row in rows:
+        if row.act_id not in latest_dispatch_by_act:
+            latest_dispatch_by_act[row.act_id] = row.dispatch_id
+            grouped[row.act_id] = {"statuses": set(), "created_at": row.created_at}
+        if row.dispatch_id != latest_dispatch_by_act[row.act_id]:
+            continue
+        grouped[row.act_id]["statuses"].add(row.status)
+
+    result = {}
+    for act_id, item in grouped.items():
+        statuses = item["statuses"]
+        if "DEAD" in statuses:
+            aggregate_status = "ERROR"
+        elif statuses == {"SENT"}:
+            aggregate_status = "SENT"
+        elif "PROCESSING" in statuses:
+            aggregate_status = "PROCESSING"
+        else:
+            aggregate_status = "PENDING"
+        result[act_id] = {
+            "status": aggregate_status,
+            "created_at": item["created_at"],
+        }
+    return result
+
+
 # Делегировано в app.services.act_shared; алиасы сохраняют внутренний API модуля.
 _build_party2_summary = build_party2_summary
 _get_primary_recipient_email = get_primary_recipient_email
@@ -239,10 +282,12 @@ def _parse_device_id(value: object, label: str) -> UUID:
 def _reserve_act_devices(
     db: Session,
     act: Act,
-    primary_device_id: object,
+    primary_device_id: object | None,
     equipment_list: list[dict],
 ) -> list[dict]:
-    requested = [(_parse_device_id(primary_device_id, "основное устройство"), "MAIN", None)]
+    requested = []
+    if primary_device_id is not None:
+        requested.append((_parse_device_id(primary_device_id, "основное устройство"), "MAIN", None))
     for index, item in enumerate(equipment_list):
         requested.append((
             _parse_device_id(item.get("inventory_device_id"), f"дополнительное устройство #{index + 1}"),
@@ -257,13 +302,15 @@ def _reserve_act_devices(
             detail="Одно устройство нельзя добавить в акт несколько раз",
         )
 
-    devices = (
-        db.query(InventoryDevice)
-        .filter(InventoryDevice.id.in_(device_ids))
-        .order_by(InventoryDevice.id.asc())
-        .with_for_update()
-        .all()
-    )
+    devices = []
+    if device_ids:
+        devices = (
+            db.query(InventoryDevice)
+            .filter(InventoryDevice.id.in_(device_ids))
+            .order_by(InventoryDevice.id.asc())
+            .with_for_update()
+            .all()
+        )
     devices_by_id = {device.id: device for device in devices}
     if len(devices_by_id) != len(device_ids):
         raise HTTPException(status_code=404, detail="Одно из выбранных устройств не найдено")
@@ -509,6 +556,7 @@ def _validate_extra_data(extra_data: Optional[dict], template: Template) -> dict
     special_keys = {
         EQUIPMENT_LIST_KEY,
         ACCESSORIES_KEY,
+        ACCESSORIES_ONLY_KEY,
         RECIPIENTS_KEY,
         PARTY1_PARTICIPANT_ID_KEY,
     }
@@ -728,6 +776,28 @@ async def list_acts(
     # Дата последней успешной отправки финального письма по каждому акту
     # (для колонки «Письмо» в админ-таблицах) — одним запросом.
     act_ids = [act.id for act in acts]
+    inventory_device_ids = [act.inventory_device_id for act in acts if act.inventory_device_id]
+    barcode_by_device_id = dict(
+        db.query(InventoryDevice.id, InventoryDevice.barcode).filter(
+            InventoryDevice.id.in_(inventory_device_ids)
+        ).all()
+    ) if inventory_device_ids else {}
+    legacy_device_refs = [str(act.item_serial).strip() for act in acts if not act.inventory_device_id and act.item_serial]
+    barcode_by_legacy_ref: dict[str, str | None] = {}
+    if legacy_device_refs:
+        legacy_devices = db.query(
+            InventoryDevice.inventory_number,
+            InventoryDevice.serial_number,
+            InventoryDevice.barcode,
+        ).filter(
+            or_(
+                InventoryDevice.inventory_number.in_(legacy_device_refs),
+                InventoryDevice.serial_number.in_(legacy_device_refs),
+            )
+        ).all()
+        for inventory_number, serial_number, barcode in legacy_devices:
+            barcode_by_legacy_ref[str(inventory_number)] = barcode
+            barcode_by_legacy_ref[str(serial_number)] = barcode
     last_sent_by_act: dict = {}
     if act_ids:
         sent_rows = db.query(
@@ -739,13 +809,18 @@ async def list_acts(
             EmailOutbox.sent_at.isnot(None),
         ).group_by(EmailOutbox.act_id).all()
         last_sent_by_act = {row[0]: row[1] for row in sent_rows}
+    latest_email_by_act = _latest_manual_email_statuses(db, act_ids)
 
     items = []
     for act in acts:
         item = ActResponse.model_validate(act).model_dump()
         item["template_code"] = act.template.code if act.template else None
+        item["item_barcode"] = barcode_by_device_id.get(act.inventory_device_id) or barcode_by_legacy_ref.get(str(act.item_serial or "").strip())
         last_sent = last_sent_by_act.get(act.id)
         item["final_email_last_sent_at"] = last_sent.isoformat() if last_sent else None
+        latest_email = latest_email_by_act.get(act.id)
+        item["final_email_status"] = latest_email["status"] if latest_email else None
+        item["final_email_status_at"] = latest_email["created_at"].isoformat() if latest_email else None
         if act.ipad_profile:
             item["advisory_group"] = act.ipad_profile.advisory_group
             item["student_count"] = len(act.ipad_assignments)
@@ -775,6 +850,24 @@ async def create_act(
     _require_active_template(template)
     
     normalized_extra_data = _validate_extra_data(act_data.extra_data_json, template)
+    equipment_list = normalized_extra_data.get(EQUIPMENT_LIST_KEY, [])
+    accessories = normalized_extra_data.get(ACCESSORIES_KEY, [])
+    accessories_only = act_data.inventory_device_id is None
+    if accessories_only:
+        if equipment_list:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Дополнительные инвентарные устройства нельзя добавить без основного устройства",
+            )
+        if not accessories:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Добавьте основное устройство или мелкую технику",
+            )
+        normalized_extra_data[ACCESSORIES_ONLY_KEY] = True
+    else:
+        normalized_extra_data.pop(ACCESSORIES_ONLY_KEY, None)
+
     recipients = _extract_recipients(normalized_extra_data, act_data.party2_name, act_data.receiver_email)
     if not recipients:
         raise HTTPException(
@@ -795,6 +888,24 @@ async def create_act(
     act_payload["party2_name"] = _build_party2_summary(recipients)
     act_payload["receiver_email"] = _get_primary_recipient_email(recipients)
     act_payload["extra_data_json"] = normalized_extra_data
+    if accessories_only:
+        positions_count = len(accessories)
+        if positions_count == 1:
+            act_payload["item_name"] = f"Мелкая техника: {accessories[0]['name']}"
+        else:
+            last_two_digits = positions_count % 100
+            last_digit = positions_count % 10
+            if 11 <= last_two_digits <= 14:
+                positions_label = "позиций"
+            elif last_digit == 1:
+                positions_label = "позиция"
+            elif 2 <= last_digit <= 4:
+                positions_label = "позиции"
+            else:
+                positions_label = "позиций"
+            act_payload["item_name"] = f"Мелкая техника: {positions_count} {positions_label}"
+        act_payload["item_serial"] = None
+        act_payload["inventory_device_id"] = None
 
     act = Act(
         **act_payload,
@@ -810,9 +921,8 @@ async def create_act(
         db,
         act,
         act_data.inventory_device_id,
-        normalized_extra_data.get(EQUIPMENT_LIST_KEY, []),
+        equipment_list,
     )
-    accessories = normalized_extra_data.get(ACCESSORIES_KEY, [])
     for item in accessories:
         catalog_item = None
         if item.get("catalog_item_id"):
@@ -874,7 +984,9 @@ async def create_act(
     )
     record_audit(db, current_user, "ACT", act.id, "ACT_CREATED", {
         "template": template.code,
-        "devices": 1 + len(normalized_equipment),
+        "devices": (1 if act.inventory_device_id else 0) + len(normalized_equipment),
+        "accessories": len(accessories),
+        ACCESSORIES_ONLY_KEY: accessories_only,
     })
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
@@ -955,6 +1067,8 @@ async def update_act(
     incoming_extra.pop(INVENTORY_CATEGORY_KEY, None)
 
     normalized_extra_data = _validate_extra_data(incoming_extra, act.template)
+    if existing_extra.get(ACCESSORIES_ONLY_KEY) is True:
+        normalized_extra_data[ACCESSORIES_ONLY_KEY] = True
     if payload.item_serial is None and INVENTORY_CATEGORY_KEY in existing_extra:
         normalized_extra_data[INVENTORY_CATEGORY_KEY] = existing_extra[INVENTORY_CATEGORY_KEY]
     recipients = _extract_recipients(normalized_extra_data, act.party2_name, act.receiver_email)

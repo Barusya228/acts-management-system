@@ -118,7 +118,7 @@ export default function BackupsPage() {
             </div>
           )}
 
-          <div><h2 className="mb-3 text-lg font-black text-slate-900">Отдельные копии финальных PDF</h2><section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div><h2 className="mb-3 text-lg font-black text-slate-900">Отдельные копии финальных PDF</h2><section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <SummaryCard label="Назначение" value={data.destination} hint={data.enabled ? 'Подключено' : 'Отключено'} tone={data.enabled ? 'emerald' : 'amber'} />
             <SummaryCard label="Последний успешный" value={formatDate(data.last_success_at)} hint="Проверен SHA-256" tone="blue" />
             <SummaryCard label="Сохранено копий" value={String(data.successful)} hint="Только выдача и возврат" tone="emerald" />
