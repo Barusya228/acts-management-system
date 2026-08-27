@@ -298,7 +298,7 @@ def _draw_ipad_tables(
     gap = 16
     available_width = margin_right - margin_left
     table_width = (available_width - gap) / 2 if len(row_sets) == 2 else available_width
-    col_widths = [18, table_width - 131, 45, 68]
+    col_widths = [14, table_width - 127, 38, 75]
     x_positions = [margin_left]
     if len(row_sets) == 2:
         x_positions.append(margin_left + table_width + gap)
@@ -308,8 +308,8 @@ def _draw_ipad_tables(
         'StudentStyle',
         parent=styles['Normal'],
         fontName=font_name,
-        fontSize=9,
-        leading=10,
+        fontSize=8,
+        leading=9,
         textColor=colors.black
     )
 
@@ -326,15 +326,15 @@ def _draw_ipad_tables(
 
         table = Table(table_data, colWidths=col_widths)
         table.setStyle(TableStyle([
-            ('FONT', (0, 0), (-1, -1), font_name, 9),
-            ('FONT', (0, 0), (-1, 0), bold_font_name, 9),
+            ('FONT', (0, 0), (-1, -1), font_name, 8),
+            ('FONT', (0, 0), (-1, 0), bold_font_name, 8),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
             ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
             ('ALIGN', (0, 0), (0, -1), 'CENTER'),
         ]))
         _, table_height = table.wrap(0, 0)
@@ -688,15 +688,15 @@ def build_act_pdf_v2(
         start_index = 1
         while remaining_rows:
             available_space = y - 100
-            if available_space < 68:
+            if available_space < 56:
                 start_new_page()
                 available_space = y - 100
 
-            max_rows_per_col = int((available_space - 24) // 22)
+            max_rows_per_col = int((available_space - 20) // 18)
             if max_rows_per_col < 2:
                 start_new_page()
                 available_space = y - 100
-                max_rows_per_col = int((available_space - 24) // 22)
+                max_rows_per_col = int((available_space - 20) // 18)
 
             chunk_size = min(len(remaining_rows), max_rows_per_col * 2)
             page_rows = remaining_rows[:chunk_size]
