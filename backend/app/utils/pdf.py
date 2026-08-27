@@ -56,10 +56,11 @@ def _draw_page_reference(
     marker = f"{act_reference} | {page_number}/{total_pages}"
     marker_font_size = 8
     left_offset = 50
-    bottom_offset = 20
+    _, height = A4
+    top_offset = height - 25
 
     pdf.setFont(font_name, marker_font_size)
-    pdf.drawString(left_offset, bottom_offset, marker)
+    pdf.drawString(left_offset, top_offset, marker)
 
 
 def _register_font() -> str:
@@ -809,7 +810,7 @@ def build_act_pdf_v2(
         y -= accessory_height + 20
     
     # Пункт 2
-    if y < 230:
+    if y < 85:
         start_new_page()
     pdf.setFont(font_name, 11)
     pdf.drawString(margin_left, y, "2. Стороны при приеме-передаче осмотрели ОС и пришли к соглашению, что")
@@ -818,6 +819,9 @@ def build_act_pdf_v2(
     y -= 20
     
     # Пункт 3
+    if y < 115:
+        start_new_page()
+    pdf.setFont(font_name, 11)
     pdf.drawString(margin_left, y, "3. Стороны пришли к соглашению, что в случае потери или повреждения принятых ОС")
     y -= 15
     pdf.drawString(margin_left + 10, y, "в результате действий Стороны 2, Сторона 2 обязуется полностью возместить Стороне 1")
@@ -828,12 +832,18 @@ def build_act_pdf_v2(
     y -= 20
     
     # Пункт 4
+    if y < 85:
+        start_new_page()
+    pdf.setFont(font_name, 11)
     pdf.drawString(margin_left, y, "4. Вынос оборудования за пределы школы разрешается только с согласования")
     y -= 15
     pdf.drawString(margin_left + 10, y, "с администрацией (Руководителя IT-отдела).")
     y -= 20
     
     # Пункт 5
+    if y < 95:
+        start_new_page()
+    pdf.setFont(font_name, 11)
     pdf.drawString(margin_left, y, "5. Настоящий Акт составлен в двух экземплярах, имеющих одинаковую юридическую")
     y -= 15
     pdf.drawString(margin_left + 10, y, "силу, по одному для каждой Стороны.")
