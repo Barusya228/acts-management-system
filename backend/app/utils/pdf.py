@@ -7,7 +7,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
-from reportlab.platypus import Table, TableStyle
+from reportlab.platypus import Table, TableStyle, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 
@@ -285,8 +286,9 @@ def _draw_ipad_tables(
     font_name: str,
     bold_font_name: str,
     ipad_rows: list[list[str]],
+    start_index: int = 1,
 ) -> float:
-    header = ['№', 'Student name', 'iPad Tag', 'IMEI']
+    header = ['№', 'Student name', 'iPad Tag', 'Serial / IMEI']
     split_into_two = len(ipad_rows) >= 4
     left_count = (len(ipad_rows) + 1) // 2 if split_into_two else len(ipad_rows)
     row_sets = [ipad_rows[:left_count]]
@@ -296,19 +298,31 @@ def _draw_ipad_tables(
     gap = 16
     available_width = margin_right - margin_left
     table_width = (available_width - gap) / 2 if len(row_sets) == 2 else available_width
-    col_widths = [32, table_width - 182, 75, 75]
+    col_widths = [18, table_width - 131, 45, 68]
     x_positions = [margin_left]
     if len(row_sets) == 2:
         x_positions.append(margin_left + table_width + gap)
+
+    styles = getSampleStyleSheet()
+    student_style = ParagraphStyle(
+        'StudentStyle',
+        parent=styles['Normal'],
+        fontName=font_name,
+        fontSize=9,
+        leading=10,
+        textColor=colors.black
+    )
 
     tables: list[tuple[Table, float, float]] = []
     max_height = 0.0
 
     for table_index, row_set in enumerate(row_sets):
         table_data = [header]
-        start_number = 1 if table_index == 0 else left_count + 1
+        start_number = start_index if table_index == 0 else start_index + left_count
         for index, row in enumerate(row_set):
-            table_data.append([str(start_number + index), *row])
+            student_name = row[0]
+            student_p = Paragraph(student_name or "", student_style)
+            table_data.append([str(start_number + index), student_p, row[1], row[2]])
 
         table = Table(table_data, colWidths=col_widths)
         table.setStyle(TableStyle([
@@ -670,23 +684,36 @@ def build_act_pdf_v2(
     if accessories_only:
         pass
     elif is_ipad_template:
-        ipad_split_into_two = len(ipad_rows) >= 4
-        ipad_left_count = (len(ipad_rows) + 1) // 2 if ipad_split_into_two else len(ipad_rows)
-        ipad_max_rows = max(ipad_left_count, len(ipad_rows) - ipad_left_count)
-        ipad_table_height_estimate = 24 + (ipad_max_rows * 30)
-        if y - ipad_table_height_estimate < 100:
-            start_new_page()
+        remaining_rows = list(ipad_rows)
+        start_index = 1
+        while remaining_rows:
+            available_space = y - 100
+            if available_space < 68:
+                start_new_page()
+                available_space = y - 100
 
-        table_height = _draw_ipad_tables(
-            pdf,
-            margin_left,
-            y,
-            margin_right,
-            font_name,
-            bold_font_name,
-            ipad_rows,
-        )
-        y -= (table_height + 20)
+            max_rows_per_col = int((available_space - 24) // 22)
+            if max_rows_per_col < 2:
+                start_new_page()
+                available_space = y - 100
+                max_rows_per_col = int((available_space - 24) // 22)
+
+            chunk_size = min(len(remaining_rows), max_rows_per_col * 2)
+            page_rows = remaining_rows[:chunk_size]
+            remaining_rows = remaining_rows[chunk_size:]
+
+            table_height = _draw_ipad_tables(
+                pdf,
+                margin_left,
+                y,
+                margin_right,
+                font_name,
+                bold_font_name,
+                page_rows,
+                start_index=start_index,
+            )
+            y -= (table_height + 20)
+            start_index += chunk_size
 
         # Применённые приложения: основание каждого изменения состава с датами
         # подписей — актуальная ревизия ссылается на подписанные документы.
@@ -782,6 +809,8 @@ def build_act_pdf_v2(
         y -= accessory_height + 20
     
     # Пункт 2
+    if y < 230:
+        start_new_page()
     pdf.setFont(font_name, 11)
     pdf.drawString(margin_left, y, "2. Стороны при приеме-передаче осмотрели ОС и пришли к соглашению, что")
     y -= 15
