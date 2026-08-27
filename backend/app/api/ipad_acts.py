@@ -672,3 +672,38 @@ def download_appendix_pdf(
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Файл PDF приложения отсутствует в хранилище")
     return FileResponse(path, media_type="application/pdf", filename=f"appendix_{appendix.appendix_number}.pdf")
+
+
+@router.post("/{act_id}/regenerate-pdf")
+def regenerate_ipad_act_pdf(
+    act_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).with_for_update().first()
+    if not act:
+        raise HTTPException(status_code=404, detail="Акт не найден")
+    if not act.template or act.template.code != "IPAD":
+        raise HTTPException(status_code=400, detail="Этот акт не является iPad-актом")
+    
+    version = db.query(ActVersion).filter(ActVersion.act_id == act_id, ActVersion.version_number == act.current_version).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Версия акта не найдена")
+        
+    pdf_asset = create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=act.template.name,
+        template_code="IPAD",
+        use_v2=True,
+    )
+    
+    record_audit(db, current_user, "ACT", act.id, "IPAD_PDF_REGENERATED", {
+        "version": version.version_number,
+        "file_asset_id": str(pdf_asset.id),
+    })
+    db.commit()
+    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
+    return {"status": "ok", "version_number": version.version_number}

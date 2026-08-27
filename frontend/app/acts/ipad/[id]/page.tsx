@@ -391,6 +391,19 @@ export default function IpadActPage() {
     }
   };
 
+  const regeneratePdf = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/api/ipad-acts/${id}/regenerate-pdf`);
+      showToast('PDF успешно обновлён по новому шаблону', 'success');
+      await load();
+    } catch (error: unknown) {
+      showToast(apiErrorMessage(error, 'Не удалось обновить PDF'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // На телефонах iframe с PDF не работает (iOS Safari показывает только первую
   // страницу без скролла) — открываем PDF в новой вкладке.
   const showPdfBlob = (blob: Blob) => {
@@ -468,7 +481,23 @@ export default function IpadActPage() {
       <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-4">
         <Link href={user?.role === 'ADMIN' ? '/admin/acts' : '/guest'} className="flex h-11 shrink-0 items-center rounded-xl px-2 text-sm font-semibold text-slate-500 hover:bg-slate-100 sm:px-3">←<span className="hidden sm:inline"> К актам</span></Link>
         <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.2em] text-blue-600">iPad Advisory</p><h1 className="truncate text-base font-black sm:text-lg">{act.advisory_group} · {shortId}</h1></div>
-        {user?.role === 'ADMIN' && <button onClick={() => setDeleteConfirmOpen(true)} className="ml-auto min-h-11 shrink-0 rounded-xl bg-red-600 px-3 text-sm font-bold text-white sm:px-4">Удалить<span className="hidden md:inline"> навсегда</span></button>}
+        {user?.role === 'ADMIN' && (
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              disabled={busy}
+              onClick={regeneratePdf}
+              className="min-h-11 shrink-0 rounded-xl bg-blue-600 px-3 text-sm font-bold text-white sm:px-4 disabled:opacity-50"
+            >
+              {busy ? 'Обновление...' : 'Обновить PDF'}
+            </button>
+            <button
+              onClick={() => setDeleteConfirmOpen(true)}
+              className="min-h-11 shrink-0 rounded-xl bg-red-600 px-3 text-sm font-bold text-white sm:px-4"
+            >
+              Удалить<span className="hidden md:inline"> навсегда</span>
+            </button>
+          </div>
+        )}
       </div>
     </header>
     <main className="mx-auto grid max-w-7xl gap-4 p-3 sm:p-4 lg:grid-cols-[46%_54%] lg:gap-5 lg:p-5">
