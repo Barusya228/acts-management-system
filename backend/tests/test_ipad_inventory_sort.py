@@ -42,3 +42,38 @@ def test_ipad_tags_use_natural_sort_across_pages(http_env):
     assert [item["tag"] for item in descending.json()["items"]] == [
         "100", "10", "2", "key10", "key2", "B1", "Alpha", "A10", "A2",
     ]
+
+
+def test_bulk_resolve_matches_serials_and_reports_unavailable_devices(http_env):
+    client, db, _admin, _signer = http_env
+    headers = admin_headers(client)
+    available = IpadDevice(
+        device_name="iPad",
+        model="10th Gen",
+        tag="T-AVAILABLE",
+        serial_number="F4YF3F90H7",
+        status="AVAILABLE",
+    )
+    issued = IpadDevice(
+        device_name="iPad",
+        model="10th Gen",
+        tag="T-ISSUED",
+        serial_number="DLQ5HK43XK",
+        status="ISSUED",
+    )
+    db.add_all([available, issued])
+    db.commit()
+
+    response = client.post(
+        "/api/ipad-inventory/available/resolve",
+        headers=headers,
+        json={"serial_numbers": ["f4yf3f90h7", "DLQ5HK43XK", "UNKNOWN"]},
+    )
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert [item["match_status"] for item in items] == ["AVAILABLE", "UNAVAILABLE", "NOT_FOUND"]
+    assert items[0]["device"]["id"] == str(available.id)
+    assert items[0]["device"]["serial_number"] == "F4YF3F90H7"
+    assert items[1]["device"]["status"] == "ISSUED"
+    assert items[2]["device"] is None

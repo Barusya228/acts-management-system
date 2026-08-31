@@ -16,6 +16,7 @@ from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
     Act,
     ActStatus,
+    ActVersion,
     EmailOutbox,
     IpadAdvisoryAct,
     IpadActAppendix,
@@ -28,9 +29,11 @@ from app.db.models import (
     UserRole,
 )
 from app.schemas.schemas import (
+    IpadAdvisoryAssignmentsUpdate,
     IpadAppendixReplacementCreate,
     IpadAppendixSignatureRequest,
     IpadAppendixYearEndReturnCreate,
+    IpadStudentAssignmentUpdate,
     IpadYearEndReturnItem,
 )
 
@@ -177,6 +180,53 @@ def test_cancel_replacement_appendix_releases_reserved_ipad(ipad_data):
     ipad_api.cancel_appendix(act.id, UUID(appendix["id"]), db, user)
     db.refresh(new_device)
     assert new_device.status == "AVAILABLE"
+
+
+def test_assignments_can_be_replaced_during_signing_and_reset_signatures(ipad_data):
+    db, user, _issuer, _responsible, act, assignment, old_device, new_device = ipad_data
+    old_assignment_id = assignment.id
+    act.status = ActStatus.SIGNED_PARTY2
+    assignment.status = "RESERVED"
+    old_device.status = "RESERVED"
+    extra = dict(act.extra_data_json or {})
+    extra["recipients"] = [{
+        **extra["recipients"][0],
+        "signature_file_path": "acts/old-signature.png",
+    }]
+    act.extra_data_json = extra
+    db.commit()
+
+    result = ipad_api.update_ipad_advisory_assignments(
+        act.id,
+        IpadAdvisoryAssignmentsUpdate(students=[IpadStudentAssignmentUpdate(
+            student_name="Replacement Student",
+            ipad_device_id=new_device.id,
+            note="Updated before signing",
+        )]),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+
+    db.refresh(act)
+    db.refresh(old_device)
+    db.refresh(new_device)
+    assignments = db.query(IpadStudentAssignment).filter(IpadStudentAssignment.act_id == act.id).all()
+    assert act.status == ActStatus.DRAFT
+    assert old_device.status == "AVAILABLE"
+    assert new_device.status == "RESERVED"
+    assert len(assignments) == 1
+    assert assignments[0].id != old_assignment_id
+    assert assignments[0].student_name == "Replacement Student"
+    assert assignments[0].ipad_device_id == new_device.id
+    assert result["responsibles"][0]["signed_at"] is None
+    assert result["responsibles"][0]["signature_file_path"] is None
+    version = db.query(ActVersion).filter(
+        ActVersion.act_id == act.id,
+        ActVersion.version_number == act.current_version,
+    ).one()
+    assert version.pdf_file_id is not None
+    assert version.data_json["extra_data_json"]["ipad_advisory"]["students"][0]["student_name"] == "Replacement Student"
 
 
 def test_year_end_return_is_applied_after_both_signatures(ipad_data, monkeypatch):

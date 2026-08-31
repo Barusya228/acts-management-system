@@ -183,6 +183,17 @@ class IpadStudentCreate(BaseModel):
     note: Optional[str] = None
 
 
+class IpadStudentAssignmentUpdate(BaseModel):
+    assignment_id: Optional[UUID4] = None
+    student_name: str
+    ipad_device_id: UUID4
+    note: Optional[str] = None
+
+
+class IpadAdvisoryAssignmentsUpdate(BaseModel):
+    students: list[IpadStudentAssignmentUpdate]
+
+
 class IpadAdvisoryActCreate(BaseModel):
     template_id: UUID4
     advisory_group: str
@@ -274,6 +285,10 @@ class IpadDeviceUpdate(BaseModel):
     serial_number: Optional[str] = None
     status: Optional[Literal["AVAILABLE", "MAINTENANCE", "RETIRED", "RETURN_PENDING"]] = None
     notes: Optional[str] = None
+
+
+class IpadAvailableResolveRequest(BaseModel):
+    serial_numbers: list[str] = Field(min_length=1, max_length=500)
 
 
 class IpadBulkRow(BaseModel):

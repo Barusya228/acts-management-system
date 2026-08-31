@@ -39,6 +39,7 @@ from app.db.models import (
 )
 from app.schemas.schemas import (
     IpadAdvisoryActCreate,
+    IpadAdvisoryAssignmentsUpdate,
     IpadAppendixReplacementCreate,
     IpadAppendixDepartureCreate,
     IpadAppendixStudentAddCreate,
@@ -161,6 +162,7 @@ def _serialize(act: Act) -> dict:
         "current_version": act.current_version,
         "students": [{
             "id": str(item.id),
+            "ipad_device_id": str(item.ipad_device_id) if item.ipad_device_id else None,
             "student_name": item.student_name,
             "student_status": item.student_status,
             "ipad_name": item.ipad_name,
@@ -390,6 +392,153 @@ def get_ipad_advisory_act(
     act = db.query(Act).filter(Act.id == act_id).first()
     if not act or not act.ipad_profile:
         raise HTTPException(status_code=404, detail="iPad-акт не найден")
+    return _serialize(act)
+
+
+@router.patch("/{act_id}/assignments")
+def update_ipad_advisory_assignments(
+    act_id: UUID,
+    payload: IpadAdvisoryAssignmentsUpdate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
+    if not act or not act.ipad_profile:
+        raise HTTPException(status_code=404, detail="iPad-акт не найден")
+    if act.status not in {ActStatus.DRAFT, ActStatus.SIGNED_PARTY2}:
+        raise HTTPException(status_code=409, detail="Назначения можно изменять только во время подписания акта")
+    if not payload.students:
+        raise HTTPException(status_code=422, detail="Добавьте хотя бы одного ученика и iPad")
+
+    student_names: set[str] = set()
+    assignment_ids: set[UUID] = set()
+    device_ids: set[UUID] = set()
+    for index, item in enumerate(payload.students, start=1):
+        student_name = item.student_name.strip()
+        if not student_name:
+            raise HTTPException(status_code=422, detail=f"Строка #{index}: укажите ученика")
+        normalized_name = student_name.casefold()
+        if normalized_name in student_names:
+            raise HTTPException(status_code=422, detail=f"Ученик {student_name} добавлен несколько раз")
+        if item.assignment_id and item.assignment_id in assignment_ids:
+            raise HTTPException(status_code=422, detail="Одно назначение указано несколько раз")
+        if item.ipad_device_id in device_ids:
+            raise HTTPException(status_code=422, detail="Один iPad назначен нескольким ученикам")
+        student_names.add(normalized_name)
+        if item.assignment_id:
+            assignment_ids.add(item.assignment_id)
+        device_ids.add(item.ipad_device_id)
+
+    existing_assignments = (
+        db.query(IpadStudentAssignment)
+        .filter(IpadStudentAssignment.act_id == act.id)
+        .order_by(IpadStudentAssignment.id)
+        .with_for_update()
+        .all()
+    )
+    if any(item.student_status != "ACTIVE" or item.status != "RESERVED" for item in existing_assignments):
+        raise HTTPException(status_code=409, detail="В этом акте есть назначения, которые уже нельзя редактировать")
+    existing_by_id = {item.id: item for item in existing_assignments}
+    unknown_assignment = next((item_id for item_id in assignment_ids if item_id not in existing_by_id), None)
+    if unknown_assignment:
+        raise HTTPException(status_code=404, detail="Одно из назначений не найдено в этом акте")
+
+    current_device_ids = {item.ipad_device_id for item in existing_assignments if item.ipad_device_id}
+    locked_device_ids = current_device_ids | device_ids
+    devices = (
+        db.query(IpadDevice)
+        .filter(IpadDevice.id.in_(locked_device_ids))
+        .order_by(IpadDevice.id)
+        .with_for_update()
+        .all()
+    )
+    devices_by_id = {item.id: item for item in devices}
+    if any(item_id not in devices_by_id for item_id in device_ids):
+        raise HTTPException(status_code=404, detail="Один из выбранных iPad не найден")
+    unavailable = next(
+        (
+            devices_by_id[item_id]
+            for item_id in device_ids
+            if devices_by_id[item_id].status != "AVAILABLE"
+            and not (item_id in current_device_ids and devices_by_id[item_id].status == "RESERVED")
+        ),
+        None,
+    )
+    if unavailable:
+        raise HTTPException(status_code=409, detail=f"iPad {unavailable.tag} недоступен: {unavailable.status}")
+
+    for item_id in current_device_ids:
+        devices_by_id[item_id].status = "AVAILABLE"
+    for item_id in device_ids:
+        devices_by_id[item_id].status = "RESERVED"
+
+    final_assignments: list[IpadStudentAssignment] = []
+    added_count = 0
+    for item in payload.students:
+        device = devices_by_id[item.ipad_device_id]
+        assignment = existing_by_id.get(item.assignment_id) if item.assignment_id else None
+        if assignment is None:
+            assignment = IpadStudentAssignment(act=act, status="RESERVED", student_status="ACTIVE")
+            added_count += 1
+        assignment.ipad_device_id = device.id
+        assignment.student_name = item.student_name.strip()
+        assignment.ipad_name = device.device_name
+        assignment.ipad_model = device.model
+        assignment.ipad_tag = device.tag
+        assignment.serial_number = device.serial_number
+        assignment.imei = None
+        assignment.note = item.note.strip() if item.note and item.note.strip() else None
+        final_assignments.append(assignment)
+
+    removed_count = len(existing_assignments) - len(assignment_ids)
+    act.ipad_assignments = final_assignments
+
+    extra = dict(act.extra_data_json or {})
+    recipients = extra.get(RECIPIENTS_KEY, [])
+    reset_recipients = []
+    for recipient in recipients if isinstance(recipients, list) else []:
+        if not isinstance(recipient, dict):
+            continue
+        reset_recipient = dict(recipient)
+        reset_recipient["signed_at"] = None
+        reset_recipient["signature_file_path"] = None
+        reset_recipients.append(reset_recipient)
+    extra[RECIPIENTS_KEY] = reset_recipients
+    act.extra_data_json = extra
+    flag_modified(act, "extra_data_json")
+    act.status = ActStatus.DRAFT
+    act.current_version += 1
+    act.updated_at = datetime.utcnow()
+
+    db.flush()
+    version = ActVersion(
+        act_id=act.id,
+        version_number=act.current_version,
+        data_json=build_act_snapshot(act),
+        change_note="Изменены ученики и назначения iPad; подписи сброшены",
+        created_by=current_user.id,
+    )
+    db.add(version)
+    db.flush()
+    pdf_asset = create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=act.template.name,
+        template_code="IPAD",
+        use_v2=True,
+    )
+    record_audit(db, current_user, "ACT", act.id, "IPAD_ASSIGNMENTS_UPDATED", {
+        "version": act.current_version,
+        "students": len(final_assignments),
+        "added": added_count,
+        "removed": removed_count,
+        "signatures_reset": True,
+    })
+    db.commit()
+    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
+    db.refresh(act)
     return _serialize(act)
 
 

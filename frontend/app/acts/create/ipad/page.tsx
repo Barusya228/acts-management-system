@@ -7,10 +7,11 @@ import api from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import IpadPickerModal, { ipadLabel } from '@/components/IpadPickerModal';
+import BulkIpadStudentsModal, { BulkStudentAssignment } from '@/components/BulkIpadStudentsModal';
 
 interface Participant { id: string; full_name: string; email?: string | null; kind: string; }
 interface Template { id: string; code: string; name: string; }
-interface IpadDevice { id: string; device_name: string; model?: string; tag: string; serial_number: string; }
+interface IpadDevice { id: string; device_name: string; model?: string | null; tag: string; serial_number: string; }
 interface StudentRow { student_name: string; ipad_device_id: string; note: string; }
 
 const emptyStudent = (): StudentRow => ({ student_name: '', ipad_device_id: '', note: '' });
@@ -30,6 +31,7 @@ export default function CreateIpad() {
   const [students, setStudents] = useState<StudentRow[]>([emptyStudent()]);
   const [ipads, setIpads] = useState<IpadDevice[]>([]);
   const [pickerRowIndex, setPickerRowIndex] = useState<number | null>(null);
+  const [bulkStudentsOpen, setBulkStudentsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { if (!loading && !user) loginAsGuest(); }, [loading, user, loginAsGuest]);
@@ -51,6 +53,19 @@ export default function CreateIpad() {
     ? responsibles.filter(item => !responsibleIds.includes(item.id) && item.full_name.toLowerCase().includes(responsibleSearch.trim().toLowerCase())).slice(0, 6)
     : [];
   const updateStudent = (index: number, patch: Partial<StudentRow>) => setStudents(rows => rows.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+
+  const addBulkStudents = (assignments: BulkStudentAssignment[]) => {
+    setIpads(current => {
+      const knownIds = new Set(current.map(item => item.id));
+      return [...current, ...assignments.map(item => item.device).filter(item => !knownIds.has(item.id))];
+    });
+    setStudents(current => [
+      ...current.filter(item => item.student_name.trim() || item.ipad_device_id || item.note.trim()),
+      ...assignments.map(item => ({ student_name: item.student_name, ipad_device_id: item.device.id, note: '' })),
+    ]);
+    setBulkStudentsOpen(false);
+    showToast(`Добавлено учеников: ${assignments.length}`, 'success');
+  };
 
   const submit = async () => {
     if (!template || !advisoryGroup.trim() || !academicYear.trim() || !issuerId || responsibleIds.length === 0) {
@@ -104,7 +119,7 @@ export default function CreateIpad() {
           </div>
         </section>
         <section className="rounded-2xl bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Ученики и закреплённые iPad</h3><p className="text-sm text-slate-500">{students.filter(item => item.student_name && item.ipad_device_id).length} из {students.length} назначено</p></div><button type="button" onClick={() => setStudents(rows => [...rows, emptyStudent()])} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">+ Ученик</button></div>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-bold">Ученики и закреплённые iPad</h3><p className="text-sm text-slate-500">{students.filter(item => item.student_name && item.ipad_device_id).length} из {students.length} назначено</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => setBulkStudentsOpen(true)} className="min-h-11 rounded-xl bg-indigo-100 px-4 text-sm font-bold text-indigo-700">Добавить несколько учеников</button><button type="button" onClick={() => setStudents(rows => [...rows, emptyStudent()])} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">+ Ученик</button></div></div>
           <div className="space-y-3">{students.map((item, index) => {
             const selectedIpad = ipads.find(ipad => ipad.id === item.ipad_device_id);
             return <div key={index} className="rounded-2xl bg-slate-50 p-4 ring-1 ring-gray-100"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-bold uppercase text-slate-400">Ученик {index + 1}</span><button type="button" disabled={students.length === 1} onClick={() => setStudents(rows => rows.filter((_, rowIndex) => rowIndex !== index))} className="min-h-11 px-2 text-sm text-red-600 disabled:opacity-30">Удалить</button></div><div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr]"><input value={item.student_name} onChange={event => updateStudent(index, { student_name: event.target.value })} placeholder="ФИО ученика *" className="min-h-11 rounded-xl border bg-white px-3" />{selectedIpad ? (
@@ -127,6 +142,7 @@ export default function CreateIpad() {
           onClose={() => setPickerRowIndex(null)}
         />
       )}
+      {bulkStudentsOpen && <BulkIpadStudentsModal existingRows={students} onApply={addBulkStudents} onClose={() => setBulkStudentsOpen(false)} />}
     </div>
   );
 }

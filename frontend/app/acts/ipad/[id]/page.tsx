@@ -13,6 +13,7 @@ import { useToast } from '@/contexts/ToastContext';
 
 interface Student {
   id: string;
+  ipad_device_id: string;
   student_name: string;
   student_status: string;
   ipad_name: string;
@@ -30,6 +31,13 @@ interface AvailableIpad {
   model: string | null;
   tag: string;
   serial_number: string;
+}
+
+interface AssignmentDraft {
+  assignment_id: string | null;
+  student_name: string;
+  ipad_device_id: string;
+  note: string;
 }
 
 interface ItManager {
@@ -161,6 +169,9 @@ export default function IpadActPage() {
   const [pdfOpen, setPdfOpen] = useState(false);
   const [pdfUrl, setPdfUrl] = useState('');
   const [contentTab, setContentTab] = useState<ContentTab>('active');
+  const [assignmentEditorOpen, setAssignmentEditorOpen] = useState(false);
+  const [assignmentDrafts, setAssignmentDrafts] = useState<AssignmentDraft[]>([]);
+  const [assignmentPickerIndex, setAssignmentPickerIndex] = useState<number | null>(null);
   const setHistoryOpen = (open: boolean) => {
     if (open) setContentTab('events');
   };
@@ -230,6 +241,19 @@ export default function IpadActPage() {
   const activeStudents = act.students.filter(item => item.student_status === 'ACTIVE');
   const departedStudents = act.students.filter(item => item.student_status !== 'ACTIVE');
   const visibleStudents = contentTab === 'active' ? activeStudents : departedStudents;
+  const canEditAssignments = ['DRAFT', 'SIGNED_PARTY2'].includes(act.status);
+  const currentAssignmentIpads: AvailableIpad[] = activeStudents.map(item => ({
+    id: item.ipad_device_id,
+    device_name: item.ipad_name,
+    model: item.ipad_model,
+    tag: item.ipad_tag,
+    serial_number: item.serial_number || '',
+  }));
+  const currentAssignmentIpadIds = new Set(currentAssignmentIpads.map(item => item.id));
+  const assignmentIpadOptions = [
+    ...currentAssignmentIpads,
+    ...availableIpads.filter(item => !currentAssignmentIpadIds.has(item.id)),
+  ];
   const statusLabel = act.status === 'DRAFT'
     ? 'Ожидает подписи ответственного'
     : act.status === 'SIGNED_PARTY2'
@@ -292,6 +316,55 @@ export default function IpadActPage() {
     } catch {
       setAvailableIpads([]);
       showToast('Не удалось загрузить свободные iPad', 'error');
+    }
+  };
+
+  const openAssignmentEditor = async () => {
+    if (!act) return;
+    setContentTab('active');
+    setAssignmentDrafts(act.students
+      .filter(item => item.student_status === 'ACTIVE')
+      .map(item => ({
+        assignment_id: item.id,
+        student_name: item.student_name,
+        ipad_device_id: item.ipad_device_id,
+        note: item.note || '',
+      })));
+    setAssignmentEditorOpen(true);
+    await loadAvailableIpads();
+  };
+
+  const updateAssignmentDraft = (index: number, patch: Partial<AssignmentDraft>) => {
+    setAssignmentDrafts(rows => rows.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row));
+  };
+
+  const saveAssignments = async () => {
+    if (assignmentDrafts.length === 0) {
+      showToast('Добавьте хотя бы одного ученика и iPad', 'error');
+      return;
+    }
+    if (assignmentDrafts.some(item => !item.student_name.trim() || !item.ipad_device_id)) {
+      showToast('У каждого ученика должны быть ФИО и выбранный iPad', 'error');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.patch(`/api/ipad-acts/${id}/assignments`, {
+        students: assignmentDrafts.map(item => ({
+          ...item,
+          student_name: item.student_name.trim(),
+          note: item.note.trim() || null,
+        })),
+      });
+      setAssignmentEditorOpen(false);
+      setAssignmentPickerIndex(null);
+      clearSignature();
+      await load();
+      showToast('Назначения обновлены. Подписи нужно собрать заново', 'success');
+    } catch (error: unknown) {
+      showToast(apiErrorMessage(error, 'Не удалось обновить назначения'), 'error');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -508,9 +581,30 @@ export default function IpadActPage() {
         </div>
         <div className="grid gap-3 sm:grid-cols-2"><Person title="Ответственные" name={act.responsibles.map(item => item.full_name).join(', ')} detail={`${act.responsibles.length} подписантов`} accent="bg-blue-600"/><Person title="Выдающий" name={act.issuer} detail="Сотрудник IT" accent="bg-slate-900"/></div>
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Ученики и iPad</p><h2 className="mt-1 text-xl font-black">{activeStudents.length} активных назначений</h2></div>{act.status === 'COMPLETED' && <button onClick={() => openOperation('addition')} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">+ Добавить ученика</button>}</div>
-          <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-4"><TabButton active={contentTab === 'active'} onClick={() => setContentTab('active')}>Активные · {activeStudents.length}</TabButton><TabButton active={contentTab === 'departed'} onClick={() => setContentTab('departed')}>Выбывшие · {departedStudents.length}</TabButton><TabButton active={contentTab === 'events'} onClick={() => setContentTab('events')}>История · {finalRevisions.length}</TabButton><TabButton active={contentTab === 'appendices'} onClick={() => setContentTab('appendices')}>Приложения · {act.appendices.length}</TabButton></div>
-          {(contentTab === 'active' || contentTab === 'departed') && <div className="space-y-2">{visibleStudents.length === 0 ? <Empty text="В этом разделе пока нет учеников"/> : visibleStudents.map(student => <div key={student.id} className={`rounded-2xl p-4 ${student.student_status === 'ACTIVE' ? 'bg-slate-50' : 'bg-slate-100'}`}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-bold">{student.student_name}</p><p className="truncate text-sm text-slate-500">{student.ipad_name} {student.ipad_model || ''}</p></div><div className="min-w-0 text-right"><p className="font-mono text-sm font-bold text-blue-700">Tag {student.ipad_tag}</p><p className="truncate font-mono text-xs text-slate-400">{student.serial_number || 'Без Serial'}</p></div></div>{student.note && <p className="mt-2 text-sm text-slate-500">{student.note}</p>}{act.status === 'COMPLETED' && student.student_status === 'ACTIVE' && student.status === 'ISSUED' && <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => openOperation('replacement', student)} className="min-h-11 rounded-xl bg-blue-100 px-4 text-sm font-bold text-blue-700">Заменить iPad</button><button onClick={() => openOperation('departure', student)} className="min-h-11 rounded-xl bg-amber-100 px-4 text-sm font-bold text-amber-700">Оформить выбытие</button></div>}{student.status === 'RETURN_PENDING' && <button onClick={() => openOperation('late-return', student)} className="mt-3 min-h-11 rounded-xl bg-violet-100 px-4 text-sm font-bold text-violet-700">Оформить поздний возврат</button>}</div>)}</div>}
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Ученики и iPad</p><h2 className="mt-1 text-xl font-black">{activeStudents.length} активных назначений</h2></div>
+            {act.status === 'COMPLETED' && <button onClick={() => openOperation('addition')} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">+ Добавить ученика</button>}
+            {canEditAssignments && !assignmentEditorOpen && <button onClick={openAssignmentEditor} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white">Редактировать назначения</button>}
+          </div>
+          {!assignmentEditorOpen && <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1 sm:grid-cols-4"><TabButton active={contentTab === 'active'} onClick={() => setContentTab('active')}>Активные · {activeStudents.length}</TabButton><TabButton active={contentTab === 'departed'} onClick={() => setContentTab('departed')}>Выбывшие · {departedStudents.length}</TabButton><TabButton active={contentTab === 'events'} onClick={() => setContentTab('events')}>История · {finalRevisions.length}</TabButton><TabButton active={contentTab === 'appendices'} onClick={() => setContentTab('appendices')}>Приложения · {act.appendices.length}</TabButton></div>}
+          {assignmentEditorOpen ? (
+            <div className="space-y-3">
+              <p className="rounded-2xl bg-amber-50 p-3 text-sm leading-5 text-amber-900">После сохранения акт вернётся к началу подписания. Все подписи получателей, поставленные под прежним составом, будут сброшены.</p>
+              {assignmentDrafts.map((item, index) => {
+                const selectedIpad = assignmentIpadOptions.find(ipad => ipad.id === item.ipad_device_id);
+                return <div key={item.assignment_id || `new-${index}`} className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                  <div className="mb-3 flex items-center justify-between gap-2"><span className="text-xs font-bold uppercase tracking-wide text-slate-400">Ученик {index + 1}</span><button type="button" disabled={assignmentDrafts.length === 1 || busy} onClick={() => setAssignmentDrafts(rows => rows.filter((_, rowIndex) => rowIndex !== index))} className="min-h-11 rounded-xl px-3 text-sm font-bold text-red-600 disabled:opacity-30">Удалить</button></div>
+                  <div className="grid gap-2">
+                    <input value={item.student_name} onChange={event => updateAssignmentDraft(index, { student_name: event.target.value })} placeholder="ФИО ученика *" className="min-h-11 rounded-xl border bg-white px-3" />
+                    {selectedIpad ? <div className="flex min-h-11 items-center justify-between gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3"><button type="button" onClick={() => setAssignmentPickerIndex(index)} className="min-w-0 flex-1 text-left text-sm font-semibold text-blue-800"><span className="block truncate">{ipadLabel(selectedIpad)}</span></button><button type="button" onClick={() => updateAssignmentDraft(index, { ipad_device_id: '' })} className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500" aria-label="Сбросить iPad">✕</button></div> : <button type="button" onClick={() => setAssignmentPickerIndex(index)} className="min-h-11 rounded-xl border border-dashed border-blue-300 bg-white px-3 text-left text-sm font-semibold text-blue-700">Выбрать iPad *</button>}
+                    <input value={item.note} onChange={event => updateAssignmentDraft(index, { note: event.target.value })} placeholder="Заметка" className="min-h-11 rounded-xl border bg-white px-3" />
+                  </div>
+                </div>;
+              })}
+              <button type="button" onClick={() => setAssignmentDrafts(rows => [...rows, { assignment_id: null, student_name: '', ipad_device_id: '', note: '' }])} className="min-h-11 w-full rounded-xl border border-dashed border-blue-300 font-bold text-blue-700">+ Добавить ученика</button>
+              <div className="grid grid-cols-2 gap-2"><button type="button" disabled={busy} onClick={() => { setAssignmentEditorOpen(false); setAssignmentPickerIndex(null); }} className="min-h-12 rounded-xl bg-slate-100 font-bold text-slate-600">Отмена</button><button type="button" disabled={busy} onClick={saveAssignments} className="min-h-12 rounded-xl bg-blue-600 font-black text-white disabled:opacity-50">{busy ? 'Сохранение...' : 'Сохранить и начать подписи заново'}</button></div>
+            </div>
+          ) : (contentTab === 'active' || contentTab === 'departed') && <div className="space-y-2">{visibleStudents.length === 0 ? <Empty text="В этом разделе пока нет учеников"/> : visibleStudents.map(student => <div key={student.id} className={`rounded-2xl p-4 ${student.student_status === 'ACTIVE' ? 'bg-slate-50' : 'bg-slate-100'}`}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-bold">{student.student_name}</p><p className="truncate text-sm text-slate-500">{student.ipad_name} {student.ipad_model || ''}</p></div><div className="min-w-0 text-right"><p className="font-mono text-sm font-bold text-blue-700">Tag {student.ipad_tag}</p><p className="truncate font-mono text-xs text-slate-400">{student.serial_number || 'Без Serial'}</p></div></div>{student.note && <p className="mt-2 text-sm text-slate-500">{student.note}</p>}{act.status === 'COMPLETED' && student.student_status === 'ACTIVE' && student.status === 'ISSUED' && <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => openOperation('replacement', student)} className="min-h-11 rounded-xl bg-blue-100 px-4 text-sm font-bold text-blue-700">Заменить iPad</button><button onClick={() => openOperation('departure', student)} className="min-h-11 rounded-xl bg-amber-100 px-4 text-sm font-bold text-amber-700">Оформить выбытие</button></div>}{student.status === 'RETURN_PENDING' && <button onClick={() => openOperation('late-return', student)} className="mt-3 min-h-11 rounded-xl bg-violet-100 px-4 text-sm font-bold text-violet-700">Оформить поздний возврат</button>}</div>)}</div>}
           {contentTab === 'events' && <div className="space-y-2">{finalRevisions.length === 0 ? <Empty text="Финальных версий пока нет"/> : finalRevisions.map((item, index) => {
             const isCurrent = index === finalRevisions.length - 1;
             return <div key={item.id} className={`rounded-2xl p-4 ${isCurrent ? 'bg-blue-50 ring-1 ring-blue-200' : 'bg-slate-50'}`}>
@@ -534,6 +628,12 @@ export default function IpadActPage() {
         {canSign ? <><div className="flex flex-1 flex-col p-5"><div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button onClick={() => changeSignatureMode('draw')} className={`min-h-11 rounded-lg text-sm font-bold ${signatureMode === 'draw' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Рисовать подпись</button><button onClick={() => changeSignatureMode('upload')} className={`min-h-11 rounded-lg text-sm font-bold ${signatureMode === 'upload' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Загрузить файл</button></div>{signatureMode === 'draw' ? <div className="mt-4 flex flex-1 flex-col justify-center"><SignaturePad key={signatureResetKey} onSave={setSignatureData} onClear={() => setSignatureData('')} /></div> : <div className="mt-4 flex flex-1 items-center justify-center"><SignatureUpload key={signatureResetKey} onUpload={readSignatureFile} /></div>}</div><div className="grid grid-cols-[120px_1fr] gap-3 border-t p-5"><button onClick={clearSignature} className="min-h-12 rounded-xl bg-slate-100 font-bold text-slate-600">Очистить</button><button disabled={!signatureData || busy} onClick={submitSignature} className="min-h-12 rounded-xl bg-blue-600 font-black text-white disabled:opacity-40">{busy ? 'Сохранение...' : 'Подписать'}</button></div>{pendingAppendix && <button disabled={busy} onClick={() => cancelAppendix(pendingAppendix)} className="mx-5 mb-5 min-h-11 rounded-xl bg-red-50 font-bold text-red-700">Отменить приложение</button>}</> : <div className="flex flex-1 items-center justify-center p-6"><div className="w-full max-w-md text-center"><div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-3xl font-black text-emerald-700">✓</div><h3 className="mt-4 text-xl font-black">{act.status === 'RETURNED' ? 'Возврат завершён' : 'Выдача завершена'}</h3><p className="mt-2 text-sm text-slate-500">{act.status === 'RETURNED' ? 'Все iPad возвращены и результаты проверки сохранены.' : 'Все ответственные и IT подписали Advisory-акт.'}</p>{act.status === 'COMPLETED' && <button onClick={() => openOperation('year-end-return')} className="mt-5 min-h-12 w-full rounded-xl bg-violet-600 font-bold text-white">Оформить годовой возврат</button>}<button onClick={() => openPdf()} className={`${act.status === 'COMPLETED' ? 'mt-3' : 'mt-5'} min-h-12 w-full rounded-xl bg-blue-600 font-bold text-white`}>Открыть финальный PDF</button><button onClick={downloadPdf} className="mt-3 min-h-12 w-full rounded-xl bg-slate-100 font-bold">Скачать PDF</button><button onClick={() => setHistoryOpen(true)} className="mt-3 min-h-12 w-full rounded-xl bg-slate-900 font-bold text-white">История изменений</button></div></div>}
       </section>
     </main>
+    {assignmentPickerIndex !== null && <IpadPickerModal
+      ipads={assignmentIpadOptions}
+      excludeIds={assignmentDrafts.filter((_, rowIndex) => rowIndex !== assignmentPickerIndex).map(item => item.ipad_device_id).filter(Boolean)}
+      onSelect={ipad => { updateAssignmentDraft(assignmentPickerIndex, { ipad_device_id: ipad.id }); setAssignmentPickerIndex(null); }}
+      onClose={() => setAssignmentPickerIndex(null)}
+    />}
     {operation && <OperationModal operation={operation} student={selectedStudent} form={form} setForm={setForm} responsibles={act.responsibles} itManagers={itManagers} issuerName={act.issuer} availableIpads={availableIpads} busy={busy} onSubmit={submitOperation} onClose={() => setOperation(null)} />}
     {pdfOpen && <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/90 p-3"><div className="mx-auto mb-3 flex w-full max-w-6xl flex-wrap justify-end gap-2"><a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center rounded-xl bg-blue-600 px-4 font-bold text-white">Открыть в новой вкладке</a><a href={pdfUrl} download={`${shortId}.pdf`} className="flex min-h-11 items-center rounded-xl bg-white px-4 font-bold">Скачать</a><button onClick={closePdf} className="min-h-11 rounded-xl bg-white px-5 font-bold">Закрыть</button></div><iframe src={pdfUrl} title="PDF акта" className="mx-auto h-full w-full max-w-6xl rounded-2xl bg-white"/></div>}
     {deleteConfirmOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"><div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-red-600">Необратимое действие</p><h2 className="mt-2 text-xl font-black">Удалить акт навсегда?</h2><p className="mt-3 text-sm leading-6 text-slate-600">Точно удалить {shortId} со всеми версиями, подписями, приложениями и назначениями iPad? Восстановить его будет невозможно.</p><div className="mt-6 flex gap-3"><button disabled={busy} onClick={permanentlyDeleteAct} className="min-h-12 flex-1 rounded-xl bg-red-600 font-black text-white disabled:opacity-50">{busy ? 'Удаление...' : 'Удалить навсегда'}</button><button disabled={busy} onClick={() => setDeleteConfirmOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-5 font-bold">Отмена</button></div></div></div>}

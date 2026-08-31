@@ -11,7 +11,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
 from app.db.models import Act, IpadActAppendix, IpadDevice, IpadStudentAssignment, User
 from app.db.states import ACTIVE_IPAD_ASSIGNMENT_STATUSES
-from app.schemas.schemas import IpadDeviceBulkCreate, IpadDeviceCreate, IpadDeviceUpdate
+from app.schemas.schemas import IpadAvailableResolveRequest, IpadDeviceBulkCreate, IpadDeviceCreate, IpadDeviceUpdate
 from app.services.audit_service import record_audit
 
 
@@ -58,6 +58,40 @@ def available_ipads(
         IpadDevice.tag.in_([item.tag for item in devices])
     ).group_by(IpadDevice.tag).all()) if devices else {}
     return [_serialize(item, duplicate_tag_count=tag_counts.get(item.tag, 1)) for item in devices]
+
+
+@router.post("/available/resolve")
+def resolve_available_ipads(
+    payload: IpadAvailableResolveRequest,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    requested = [str(item).strip() for item in payload.serial_numbers]
+    if any(not item for item in requested):
+        raise HTTPException(status_code=422, detail="Serial Number не может быть пустым")
+
+    normalized = {item.casefold() for item in requested}
+    devices = db.query(IpadDevice).filter(
+        func.lower(IpadDevice.serial_number).in_(normalized)
+    ).order_by(IpadDevice.serial_number).all()
+    devices_by_serial = {item.serial_number.casefold(): item for item in devices}
+
+    items = []
+    for serial_number in requested:
+        device = devices_by_serial.get(serial_number.casefold())
+        if device is None:
+            items.append({
+                "serial_number": serial_number,
+                "match_status": "NOT_FOUND",
+                "device": None,
+            })
+            continue
+        items.append({
+            "serial_number": serial_number,
+            "match_status": "AVAILABLE" if device.status == "AVAILABLE" else "UNAVAILABLE",
+            "device": _serialize(device),
+        })
+    return {"items": items}
 
 
 @router.get("/groups")

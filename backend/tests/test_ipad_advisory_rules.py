@@ -37,4 +37,5 @@ def test_ipad_act_serialization_separates_responsibles_and_students():
 
     assert result["responsibles"][0]["full_name"] == "Responsible"
     assert result["students"][0]["student_name"] == "Student"
+    assert result["students"][0]["ipad_device_id"] == "164fb2bc-5a9c-4504-a8bb-f16c543f6ac4"
     assert result["students"][0]["ipad_tag"] == "IPAD-001"
