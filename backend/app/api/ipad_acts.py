@@ -40,6 +40,7 @@ from app.db.models import (
 from app.schemas.schemas import (
     IpadAdvisoryActCreate,
     IpadAdvisoryAssignmentsUpdate,
+    IpadAdvisoryParticipantsUpdate,
     IpadAppendixReplacementCreate,
     IpadAppendixDepartureCreate,
     IpadAppendixStudentAddCreate,
@@ -392,6 +393,105 @@ def get_ipad_advisory_act(
     act = db.query(Act).filter(Act.id == act_id).first()
     if not act or not act.ipad_profile:
         raise HTTPException(status_code=404, detail="iPad-акт не найден")
+    return _serialize(act)
+
+
+@router.patch("/{act_id}/participants")
+def update_ipad_advisory_participants(
+    act_id: UUID,
+    payload: IpadAdvisoryParticipantsUpdate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
+    if not act or not act.ipad_profile:
+        raise HTTPException(status_code=404, detail="iPad-акт не найден")
+    if act.status not in {ActStatus.DRAFT, ActStatus.SIGNED_PARTY2}:
+        raise HTTPException(status_code=409, detail="Участников можно изменять только во время подписания акта")
+
+    issuer = _get_selectable_participant(
+        db,
+        payload.issuer_participant_id,
+        {ParticipantKind.IT_MANAGER, ParticipantKind.BOTH},
+        "выдающего",
+    )
+    responsible_ids: set[UUID] = set()
+    responsibles: list[Participant] = []
+    for participant_id in payload.responsible_participant_ids:
+        if participant_id in responsible_ids:
+            raise HTTPException(status_code=422, detail="Ответственное лицо выбрано несколько раз")
+        participant = _get_selectable_participant(
+            db,
+            participant_id,
+            {ParticipantKind.EMPLOYEE, ParticipantKind.BOTH},
+            "ответственное лицо",
+        )
+        if not participant.email:
+            raise HTTPException(status_code=422, detail=f"У ответственного {participant.full_name} нет email")
+        responsible_ids.add(participant_id)
+        responsibles.append(participant)
+
+    extra = dict(act.extra_data_json or {})
+    existing_recipients = extra.get(RECIPIENTS_KEY, [])
+    existing_responsible_ids = [
+        str(item.get("participant_id"))
+        for item in existing_recipients
+        if isinstance(item, dict)
+    ] if isinstance(existing_recipients, list) else []
+    participants_changed = (
+        str(extra.get(PARTY1_PARTICIPANT_ID_KEY) or "") != str(issuer.id)
+        or existing_responsible_ids != [str(item.id) for item in responsibles]
+    )
+    if not participants_changed:
+        return _serialize(act)
+
+    recipients = [{
+        "participant_id": str(participant.id),
+        "full_name": participant.full_name,
+        "email": participant.email,
+        "signed_at": None,
+        "signature_file_path": None,
+        "return_signed_at": None,
+        "return_signature_file_path": None,
+    } for participant in responsibles]
+    extra[PARTY1_PARTICIPANT_ID_KEY] = str(issuer.id)
+    extra[RECIPIENTS_KEY] = recipients
+    act.extra_data_json = extra
+    flag_modified(act, "extra_data_json")
+    act.party1_name = issuer.full_name
+    act.party2_name = _build_party2_summary(recipients)
+    act.receiver_email = _get_primary_recipient_email(recipients)
+    act.status = ActStatus.DRAFT
+    act.current_version += 1
+    act.updated_at = datetime.utcnow()
+
+    version = ActVersion(
+        act_id=act.id,
+        version_number=act.current_version,
+        data_json=build_act_snapshot(act),
+        change_note="Изменены ответственные и выдающий; подписи сброшены",
+        created_by=current_user.id,
+    )
+    db.add(version)
+    db.flush()
+    pdf_asset = create_pdf_asset_for_version(
+        db,
+        act,
+        version,
+        template_name=act.template.name,
+        template_code="IPAD",
+        use_v2=True,
+    )
+    record_audit(db, current_user, "ACT", act.id, "IPAD_PARTICIPANTS_UPDATED", {
+        "version": act.current_version,
+        "issuer_participant_id": str(issuer.id),
+        "responsible_participant_ids": [str(item.id) for item in responsibles],
+        "signatures_reset": True,
+    })
+    db.commit()
+    background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
+    db.refresh(act)
     return _serialize(act)
 
 

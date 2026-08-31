@@ -30,6 +30,7 @@ from app.db.models import (
 )
 from app.schemas.schemas import (
     IpadAdvisoryAssignmentsUpdate,
+    IpadAdvisoryParticipantsUpdate,
     IpadAppendixReplacementCreate,
     IpadAppendixSignatureRequest,
     IpadAppendixYearEndReturnCreate,
@@ -227,6 +228,76 @@ def test_assignments_can_be_replaced_during_signing_and_reset_signatures(ipad_da
     ).one()
     assert version.pdf_file_id is not None
     assert version.data_json["extra_data_json"]["ipad_advisory"]["students"][0]["student_name"] == "Replacement Student"
+
+
+def test_participants_can_be_replaced_during_signing_and_reset_signatures(ipad_data):
+    db, user, _issuer, _responsible, act, _assignment, _old_device, _new_device = ipad_data
+    new_issuer = Participant(full_name="New IT Manager", email="new-it@example.com", kind=ParticipantKind.IT_MANAGER)
+    new_responsible = Participant(full_name="New Class Advisor", email="new-advisor@example.com", kind=ParticipantKind.EMPLOYEE)
+    db.add_all([new_issuer, new_responsible])
+    db.flush()
+    act.status = ActStatus.SIGNED_PARTY2
+    extra = dict(act.extra_data_json or {})
+    extra["recipients"] = [{
+        **extra["recipients"][0],
+        "signature_file_path": "acts/old-signature.png",
+    }]
+    act.extra_data_json = extra
+    previous_version = act.current_version
+    db.commit()
+
+    result = ipad_api.update_ipad_advisory_participants(
+        act.id,
+        IpadAdvisoryParticipantsUpdate(
+            issuer_participant_id=new_issuer.id,
+            responsible_participant_ids=[new_responsible.id],
+        ),
+        BackgroundTasks(),
+        db,
+        user,
+    )
+
+    db.refresh(act)
+    assert act.status == ActStatus.DRAFT
+    assert act.party1_name == new_issuer.full_name
+    assert act.party2_name == new_responsible.full_name
+    assert act.receiver_email == new_responsible.email
+    assert act.current_version == previous_version + 1
+    assert result["issuer_participant_id"] == str(new_issuer.id)
+    assert result["responsibles"] == [{
+        "participant_id": str(new_responsible.id),
+        "full_name": new_responsible.full_name,
+        "email": new_responsible.email,
+        "signed_at": None,
+        "signature_file_path": None,
+        "return_signed_at": None,
+        "return_signature_file_path": None,
+    }]
+    version = db.query(ActVersion).filter(
+        ActVersion.act_id == act.id,
+        ActVersion.version_number == act.current_version,
+    ).one()
+    assert version.pdf_file_id is not None
+    assert version.data_json["party1_name"] == new_issuer.full_name
+    assert version.data_json["party2_name"] == new_responsible.full_name
+
+
+def test_participants_cannot_be_replaced_after_ipad_act_completion(ipad_data):
+    db, user, issuer, responsible, act, _assignment, _old_device, _new_device = ipad_data
+
+    with pytest.raises(HTTPException) as error:
+        ipad_api.update_ipad_advisory_participants(
+            act.id,
+            IpadAdvisoryParticipantsUpdate(
+                issuer_participant_id=issuer.id,
+                responsible_participant_ids=[responsible.id],
+            ),
+            BackgroundTasks(),
+            db,
+            user,
+        )
+
+    assert error.value.status_code == 409
 
 
 def test_year_end_return_is_applied_after_both_signatures(ipad_data, monkeypatch):

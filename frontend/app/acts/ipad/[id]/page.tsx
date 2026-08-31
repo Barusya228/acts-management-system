@@ -8,6 +8,7 @@ import { apiErrorMessage } from '@/lib/apiError';
 import SignaturePad from '@/components/SignaturePad';
 import SignatureUpload from '@/components/SignatureUpload';
 import IpadPickerModal, { ipadLabel } from '@/components/IpadPickerModal';
+import IpadParticipantsModal from '@/components/IpadParticipantsModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 
@@ -172,6 +173,7 @@ export default function IpadActPage() {
   const [assignmentEditorOpen, setAssignmentEditorOpen] = useState(false);
   const [assignmentDrafts, setAssignmentDrafts] = useState<AssignmentDraft[]>([]);
   const [assignmentPickerIndex, setAssignmentPickerIndex] = useState<number | null>(null);
+  const [participantsEditorOpen, setParticipantsEditorOpen] = useState(false);
   const setHistoryOpen = (open: boolean) => {
     if (open) setContentTab('events');
   };
@@ -242,6 +244,11 @@ export default function IpadActPage() {
   const departedStudents = act.students.filter(item => item.student_status !== 'ACTIVE');
   const visibleStudents = contentTab === 'active' ? activeStudents : departedStudents;
   const canEditAssignments = ['DRAFT', 'SIGNED_PARTY2'].includes(act.status);
+  const responsibleCountLabel = act.responsibles.length === 1
+    ? '1 подписант'
+    : act.responsibles.length < 5
+      ? `${act.responsibles.length} подписанта`
+      : `${act.responsibles.length} подписантов`;
   const currentAssignmentIpads: AvailableIpad[] = activeStudents.map(item => ({
     id: item.ipad_device_id,
     device_name: item.ipad_name,
@@ -579,7 +586,7 @@ export default function IpadActPage() {
           <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-black text-blue-800">{statusLabel}</span><p className="mt-3 text-sm text-slate-500">Advisory {act.advisory_group} · учебный год {act.academic_year}</p></div><div className="text-right"><p className="text-xs text-slate-400">Дата выдачи</p><p className="font-black">{new Date(act.issue_date).toLocaleDateString('ru-RU')}</p></div></div>
           <div className="mt-5 grid grid-cols-3 items-start gap-2 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-center"><Progress active label={`Ответственные ${signedCount}/${act.responsibles.length}`} /><span className="hidden h-px bg-slate-200 sm:block"/><Progress active={act.status !== 'DRAFT'} label="Подтверждение IT"/><span className="hidden h-px bg-slate-200 sm:block"/><Progress active={act.status === 'COMPLETED' || act.status === 'RETURNED'} label="Завершено"/></div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2"><Person title="Ответственные" name={act.responsibles.map(item => item.full_name).join(', ')} detail={`${act.responsibles.length} подписантов`} accent="bg-blue-600"/><Person title="Выдающий" name={act.issuer} detail="Сотрудник IT" accent="bg-slate-900"/></div>
+        <div className="grid items-start gap-3 sm:grid-cols-2"><PeopleCard title="Ответственные" names={act.responsibles.map(item => item.full_name)} detail={responsibleCountLabel} accent="bg-blue-600" onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/><PeopleCard title="Выдающий" names={[act.issuer]} detail="Сотрудник IT" accent="bg-slate-900" onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/></div>
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Ученики и iPad</p><h2 className="mt-1 text-xl font-black">{activeStudents.length} активных назначений</h2></div>
@@ -634,6 +641,13 @@ export default function IpadActPage() {
       onSelect={ipad => { updateAssignmentDraft(assignmentPickerIndex, { ipad_device_id: ipad.id }); setAssignmentPickerIndex(null); }}
       onClose={() => setAssignmentPickerIndex(null)}
     />}
+    {participantsEditorOpen && <IpadParticipantsModal
+      actId={act.id}
+      issuerParticipantId={act.issuer_participant_id}
+      responsibleParticipantIds={act.responsibles.map(item => item.participant_id)}
+      onUpdated={async () => { clearSignature(); await load(); }}
+      onClose={() => setParticipantsEditorOpen(false)}
+    />}
     {operation && <OperationModal operation={operation} student={selectedStudent} form={form} setForm={setForm} responsibles={act.responsibles} itManagers={itManagers} issuerName={act.issuer} availableIpads={availableIpads} busy={busy} onSubmit={submitOperation} onClose={() => setOperation(null)} />}
     {pdfOpen && <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/90 p-3"><div className="mx-auto mb-3 flex w-full max-w-6xl flex-wrap justify-end gap-2"><a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center rounded-xl bg-blue-600 px-4 font-bold text-white">Открыть в новой вкладке</a><a href={pdfUrl} download={`${shortId}.pdf`} className="flex min-h-11 items-center rounded-xl bg-white px-4 font-bold">Скачать</a><button onClick={closePdf} className="min-h-11 rounded-xl bg-white px-5 font-bold">Закрыть</button></div><iframe src={pdfUrl} title="PDF акта" className="mx-auto h-full w-full max-w-6xl rounded-2xl bg-white"/></div>}
     {deleteConfirmOpen && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"><div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl"><p className="text-xs font-bold uppercase tracking-widest text-red-600">Необратимое действие</p><h2 className="mt-2 text-xl font-black">Удалить акт навсегда?</h2><p className="mt-3 text-sm leading-6 text-slate-600">Точно удалить {shortId} со всеми версиями, подписями, приложениями и назначениями iPad? Восстановить его будет невозможно.</p><div className="mt-6 flex gap-3"><button disabled={busy} onClick={permanentlyDeleteAct} className="min-h-12 flex-1 rounded-xl bg-red-600 font-black text-white disabled:opacity-50">{busy ? 'Удаление...' : 'Удалить навсегда'}</button><button disabled={busy} onClick={() => setDeleteConfirmOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-5 font-bold">Отмена</button></div></div></div>}
@@ -665,8 +679,8 @@ function Progress({ active, label }: { active: boolean; label: string }) {
   return <div className="text-center"><span className={`mx-auto block h-3 w-3 rounded-full ${active ? 'bg-blue-600 ring-4 ring-blue-100' : 'bg-slate-200'}`}/><span className="mt-2 block text-[11px] font-bold leading-tight text-slate-500 sm:text-[10px]">{label}</span></div>;
 }
 
-function Person({ title, name, detail, accent }: { title: string; name: string; detail: string; accent: string }) {
-  return <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><div className="flex gap-3"><span className={`h-11 w-1 rounded-full ${accent}`}/><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">{title}</p><p className="truncate font-black">{name}</p><p className="truncate text-xs text-slate-500">{detail}</p></div></div></div>;
+function PeopleCard({ title, names, detail, accent, onEdit }: { title: string; names: string[]; detail: string; accent: string; onEdit?: () => void }) {
+  return <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><div className="flex gap-3"><span className={`min-h-11 w-1 shrink-0 rounded-full ${accent}`}/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">{title}</p>{onEdit && <button type="button" onClick={onEdit} className="min-h-9 shrink-0 rounded-lg bg-blue-50 px-3 text-xs font-bold text-blue-700">Изменить</button>}</div><div className="mt-1 space-y-1">{names.map((name, index) => <p key={`${name}-${index}`} className="break-words font-black leading-snug">{name}</p>)}</div><p className="mt-1 text-xs text-slate-500">{detail}</p></div></div></div>;
 }
 
 function FieldLabel({ text, children }: { text: string; children: React.ReactNode }) {
