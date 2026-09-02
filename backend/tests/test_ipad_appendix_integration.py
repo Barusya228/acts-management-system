@@ -21,6 +21,7 @@ from app.db.models import (
     IpadAdvisoryAct,
     IpadActAppendix,
     IpadDevice,
+    IpadOperationOption,
     IpadStudentAssignment,
     Participant,
     ParticipantKind,
@@ -181,6 +182,62 @@ def test_cancel_replacement_appendix_releases_reserved_ipad(ipad_data):
     ipad_api.cancel_appendix(act.id, UUID(appendix["id"]), db, user)
     db.refresh(new_device)
     assert new_device.status == "AVAILABLE"
+
+
+def test_custom_replacement_reason_is_saved_with_maintenance_result(ipad_data):
+    db, user, _issuer, responsible, act, assignment, _old_device, new_device = ipad_data
+    option = IpadOperationOption(
+        code="CUSTOM_REPLACEMENT_TEST",
+        option_type="REPLACEMENT_REASON",
+        name="Не работает камера",
+    )
+    db.add(option)
+    db.commit()
+
+    result = ipad_api.create_replacement_appendix(
+        act.id,
+        assignment.id,
+        IpadAppendixReplacementCreate(
+            responsible_participant_id=responsible.id,
+            replacement_date=date.today(),
+            reason=option.code,
+            ipad_device_id=new_device.id,
+        ),
+        db,
+        user,
+    )
+
+    assert result["payload"]["reason"] == option.code
+    assert result["payload"]["reason_label"] == option.name
+    assert result["payload"]["old_result_status"] == "MAINTENANCE"
+
+
+def test_custom_departure_condition_is_saved_with_maintenance_result(ipad_data):
+    db, user, issuer, responsible, act, assignment, _old_device, _new_device = ipad_data
+    option = IpadOperationOption(
+        code="CUSTOM_RETURN_TEST",
+        option_type="RETURN_CONDITION",
+        name="Есть глубокие царапины",
+    )
+    db.add(option)
+    db.commit()
+
+    result = ipad_api.create_departure_appendix(
+        act.id,
+        assignment.id,
+        ipad_api.IpadAppendixDepartureCreate(
+            responsible_participant_id=responsible.id,
+            issuer_participant_id=issuer.id,
+            departure_date=date.today(),
+            return_condition=option.code,
+        ),
+        db,
+        user,
+    )
+
+    assert result["payload"]["return_condition"] == option.code
+    assert result["payload"]["return_condition_label"] == option.name
+    assert result["payload"]["device_result_status"] == "MAINTENANCE"
 
 
 def test_assignments_can_be_replaced_during_signing_and_reset_signatures(ipad_data):

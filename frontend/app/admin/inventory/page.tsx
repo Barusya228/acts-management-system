@@ -38,6 +38,13 @@ interface InventoryCategory {
   is_system: boolean;
 }
 
+interface InventoryStatusOption {
+  id: string | null;
+  code: string;
+  name: string;
+  is_system: boolean;
+}
+
 interface DeviceGroup {
   name: string;
   model: string;
@@ -83,7 +90,7 @@ const ipadStatusOptions = [
 
 const normalizedStatus = (status: string) => status === 'reserved' || status === 'issued' ? 'assigned' : status;
 const getStatusBadge = (s: string) => statusOptions.find(o => o.value === normalizedStatus(s))?.cls || 'bg-gray-100 text-gray-700';
-const getStatusLabel = (s: string) => statusOptions.find(o => o.value === normalizedStatus(s))?.label || s;
+const getStatusLabel = (s: string, customStatuses: InventoryStatusOption[] = []) => statusOptions.find(o => o.value === normalizedStatus(s))?.label || customStatuses.find(option => option.code === s)?.name || s;
 
 const emptyForm = {
   inventory_number: '', barcode: '', name: '', model: '', category: 'notebook',
@@ -99,6 +106,7 @@ export default function InventoryPage() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [inventoryStatuses, setInventoryStatuses] = useState<InventoryStatusOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
@@ -159,6 +167,8 @@ export default function InventoryPage() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [categorySaving, setCategorySaving] = useState(false);
   const [categoryForm, setCategoryForm] = useState({ name: '', code: '', icon: '📦' });
+  const [newStatusName, setNewStatusName] = useState('');
+  const [statusCreating, setStatusCreating] = useState(false);
   const [showCategoryEmojiPicker, setShowCategoryEmojiPicker] = useState(false);
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<InventoryCategory | null>(null);
   const [deleteSmallEquipmentTarget, setDeleteSmallEquipmentTarget] = useState<SmallEquipmentGroup | null>(null);
@@ -192,7 +202,10 @@ export default function InventoryPage() {
     if (user?.role === 'ADMIN') fetchGroups();
   }, [user, catFilter, statusFilter, refreshKey]);
   useEffect(() => {
-    if (user?.role === 'ADMIN') fetchCategories();
+    if (user?.role === 'ADMIN') {
+      fetchCategories();
+      fetchInventoryStatuses();
+    }
   }, [user]);
 
   const fetchCategories = async () => {
@@ -204,6 +217,15 @@ export default function InventoryPage() {
       setCategories([]);
     } finally {
       setCategoriesLoading(false);
+    }
+  };
+
+  const fetchInventoryStatuses = async () => {
+    try {
+      const response = await api.get('/api/inventory/statuses');
+      setInventoryStatuses(Array.isArray(response.data) ? response.data : []);
+    } catch {
+      setInventoryStatuses([]);
     }
   };
 
@@ -363,18 +385,21 @@ export default function InventoryPage() {
     setBulkMode(false);
     setBulkRows([{ ...emptyBulkRow }]);
     setBulkPaste('');
+    setNewStatusName('');
     setForm({ ...emptyForm, category: initialCategory });
     setShowModal(true);
   };
   const openEdit = (d: Device) => {
     setEditId(d.id);
     setBulkMode(false);
+    setNewStatusName('');
     setForm({ inventory_number: d.inventory_number, barcode: d.barcode || '', name: d.name, model: d.model || '', category: d.category, serial_number: d.serial_number, status: d.status, location: d.location || '', assigned_to: d.assigned_to || '', paper_act_number: d.paper_act_number || '', paper_issue_date: d.paper_issue_date || '', notes: d.notes || '' });
     setShowModal(true);
   };
 
   const handleSubmit = async () => {
     if (!form.name.trim()) { showToast('Название обязательно', 'error'); return; }
+    if (form.status === '__other__') { showToast('Сначала добавьте новый статус', 'error'); return; }
     if (bulkMode && !editId) {
       if (bulkRows.some(row => !row.inventory_number.trim() || !row.barcode.trim())) {
         showToast('Заполните инвентарный номер и штрихкод в каждой строке', 'error');
@@ -427,6 +452,25 @@ export default function InventoryPage() {
       setRefreshKey(value => value + 1);
     } catch (err: any) { showToast(err.response?.data?.detail || 'Ошибка', 'error'); }
     finally { setSaving(false); }
+  };
+
+  const createInventoryStatus = async () => {
+    if (!newStatusName.trim()) {
+      showToast('Введите название нового статуса', 'error');
+      return;
+    }
+    setStatusCreating(true);
+    try {
+      const response = await api.post('/api/inventory/statuses', { name: newStatusName.trim() });
+      setInventoryStatuses(current => current.some(item => item.code === response.data.code) ? current : [...current, response.data]);
+      setForm(current => ({ ...current, status: response.data.code }));
+      setNewStatusName('');
+      showToast('Новый статус добавлен', 'success');
+    } catch (error: any) {
+      showToast(error.response?.data?.detail || 'Не удалось добавить статус', 'error');
+    } finally {
+      setStatusCreating(false);
+    }
   };
 
   const updateBulkRow = (index: number, field: 'inventory_number' | 'barcode', value: string) => {
@@ -600,6 +644,7 @@ export default function InventoryPage() {
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
             <option value="">Все статусы</option>
             {statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {inventoryStatuses.filter(option => !option.is_system).map(option => <option key={option.code} value={option.code}>{option.name}</option>)}
           </select>}
           {inventoryView === 'ipads' && <select value={ipadStatusFilter} onChange={e => { setIpadStatusFilter(e.target.value); setSelectedIpadGroup(''); setPage(1); }}
             className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none">
@@ -783,7 +828,7 @@ export default function InventoryPage() {
                         <td className="whitespace-nowrap px-3 py-3 font-mono text-slate-600 xl:px-4">{d.inventory_number}</td>
                         <td className="whitespace-nowrap px-3 py-3 font-mono text-slate-600 xl:px-4">{d.barcode || '—'}</td>
                         <td className="px-3 py-3 lg:whitespace-nowrap xl:px-4">
-                          <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadge(d.status)}`}>{getStatusLabel(d.status)}</span>
+                          <span className={`inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusBadge(d.status)}`}>{getStatusLabel(d.status, inventoryStatuses)}</span>
                           {d.status === 'paper_issued' && (d.paper_act_number || d.paper_issue_date) && <span className="mt-0.5 block text-[11px] text-violet-600">Бум. акт{d.paper_act_number ? ` №${d.paper_act_number}` : ''}</span>}
                         </td>
                         <td className="max-w-[160px] px-4 py-3">
@@ -899,8 +944,11 @@ export default function InventoryPage() {
                     <option value="assigned" disabled>Выдан под акт (автоматически)</option>
                   )}
                    {statusOptions.filter(option => option.value !== 'assigned' && (!bulkMode || option.value !== 'paper_issued')).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                   {inventoryStatuses.filter(option => !option.is_system).map(option => <option key={option.code} value={option.code}>{option.name}</option>)}
+                   <option value="__other__">Другое...</option>
                  </select></div>
              </div>
+             {form.status === '__other__' && <div className="rounded-xl border border-blue-200 bg-blue-50 p-3"><label className="mb-1 block text-xs font-bold uppercase tracking-wide text-blue-700">Название нового статуса</label><div className="flex flex-col gap-2 sm:flex-row"><input autoFocus value={newStatusName} onChange={event => setNewStatusName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void createInventoryStatus(); } }} placeholder="Например, На диагностике" className="min-h-11 flex-1 rounded-xl border border-blue-200 bg-white px-3 text-sm outline-none focus:border-blue-500"/><button type="button" disabled={statusCreating} onClick={createInventoryStatus} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-50">{statusCreating ? 'Добавление...' : 'Добавить статус'}</button></div><p className="mt-2 text-xs text-blue-700">Статус сохранится в общем списке и будет доступен для других устройств.</p></div>}
             {!bulkMode && form.status === 'paper_issued' && <div className="rounded-xl border border-violet-200 bg-violet-50 p-4"><p className="mb-3 text-sm font-bold text-violet-900">Данные бумажного акта</p><div className="space-y-3"><div><label className="mb-1 block text-xs font-medium text-violet-800">Кому выдано *</label><input value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })} placeholder="ФИО получателя" className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-medium text-violet-800">Номер акта</label><input value={form.paper_act_number} onChange={e => setForm({ ...form, paper_act_number: e.target.value })} placeholder="Например, 125" className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div><div><label className="mb-1 block text-xs font-medium text-violet-800">Дата бумажного акта</label><input type="date" value={form.paper_issue_date} onChange={e => setForm({ ...form, paper_issue_date: e.target.value })} className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div></div></div><p className="mt-3 text-xs text-violet-600">Устройство будет исключено из доступных для новых электронных актов.</p></div>}
             {bulkMode && !editId && (
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">

@@ -209,12 +209,10 @@ class IpadAdvisoryActCreate(BaseModel):
     students: list[IpadStudentCreate]
 
 
-# Классификация повреждений iPad (причина замены / состояние при возврате).
-IpadDamageReason = Literal["BENT_BODY", "CRACKED_SCREEN", "LOST", "WEAK_BATTERY", "DAMAGED_DISPLAY"]
-# Состояние iPad при возврате: OK или одно из повреждений.
-IpadReturnCondition = Literal["OK", "BENT_BODY", "CRACKED_SCREEN", "LOST", "WEAK_BATTERY", "DAMAGED_DISPLAY"]
-# При выбытии iPad может быть ещё не сдан — тогда ожидается поздний возврат.
-IpadDepartureCondition = Literal["OK", "BENT_BODY", "CRACKED_SCREEN", "LOST", "WEAK_BATTERY", "DAMAGED_DISPLAY", "NOT_RETURNED"]
+# Системные коды и коды из справочника ipad_operation_options.
+IpadDamageReason = str
+IpadReturnCondition = str
+IpadDepartureCondition = str
 
 
 class IpadStudentDepartureRequest(BaseModel):
@@ -272,6 +270,11 @@ class IpadAppendixYearEndReturnCreate(BaseModel):
 class IpadAppendixSignatureRequest(BaseModel):
     participant_id: UUID4
     signature_data: str
+
+
+class IpadOperationOptionCreate(BaseModel):
+    option_type: Literal["REPLACEMENT_REASON", "RETURN_CONDITION"]
+    name: str = Field(min_length=1, max_length=120)
 
 
 class IpadDeviceCreate(BaseModel):
@@ -355,7 +358,7 @@ class InventoryDeviceCreate(BaseModel):
     model: Optional[str] = None
     category: str
     serial_number: str
-    status: Literal["available", "paper_issued", "maintenance", "retired"] = "available"
+    status: str = Field(default="available", min_length=1, max_length=80)
     location: Optional[str] = None
     assigned_to: Optional[str] = None
     paper_act_number: Optional[str] = None
@@ -372,7 +375,7 @@ class InventoryBulkCreate(BaseModel):
     name: str
     model: Optional[str] = None
     category: str
-    status: Literal["available", "maintenance", "retired"] = "available"
+    status: str = Field(default="available", min_length=1, max_length=80)
     devices: list[InventoryBulkItem]
 
 
@@ -383,12 +386,16 @@ class InventoryDeviceUpdate(BaseModel):
     model: Optional[str] = None
     category: Optional[str] = None
     serial_number: Optional[str] = None
-    status: Optional[Literal["available", "reserved", "issued", "paper_issued", "maintenance", "retired"]] = None
+    status: Optional[str] = Field(default=None, min_length=1, max_length=80)
     location: Optional[str] = None
     assigned_to: Optional[str] = None
     paper_act_number: Optional[str] = None
     paper_issue_date: Optional[date] = None
     notes: Optional[str] = None
+
+
+class InventoryStatusCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
 
 
 class InventoryDeviceResponse(BaseModel):

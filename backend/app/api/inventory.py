@@ -10,7 +10,7 @@ from uuid import UUID
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
 from app.services.audit_service import record_audit
-from app.db.models import Act, ActAccessory, ActDeviceAssignment, InventoryCategory, InventoryDevice, SmallEquipmentCatalog, User
+from app.db.models import Act, ActAccessory, ActDeviceAssignment, InventoryCategory, InventoryDevice, InventoryStatus, SmallEquipmentCatalog, User
 from app.schemas.schemas import (
     InventoryCategoryCreate,
     InventoryCategoryResponse,
@@ -20,10 +20,18 @@ from app.schemas.schemas import (
     InventoryDeviceUpdate,
     InventoryDeviceResponse,
     InventoryListResponse,
+    InventoryStatusCreate,
     SmallEquipmentCatalogCreate,
 )
 
 router = APIRouter()
+
+SYSTEM_INVENTORY_STATUSES = {
+    "available": "Не выдан",
+    "paper_issued": "Выдан по бумажному акту",
+    "maintenance": "На обслуживании",
+    "retired": "Списан",
+}
 
 
 CYRILLIC_TRANSLITERATION = str.maketrans({
@@ -174,6 +182,67 @@ def list_manual_accessories(
 def _category_code(value: str) -> str:
     transliterated = value.strip().lower().translate(CYRILLIC_TRANSLITERATION)
     return re.sub(r"[^a-z0-9]+", "-", transliterated).strip("-")
+
+
+def _require_active_inventory_status(db: Session, code: str) -> str:
+    normalized = str(code or "").strip().lower()
+    if normalized in SYSTEM_INVENTORY_STATUSES:
+        return normalized
+    custom_status = db.query(InventoryStatus).filter(
+        InventoryStatus.code == normalized,
+        InventoryStatus.is_active.is_(True),
+    ).first()
+    if not custom_status:
+        raise HTTPException(status_code=422, detail="Выберите существующий статус устройства")
+    return custom_status.code
+
+
+@router.get("/statuses")
+def list_inventory_statuses(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    system_items = [
+        {"id": None, "code": code, "name": name, "is_system": True}
+        for code, name in SYSTEM_INVENTORY_STATUSES.items()
+    ]
+    custom_items = db.query(InventoryStatus).filter(
+        InventoryStatus.is_active.is_(True)
+    ).order_by(InventoryStatus.name).all()
+    return system_items + [{
+        "id": str(item.id),
+        "code": item.code,
+        "name": item.name,
+        "is_system": False,
+    } for item in custom_items]
+
+
+@router.post("/statuses", status_code=status.HTTP_201_CREATED)
+def create_inventory_status(
+    payload: InventoryStatusCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    name = payload.name.strip()
+    code = _category_code(name)
+    if not name or not code:
+        raise HTTPException(status_code=422, detail="Укажите корректное название статуса")
+    if name.casefold() in {item.casefold() for item in SYSTEM_INVENTORY_STATUSES.values()}:
+        raise HTTPException(status_code=409, detail="Такой системный статус уже существует")
+    existing = db.query(InventoryStatus).filter(func.lower(InventoryStatus.name) == name.lower()).first()
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            db.commit()
+        return {"id": str(existing.id), "code": existing.code, "name": existing.name, "is_system": False}
+    if db.query(InventoryStatus.id).filter(InventoryStatus.code == code).first():
+        raise HTTPException(status_code=409, detail="Статус с таким кодом уже существует")
+    custom_status = InventoryStatus(code=code, name=name)
+    db.add(custom_status)
+    db.flush()
+    record_audit(db, current_user, "INVENTORY_STATUS", custom_status.id, "INVENTORY_STATUS_CREATED", {"code": code})
+    db.commit()
+    return {"id": str(custom_status.id), "code": code, "name": name, "is_system": False}
 
 
 def _require_active_category(db: Session, code: str) -> InventoryCategory:
@@ -423,12 +492,15 @@ def create_device(
     current_user: User = Depends(get_current_admin_user),
 ):
     _require_active_category(db, data.category)
-    if data.status in {"reserved", "issued"}:
+    requested_status = data.status.strip().lower()
+    if requested_status in {"reserved", "issued"}:
         raise HTTPException(status_code=422, detail="Статус выдачи меняется только через акт")
+    normalized_status = _require_active_inventory_status(db, requested_status)
     if not data.inventory_number.strip() or not data.barcode.strip() or not data.name.strip() or not data.serial_number.strip():
         raise HTTPException(status_code=422, detail="Инвентарный номер, штрихкод и название обязательны")
     values = data.model_dump()
-    if data.status == "paper_issued":
+    values["status"] = normalized_status
+    if normalized_status == "paper_issued":
         assigned_to = str(data.assigned_to or "").strip()
         if not assigned_to:
             raise HTTPException(status_code=422, detail="Для бумажного акта укажите, кому выдано устройство")
@@ -460,6 +532,10 @@ def create_devices_bulk(
     current_user: User = Depends(get_current_admin_user),
 ):
     _require_active_category(db, data.category)
+    requested_status = data.status.strip().lower()
+    if requested_status in {"reserved", "issued", "paper_issued"}:
+        raise HTTPException(status_code=422, detail="Этот статус нельзя назначить при массовом добавлении")
+    normalized_status = _require_active_inventory_status(db, requested_status)
     name = data.name.strip()
     model = data.model.strip() if data.model else None
     if not name:
@@ -509,7 +585,7 @@ def create_devices_bulk(
             name=name,
             model=model,
             category=data.category,
-            status=data.status,
+            status=normalized_status,
         )
         db.add(device)
         record_audit(db, current_user, "INVENTORY_DEVICE", device.id, "DEVICE_CREATED", {
@@ -548,6 +624,8 @@ def update_device(
         raise HTTPException(status_code=422, detail="Категория не может быть пустой")
     if "status" in updates and updates["status"] is None:
         raise HTTPException(status_code=422, detail="Статус не может быть пустым")
+    if "status" in updates:
+        updates["status"] = str(updates["status"]).strip().lower()
     if "status" in updates and updates["status"] != device.status:
         active_assignment = db.query(ActDeviceAssignment.id).filter(
             ActDeviceAssignment.device_id == device.id,
@@ -557,6 +635,7 @@ def update_device(
             raise HTTPException(status_code=409, detail="Статус устройства управляется активным актом")
         if updates["status"] in {"reserved", "issued"}:
             raise HTTPException(status_code=422, detail="Статус выдачи меняется только через акт")
+        updates["status"] = _require_active_inventory_status(db, updates["status"])
     target_status = updates.get("status", device.status.value if hasattr(device.status, "value") else device.status)
     if target_status == "paper_issued":
         assigned_to = str(updates.get("assigned_to", device.assigned_to) or "").strip()

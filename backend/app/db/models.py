@@ -2,6 +2,7 @@ import uuid
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Date, Text, Enum as SQLEnum, JSON, UniqueConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+from sqlalchemy.types import TypeDecorator
 from datetime import datetime
 import enum
 from app.core.database import Base
@@ -46,6 +47,20 @@ class DeviceStatus(str, enum.Enum):
     PAPER_ISSUED = "paper_issued"
     MAINTENANCE = "maintenance"
     RETIRED = "retired"
+
+
+class DeviceStatusType(TypeDecorator):
+    impl = String
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return value.value if isinstance(value, DeviceStatus) else value
+
+    def process_result_value(self, value, dialect):
+        try:
+            return DeviceStatus(value)
+        except ValueError:
+            return value
 
 
 class User(Base):
@@ -240,15 +255,7 @@ class InventoryDevice(Base):
     model = Column(String, nullable=True)
     category = Column(String, nullable=False)
     serial_number = Column(String, unique=True, nullable=False)
-    status = Column(
-        SQLEnum(
-            DeviceStatus,
-            values_callable=lambda enum_class: [item.value for item in enum_class],
-            native_enum=False,
-        ),
-        nullable=False,
-        default=DeviceStatus.AVAILABLE,
-    )
+    status = Column(DeviceStatusType(), nullable=False, default=DeviceStatus.AVAILABLE)
     location = Column(String, nullable=True)
     assigned_to = Column(String, nullable=True)
     paper_act_number = Column(String, nullable=True)
@@ -440,4 +447,28 @@ class InventoryCategory(Base):
     icon = Column(String, nullable=False, default="📦")
     is_active = Column(Boolean, nullable=False, default=True)
     is_system = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class InventoryStatus(Base):
+    __tablename__ = "inventory_statuses"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class IpadOperationOption(Base):
+    __tablename__ = "ipad_operation_options"
+    __table_args__ = (
+        UniqueConstraint("option_type", "name", name="uq_ipad_operation_options_type_name"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String, unique=True, nullable=False, index=True)
+    option_type = Column(String, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

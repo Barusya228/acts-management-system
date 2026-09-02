@@ -1,5 +1,6 @@
 import hashlib
 import mimetypes
+import uuid
 from datetime import datetime
 from uuid import UUID
 
@@ -30,6 +31,7 @@ from app.db.models import (
     IpadAdvisoryAct,
     IpadActAppendix,
     IpadDevice,
+    IpadOperationOption,
     IpadStudentAssignment,
     Participant,
     ParticipantEmploymentStatus,
@@ -47,6 +49,7 @@ from app.schemas.schemas import (
     IpadAppendixLateReturnCreate,
     IpadAppendixYearEndReturnCreate,
     IpadAppendixSignatureRequest,
+    IpadOperationOptionCreate,
 )
 from app.services.audit_service import record_audit
 from app.services.pdf_backup_service import backup_pdf_by_ids
@@ -76,6 +79,9 @@ IPAD_DAMAGE_LABELS = {
     "NOT_RETURNED": "iPad не сдан (ожидается возврат)",
 }
 
+REPLACEMENT_REASON_CODES = {"BENT_BODY", "CRACKED_SCREEN", "LOST", "WEAK_BATTERY", "DAMAGED_DISPLAY"}
+RETURN_CONDITION_CODES = REPLACEMENT_REASON_CODES | {"OK", "NOT_RETURNED"}
+
 
 def _device_status_for_condition(condition: str) -> str:
     """Статус устройства по классификации состояния: OK → снова в выдачу,
@@ -85,6 +91,21 @@ def _device_status_for_condition(condition: str) -> str:
     if condition == "LOST":
         return "RETIRED"
     return "MAINTENANCE"
+
+
+def _ipad_option_label(db: Session, option_type: str, code: str) -> str:
+    normalized = str(code or "").strip()
+    system_codes = REPLACEMENT_REASON_CODES if option_type == "REPLACEMENT_REASON" else RETURN_CONDITION_CODES
+    if normalized in system_codes:
+        return IPAD_DAMAGE_LABELS[normalized]
+    option = db.query(IpadOperationOption).filter(
+        IpadOperationOption.option_type == option_type,
+        IpadOperationOption.code == normalized,
+        IpadOperationOption.is_active.is_(True),
+    ).first()
+    if not option:
+        raise HTTPException(status_code=422, detail="Выберите существующую причину или состояние iPad")
+    return option.name
 
 
 def _register_signature_asset(db: Session, act: Act, kind: FileAssetKind, relative_path: str) -> None:
@@ -384,6 +405,63 @@ def create_ipad_advisory_act(
     return _serialize(act)
 
 
+@router.get("/custom-options")
+def list_ipad_custom_options(
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    options = db.query(IpadOperationOption).filter(
+        IpadOperationOption.is_active.is_(True)
+    ).order_by(IpadOperationOption.option_type, IpadOperationOption.name).all()
+    return [{
+        "id": str(item.id),
+        "code": item.code,
+        "option_type": item.option_type,
+        "name": item.name,
+    } for item in options]
+
+
+@router.post("/custom-options", status_code=status.HTTP_201_CREATED)
+def create_ipad_custom_option(
+    payload: IpadOperationOptionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Укажите название причины или состояния")
+    system_codes = REPLACEMENT_REASON_CODES if payload.option_type == "REPLACEMENT_REASON" else RETURN_CONDITION_CODES
+    if name.casefold() in {IPAD_DAMAGE_LABELS[code].casefold() for code in system_codes}:
+        raise HTTPException(status_code=409, detail="Такой системный вариант уже существует")
+    existing = db.query(IpadOperationOption).filter(
+        IpadOperationOption.option_type == payload.option_type,
+        func.lower(IpadOperationOption.name) == name.lower(),
+    ).first()
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            db.commit()
+        return {
+            "id": str(existing.id),
+            "code": existing.code,
+            "option_type": existing.option_type,
+            "name": existing.name,
+        }
+    option = IpadOperationOption(
+        code=f"CUSTOM_{uuid.uuid4().hex[:12].upper()}",
+        option_type=payload.option_type,
+        name=name,
+    )
+    db.add(option)
+    db.flush()
+    record_audit(db, current_user, "IPAD_OPERATION_OPTION", option.id, "IPAD_OPERATION_OPTION_CREATED", {
+        "option_type": option.option_type,
+        "code": option.code,
+    })
+    db.commit()
+    return {"id": str(option.id), "code": option.code, "option_type": option.option_type, "name": option.name}
+
+
 @router.get("/{act_id}")
 def get_ipad_advisory_act(
     act_id: UUID,
@@ -663,6 +741,7 @@ def create_replacement_appendix(
     new_device = db.query(IpadDevice).filter(IpadDevice.id == payload.ipad_device_id).with_for_update().first()
     if not assignment or not new_device or new_device.status != "AVAILABLE":
         raise HTTPException(status_code=409, detail="Ученик или новый iPad недоступен")
+    reason_label = _ipad_option_label(db, "REPLACEMENT_REASON", payload.reason)
     responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id, payload.issuer_participant_id)
     old_device = assignment.ipad_device
     new_device.status = "RESERVED"
@@ -671,7 +750,7 @@ def create_replacement_appendix(
         "student_name": assignment.student_name,
         "replacement_date": payload.replacement_date.isoformat(),
         "reason": payload.reason,
-        "reason_label": IPAD_DAMAGE_LABELS.get(payload.reason, payload.reason),
+        "reason_label": reason_label,
         "old_result_status": _device_status_for_condition(payload.reason),
         "old_device_id": str(old_device.id),
         "old_ipad": {"model": old_device.model, "tag": old_device.tag, "serial_number": old_device.serial_number},
@@ -702,6 +781,7 @@ def create_departure_appendix(
     ).with_for_update().first()
     if not assignment:
         raise HTTPException(status_code=404, detail="Активный ученик не найден")
+    return_condition_label = _ipad_option_label(db, "RETURN_CONDITION", payload.return_condition)
     responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id, payload.issuer_participant_id)
     # NOT_RETURNED — ученик выбыл, но iPad ещё не сдан: устройство переходит
     # в ожидание позднего возврата, иначе результат определяется состоянием.
@@ -713,7 +793,7 @@ def create_departure_appendix(
         "departure_date": payload.departure_date.isoformat(),
         "ipad_returned": ipad_returned,
         "return_condition": payload.return_condition,
-        "return_condition_label": IPAD_DAMAGE_LABELS.get(payload.return_condition, payload.return_condition),
+        "return_condition_label": return_condition_label,
         "device_result_status": _device_status_for_condition(payload.return_condition) if ipad_returned else "RETURN_PENDING",
         "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
         "note": payload.note,
@@ -775,6 +855,7 @@ def create_late_return_appendix(
     ).with_for_update().first()
     if not act or not act.ipad_profile or not assignment:
         raise HTTPException(status_code=404, detail="Ожидающий возврата iPad не найден")
+    condition_label = _ipad_option_label(db, "RETURN_CONDITION", payload.condition)
     responsible, issuer = _appendix_participants(db, act, payload.responsible_participant_id, payload.issuer_participant_id)
     appendix = _create_appendix(db, act, "LATE_RETURN", responsible, issuer, {
         "assignment_id": str(assignment.id),
@@ -782,7 +863,7 @@ def create_late_return_appendix(
         "student_name": assignment.student_name,
         "returned_at": payload.returned_at.isoformat(),
         "condition": payload.condition,
-        "condition_label": IPAD_DAMAGE_LABELS.get(payload.condition, payload.condition),
+        "condition_label": condition_label,
         "device_result_status": _device_status_for_condition(payload.condition),
         "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
         "note": payload.note,
@@ -821,6 +902,7 @@ def create_year_end_return_appendix(
     items = []
     for assignment in assignments:
         result = supplied[str(assignment.id)]
+        condition_label = _ipad_option_label(db, "RETURN_CONDITION", result.condition)
         items.append({
             "assignment_id": str(assignment.id),
             "device_id": str(assignment.ipad_device_id),
@@ -828,7 +910,7 @@ def create_year_end_return_appendix(
             "ipad": {"model": assignment.ipad_model, "tag": assignment.ipad_tag, "serial_number": assignment.serial_number},
             "device_result_status": _device_status_for_condition(result.condition),
             "condition": result.condition,
-            "condition_label": IPAD_DAMAGE_LABELS.get(result.condition, result.condition),
+            "condition_label": condition_label,
         })
     appendix = _create_appendix(db, act, "YEAR_END_RETURN", responsible, issuer, {
         "returned_at": payload.returned_at.isoformat(),
