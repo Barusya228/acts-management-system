@@ -1,15 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import AdminLayout from '@/components/AdminLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
-
-const EmojiPicker = dynamic(() => import('emoji-picker-react'), { ssr: false });
 
 interface Device {
   id: string;
@@ -66,7 +63,7 @@ interface ManualAccessory {
 }
 interface SmallEquipmentGroup { id: string; name: string; model: string; active_quantity: number; active_assignments: Array<{ id: string; act_id: string; act_reference: string; recipient_name: string; quantity: number; status: string; note?: string | null; issue_date: string }>; }
 
-interface IpadInventoryItem { id: string; device_name: string; model?: string | null; tag: string; serial_number: string; status: string; notes?: string | null; student_name?: string | null; act_id?: string | null; duplicate_tag_count: number; }
+interface IpadInventoryItem { id: string; device_name: string; model?: string | null; tag: string; serial_number: string; status: string; notes?: string | null; student_name?: string | null; act_id?: string | null; duplicate_tag_count: number; has_history: boolean; }
 interface IpadGroup { device_name: string; model: string; count: number; }
 
 const groupKey = (group: Pick<DeviceGroup, 'name' | 'model'>) => `${group.name}\u0000${group.model}`;
@@ -87,6 +84,14 @@ const ipadStatusOptions = [
   { value: 'MAINTENANCE', label: 'На обслуживании' },
   { value: 'RETIRED', label: 'Списан' },
 ];
+
+const managedIpadStatuses = new Set(['RESERVED', 'ISSUED', 'RETURN_PENDING']);
+const ipadStatusLabel = (status: string) => ipadStatusOptions.find(option => option.value === status)?.label || status;
+const ipadDeleteBlockReason = (item: IpadInventoryItem) => managedIpadStatuses.has(item.status)
+  ? 'Активный или зарезервированный iPad нельзя удалить'
+  : item.has_history
+    ? 'iPad имеет историю актов и не может быть удалён'
+    : '';
 
 const normalizedStatus = (status: string) => status === 'reserved' || status === 'issued' ? 'assigned' : status;
 const getStatusBadge = (s: string) => statusOptions.find(o => o.value === normalizedStatus(s))?.cls || 'bg-gray-100 text-gray-700';
@@ -130,6 +135,9 @@ export default function InventoryPage() {
   const [ipadGroups, setIpadGroups] = useState<IpadGroup[]>([]);
   const [selectedIpadGroup, setSelectedIpadGroup] = useState('');
   const [showIpadModal, setShowIpadModal] = useState(false);
+  const [ipadEditId, setIpadEditId] = useState<string | null>(null);
+  const [ipadDeleteTarget, setIpadDeleteTarget] = useState<IpadInventoryItem | null>(null);
+  const [ipadDeleting, setIpadDeleting] = useState(false);
   const [showSmallEquipmentModal, setShowSmallEquipmentModal] = useState(false);
   const [smallEquipmentSaving, setSmallEquipmentSaving] = useState(false);
   const [smallEquipmentForm, setSmallEquipmentForm] = useState({ name: '', model: '' });
@@ -152,9 +160,34 @@ export default function InventoryPage() {
   };
 
   const openCreateIpad = () => {
+    setIpadEditId(null);
     setIpadForm({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' });
     setIpadBulk(false);
     setShowIpadModal(true);
+  };
+
+  const openEditIpad = (item: IpadInventoryItem) => {
+    setIpadEditId(item.id);
+    setIpadBulk(false);
+    setIpadForm({
+      device_name: item.device_name,
+      model: item.model || '',
+      status: item.status,
+      tag: item.tag,
+      serial_number: item.serial_number,
+      notes: item.notes || '',
+      list: '',
+    });
+    setShowIpadModal(true);
+  };
+
+  const requestDeleteIpad = (item: IpadInventoryItem) => {
+    const blockedReason = ipadDeleteBlockReason(item);
+    if (blockedReason) {
+      showToast(blockedReason, 'info');
+      return;
+    }
+    setIpadDeleteTarget(item);
   };
 
   const [showModal, setShowModal] = useState(false);
@@ -164,13 +197,10 @@ export default function InventoryPage() {
   const [bulkRows, setBulkRows] = useState([{ ...emptyBulkRow }]);
   const [bulkPaste, setBulkPaste] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
-  const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [categorySaving, setCategorySaving] = useState(false);
   const [categoryForm, setCategoryForm] = useState({ name: '', code: '', icon: '📦' });
   const [newStatusName, setNewStatusName] = useState('');
   const [statusCreating, setStatusCreating] = useState(false);
-  const [showCategoryEmojiPicker, setShowCategoryEmojiPicker] = useState(false);
-  const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<InventoryCategory | null>(null);
   const [deleteSmallEquipmentTarget, setDeleteSmallEquipmentTarget] = useState<SmallEquipmentGroup | null>(null);
   const [deletingSmallEquipment, setDeletingSmallEquipment] = useState(false);
 
@@ -325,9 +355,31 @@ export default function InventoryPage() {
   };
 
   const saveIpads = async () => {
+    if (!ipadForm.device_name.trim()) {
+      showToast('Укажите название iPad', 'error');
+      return;
+    }
+    if (!ipadBulk && (!ipadForm.tag.trim() || !ipadForm.serial_number.trim())) {
+      showToast('Укажите Tag и Serial Number', 'error');
+      return;
+    }
     setSaving(true);
     try {
-      if (ipadBulk) {
+      if (ipadEditId) {
+        const managed = ['RESERVED', 'ISSUED', 'RETURN_PENDING'].includes(ipadForm.status);
+        const payload: Record<string, string | null> = {
+          device_name: ipadForm.device_name.trim(),
+          model: ipadForm.model.trim() || null,
+          notes: ipadForm.notes.trim() || null,
+        };
+        if (!managed) {
+          payload.tag = ipadForm.tag.trim();
+          payload.serial_number = ipadForm.serial_number.trim();
+          payload.status = ipadForm.status;
+        }
+        await api.patch(`/api/ipad-inventory/${ipadEditId}`, payload);
+        showToast('iPad обновлён', 'success');
+      } else if (ipadBulk) {
         const rows = ipadForm.list.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => line.split(/[\s;,]+/)).filter(parts => parts.length >= 2).map(parts => ({ tag: parts[0], serial_number: parts[1] }));
         if (!rows.length) throw new Error('Вставьте список Tag и Serial Number');
         const response = await api.post('/api/ipad-inventory/bulk', { device_name: ipadForm.device_name, model: ipadForm.model || null, status: ipadForm.status, devices: rows });
@@ -336,9 +388,24 @@ export default function InventoryPage() {
         await api.post('/api/ipad-inventory', { ...ipadForm, model: ipadForm.model || null, notes: ipadForm.notes || null });
         showToast('iPad добавлен', 'success');
       }
-      setShowIpadModal(false); setRefreshKey(value => value + 1);
+      setShowIpadModal(false); setIpadEditId(null); setRefreshKey(value => value + 1);
     } catch (error: any) { showToast(error.response?.data?.detail || error.message || 'Ошибка', 'error'); }
     finally { setSaving(false); }
+  };
+
+  const deleteIpad = async () => {
+    if (!ipadDeleteTarget) return;
+    setIpadDeleting(true);
+    try {
+      await api.delete(`/api/ipad-inventory/${ipadDeleteTarget.id}`);
+      setIpadDeleteTarget(null);
+      setRefreshKey(value => value + 1);
+      showToast('iPad удалён', 'success');
+    } catch (error: any) {
+      showToast(error.response?.data?.detail || 'Не удалось удалить iPad', 'error');
+    } finally {
+      setIpadDeleting(false);
+    }
   };
 
   const handleSearch = () => {
@@ -365,26 +432,30 @@ export default function InventoryPage() {
     setRefreshKey(value => value + 1);
   };
 
-  const showCategoryDevices = (categoryCode: string) => {
+  const switchInventoryView = (view: 'devices' | 'accessories' | 'ipads') => {
+    setInventoryView(view);
     setSearch('');
+    setCatFilter('');
     setStatusFilter('');
-    setCatFilter(categoryCode);
-    setPage(1);
+    setIpadStatusFilter('');
     setSelectedGroup('');
-    setShowCategoryModal(false);
+    setSelectedIpadGroup('');
+    setDuplicateIpadTagsOnly(false);
+    setPage(1);
+    const params = new URLSearchParams(window.location.search);
+    params.set('view', view);
+    params.delete('status');
+    params.delete('tag_order');
+    window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
   };
 
   const openCreate = () => {
-    if (categories.length === 0) {
-      showToast('Сначала добавьте категорию инвентаря', 'error');
-      setShowCategoryModal(true);
-      return;
-    }
-    const initialCategory = categories.find(category => category.code === 'notebook')?.code || categories[0]?.code || '';
+    const initialCategory = categories.find(category => category.code === 'notebook')?.code || categories[0]?.code || '__new_category__';
     setEditId(null);
     setBulkMode(false);
     setBulkRows([{ ...emptyBulkRow }]);
     setBulkPaste('');
+    setCategoryForm({ name: '', code: '', icon: '📦' });
     setNewStatusName('');
     setForm({ ...emptyForm, category: initialCategory });
     setShowModal(true);
@@ -399,6 +470,7 @@ export default function InventoryPage() {
 
   const handleSubmit = async () => {
     if (!form.name.trim()) { showToast('Название обязательно', 'error'); return; }
+    if (form.category === '__new_category__') { showToast('Сначала добавьте новую категорию', 'error'); return; }
     if (form.status === '__other__') { showToast('Сначала добавьте новый статус', 'error'); return; }
     if (bulkMode && !editId) {
       if (bulkRows.some(row => !row.inventory_number.trim() || !row.barcode.trim())) {
@@ -521,31 +593,11 @@ export default function InventoryPage() {
       await fetchCategories();
       setForm(current => ({ ...current, category: response.data.code }));
       setCategoryForm({ name: '', code: '', icon: '📦' });
-      setShowCategoryEmojiPicker(false);
       showToast('Категория добавлена', 'success');
     } catch (err: any) {
       showToast(err.response?.data?.detail || 'Не удалось добавить категорию', 'error');
     } finally {
       setCategorySaving(false);
-    }
-  };
-
-  const handleDeleteCategory = async () => {
-    if (!deleteCategoryTarget) return;
-    try {
-      await api.delete(`/api/inventory/categories/${deleteCategoryTarget.id}?replacement_code=other`);
-      if (catFilter === deleteCategoryTarget.code) setCatFilter('');
-      if (form.category === deleteCategoryTarget.code) {
-        setForm(current => ({ ...current, category: '' }));
-      }
-      setDeleteCategoryTarget(null);
-      await fetchCategories();
-      setSelectedGroup('');
-      setPage(1);
-      setRefreshKey(value => value + 1);
-      showToast('Категория удалена', 'success');
-    } catch (err: any) {
-      showToast(err.response?.data?.detail || 'Не удалось удалить категорию', 'error');
     }
   };
 
@@ -588,6 +640,7 @@ export default function InventoryPage() {
 
   const getCategoryIcon = (code: string) => categories.find(category => category.code === code)?.icon || '📦';
   const getCategoryLabel = (code: string) => categories.find(category => category.code === code)?.name || code;
+  const managedIpadEdit = Boolean(ipadEditId && managedIpadStatuses.has(ipadForm.status));
 
   if (!user || user.role !== 'ADMIN') return null;
 
@@ -596,14 +649,10 @@ export default function InventoryPage() {
       <div className="mx-auto max-w-7xl">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900">Техника</h1>
-            <p className="mt-1 text-sm text-slate-500">Инвентарные устройства, мелкая техника и парк iPad.</p>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">Инвентарь техники</h1>
+            <p className="mt-1 text-sm text-slate-500">Основные устройства, мелкая техника и отдельный парк iPad.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => setShowCategoryModal(true)}
-              className="min-h-11 rounded-xl bg-white px-4 text-sm font-bold text-slate-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-blue-50">
-              Категории
-            </button>
             {inventoryView === 'devices' && (
               <button type="button" onClick={openCreate} disabled={categoriesLoading}
                 className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
@@ -625,14 +674,14 @@ export default function InventoryPage() {
           </div>
         </div>
 
-        <div className="mb-5 grid grid-cols-3 rounded-xl bg-slate-100 p-1">
-          <button type="button" onClick={() => { setInventoryView('devices'); setPage(1); }} className={`min-h-12 rounded-lg px-2 text-xs font-bold transition md:text-sm lg:px-4 ${inventoryView === 'devices' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Инвентарные устройства</button>
-          <button type="button" onClick={() => { setInventoryView('accessories'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-2 text-xs font-bold transition md:text-sm lg:px-4 ${inventoryView === 'accessories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Мелкая техника · вручную</button>
-          <button type="button" onClick={() => { setInventoryView('ipads'); setPage(1); setSelectedGroup(''); }} className={`min-h-12 rounded-lg px-2 text-xs font-bold transition md:text-sm lg:px-4 ${inventoryView === 'ipads' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>iPad</button>
+        <div role="tablist" aria-label="Разделы инвентаря" className="mb-5 grid grid-cols-3 rounded-xl bg-slate-100 p-1">
+          <button role="tab" aria-selected={inventoryView === 'devices'} type="button" onClick={() => switchInventoryView('devices')} className={`min-h-12 rounded-lg px-2 text-xs font-bold outline-none transition focus-visible:ring-2 focus-visible:ring-blue-500 md:text-sm lg:px-4 ${inventoryView === 'devices' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Основные устройства</button>
+          <button role="tab" aria-selected={inventoryView === 'accessories'} type="button" onClick={() => switchInventoryView('accessories')} className={`min-h-12 rounded-lg px-2 text-xs font-bold outline-none transition focus-visible:ring-2 focus-visible:ring-blue-500 md:text-sm lg:px-4 ${inventoryView === 'accessories' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Мелкая техника</button>
+          <button role="tab" aria-selected={inventoryView === 'ipads'} type="button" onClick={() => switchInventoryView('ipads')} className={`min-h-12 rounded-lg px-2 text-xs font-bold outline-none transition focus-visible:ring-2 focus-visible:ring-blue-500 md:text-sm lg:px-4 ${inventoryView === 'ipads' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>Парк iPad</button>
         </div>
 
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input type="text" placeholder={inventoryView === 'devices' ? 'Поиск по названию, модели, инв. номеру или штрихкоду...' : 'Поиск по названию, модели, заметке или получателю...'} value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" placeholder={inventoryView === 'devices' ? 'Поиск по названию, модели, инв. номеру или штрихкоду...' : inventoryView === 'ipads' ? 'Поиск по модели, Tag или Serial Number...' : 'Поиск по названию, модели, заметке или получателю...'} value={search} onChange={e => setSearch(e.target.value)}
             className="flex-1 rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }} />
           {inventoryView === 'devices' && <select value={catFilter} onChange={e => { setCatFilter(e.target.value); setSelectedGroup(''); setPage(1); }}
@@ -712,7 +761,7 @@ export default function InventoryPage() {
               </div>
             ) : (
               <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-                <table className="w-full min-w-[760px] text-left text-sm">
+                <table className="w-full min-w-[980px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                       <th className="px-4 py-3 font-semibold">iPad</th>
@@ -747,7 +796,7 @@ export default function InventoryPage() {
                         <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{item.serial_number}</td>
                         <td className="whitespace-nowrap px-4 py-3">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : item.status === 'RETIRED' ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'}`}>
-                            {item.status === 'AVAILABLE' ? 'Не выдан' : item.status === 'ISSUED' ? 'Выдан' : item.status === 'RESERVED' ? 'Зарезервирован' : item.status === 'RETURN_PENDING' ? 'Ожидает возврата' : item.status === 'MAINTENANCE' ? 'На обслуживании' : 'Списан'}
+                            {ipadStatusLabel(item.status)}
                           </span>
                         </td>
                         <td className="max-w-[180px] px-4 py-3">
@@ -759,9 +808,17 @@ export default function InventoryPage() {
                         </td>
                         <td className="whitespace-nowrap px-4 py-3">
                           <div className="flex justify-end gap-2">
-                            <button type="button" title="Паспорт устройства" onClick={() => openIpadHistory(item.id)}
-                              className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-slate-200">
-                              📖
+                            <button type="button" title="Открыть историю iPad" aria-label={`Открыть историю iPad Tag ${item.tag}`} onClick={() => openIpadHistory(item.id)}
+                              className="min-h-11 rounded-xl bg-slate-100 px-3 text-xs font-bold text-slate-700 transition hover:bg-slate-200">
+                              📖 История
+                            </button>
+                            <button type="button" title="Редактировать iPad" aria-label={`Редактировать iPad Tag ${item.tag}`} onClick={() => openEditIpad(item)}
+                              className="min-h-11 rounded-xl bg-blue-50 px-3 text-xs font-bold text-blue-700 transition hover:bg-blue-100">
+                              ✎ Изменить
+                            </button>
+                            <button type="button" aria-disabled={Boolean(ipadDeleteBlockReason(item))} title={ipadDeleteBlockReason(item) || 'Удалить iPad'} aria-label={`Удалить iPad Tag ${item.tag}`} onClick={() => requestDeleteIpad(item)}
+                              className={`min-h-11 rounded-xl bg-red-50 px-3 text-xs font-bold text-red-700 transition hover:bg-red-100 ${ipadDeleteBlockReason(item) ? 'cursor-not-allowed opacity-35' : ''}`}>
+                              ✕ Удалить
                             </button>
                           </div>
                         </td>
@@ -836,8 +893,8 @@ export default function InventoryPage() {
                         </td>
                         <td className="whitespace-nowrap px-4 py-3">
                           <div className="flex justify-end gap-2">
-                            <button onClick={() => openEdit(d)} className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-blue-100 hover:text-blue-700">✎</button>
-                            <button onClick={() => setDeleteTarget({ id: d.id, name: d.name })} className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-red-100 hover:text-red-700">✕</button>
+                            <button onClick={() => openEdit(d)} title="Редактировать устройство" aria-label={`Редактировать ${d.name}`} className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-blue-100 hover:text-blue-700">✎</button>
+                            <button onClick={() => setDeleteTarget({ id: d.id, name: d.name })} title="Удалить устройство" aria-label={`Удалить ${d.name}`} className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-700 transition hover:bg-red-100 hover:text-red-700">✕</button>
                           </div>
                         </td>
                       </tr>
@@ -927,12 +984,17 @@ export default function InventoryPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Категория</label>
-                <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
+                <select value={form.category} onChange={event => {
+                  setForm({ ...form, category: event.target.value });
+                  if (event.target.value === '__new_category__') setCategoryForm({ name: '', code: '', icon: '📦' });
+                }}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none">
-                  {editId && form.category && !categories.some(category => category.code === form.category) && (
+                  {editId && form.category && form.category !== '__new_category__' && !categories.some(category => category.code === form.category) && (
                     <option value={form.category} disabled>{form.category} (неактивна)</option>
                   )}
                   {categories.map(category => <option key={category.id} value={category.code}>{category.icon} {category.name}</option>)}
+                  <option disabled>──────────</option>
+                  <option value="__new_category__">Другое...</option>
                 </select></div>
               <div><label className="block text-xs font-medium text-slate-600 mb-1">Статус</label>
                 <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}
@@ -948,6 +1010,7 @@ export default function InventoryPage() {
                    <option value="__other__">Другое...</option>
                  </select></div>
              </div>
+             {form.category === '__new_category__' && <div className="rounded-xl border border-blue-200 bg-blue-50 p-3"><label className="mb-1 block text-xs font-bold uppercase tracking-wide text-blue-700">Название новой категории</label><div className="flex flex-col gap-2 sm:flex-row"><input autoFocus value={categoryForm.name} onChange={event => setCategoryForm({ name: event.target.value, code: '', icon: '📦' })} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void handleCreateCategory(); } }} placeholder="Например, Проектор" className="min-h-11 flex-1 rounded-xl border border-blue-200 bg-white px-3 text-sm outline-none focus:border-blue-500"/><button type="button" disabled={categorySaving} onClick={handleCreateCategory} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-50">{categorySaving ? 'Добавление...' : 'Добавить категорию'}</button></div><p className="mt-2 text-xs text-blue-700">Значок 📦 и код создадутся автоматически. Категория сохранится для других устройств.</p></div>}
              {form.status === '__other__' && <div className="rounded-xl border border-blue-200 bg-blue-50 p-3"><label className="mb-1 block text-xs font-bold uppercase tracking-wide text-blue-700">Название нового статуса</label><div className="flex flex-col gap-2 sm:flex-row"><input autoFocus value={newStatusName} onChange={event => setNewStatusName(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void createInventoryStatus(); } }} placeholder="Например, На диагностике" className="min-h-11 flex-1 rounded-xl border border-blue-200 bg-white px-3 text-sm outline-none focus:border-blue-500"/><button type="button" disabled={statusCreating} onClick={createInventoryStatus} className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:opacity-50">{statusCreating ? 'Добавление...' : 'Добавить статус'}</button></div><p className="mt-2 text-xs text-blue-700">Статус сохранится в общем списке и будет доступен для других устройств.</p></div>}
             {!bulkMode && form.status === 'paper_issued' && <div className="rounded-xl border border-violet-200 bg-violet-50 p-4"><p className="mb-3 text-sm font-bold text-violet-900">Данные бумажного акта</p><div className="space-y-3"><div><label className="mb-1 block text-xs font-medium text-violet-800">Кому выдано *</label><input value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })} placeholder="ФИО получателя" className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div><div className="grid grid-cols-2 gap-3"><div><label className="mb-1 block text-xs font-medium text-violet-800">Номер акта</label><input value={form.paper_act_number} onChange={e => setForm({ ...form, paper_act_number: e.target.value })} placeholder="Например, 125" className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div><div><label className="mb-1 block text-xs font-medium text-violet-800">Дата бумажного акта</label><input type="date" value={form.paper_issue_date} onChange={e => setForm({ ...form, paper_issue_date: e.target.value })} className="min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm outline-none focus:border-violet-500"/></div></div></div><p className="mt-3 text-xs text-violet-600">Устройство будет исключено из доступных для новых электронных актов.</p></div>}
             {bulkMode && !editId && (
@@ -1015,13 +1078,23 @@ export default function InventoryPage() {
       )}
 
       {showIpadModal && (
-        <Modal onClose={() => setShowIpadModal(false)} title={ipadBulk ? 'Добавить несколько iPad' : 'Добавить iPad'}>
+        <Modal onClose={() => { if (!saving) { setShowIpadModal(false); setIpadEditId(null); } }} title={ipadEditId ? 'Редактировать iPad' : ipadBulk ? 'Добавить несколько iPad' : 'Добавить iPad'}>
           <div className="space-y-3">
-            <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button type="button" onClick={() => setIpadBulk(false)} className={`min-h-10 rounded-lg text-sm font-bold ${!ipadBulk ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Один iPad</button><button type="button" onClick={() => setIpadBulk(true)} className={`min-h-10 rounded-lg text-sm font-bold ${ipadBulk ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Несколько iPad</button></div>
-            <div className="grid grid-cols-2 gap-2"><input value={ipadForm.device_name} onChange={e => setIpadForm({...ipadForm, device_name:e.target.value})} placeholder="Device name *" className="min-h-11 rounded-xl border px-3"/><input value={ipadForm.model} onChange={e => setIpadForm({...ipadForm, model:e.target.value})} placeholder="Model" className="min-h-11 rounded-xl border px-3"/></div>
-            <select value={ipadForm.status} onChange={e => setIpadForm({...ipadForm, status:e.target.value})} className="min-h-11 w-full rounded-xl border px-3"><option value="AVAILABLE">Не выдан</option><option value="MAINTENANCE">На обслуживании</option><option value="RETIRED">Списан</option></select>
-            {ipadBulk ? <textarea value={ipadForm.list} onChange={e => setIpadForm({...ipadForm, list:e.target.value})} rows={9} placeholder={'Tag    Serial Number\n116563 DMPFJS82Q1GG'} className="w-full rounded-xl border p-3 font-mono text-sm"/> : <><div className="grid grid-cols-2 gap-2"><input value={ipadForm.tag} onChange={e => setIpadForm({...ipadForm, tag:e.target.value})} placeholder="Tag *" className="min-h-11 rounded-xl border px-3"/><input value={ipadForm.serial_number} onChange={e => setIpadForm({...ipadForm, serial_number:e.target.value})} placeholder="Serial Number *" className="min-h-11 rounded-xl border px-3"/></div><textarea value={ipadForm.notes} onChange={e => setIpadForm({...ipadForm, notes:e.target.value})} rows={3} placeholder="Заметка" className="w-full rounded-xl border p-3 text-sm"/></>}
-          </div><div className="mt-5 flex gap-2"><button disabled={saving} onClick={saveIpads} className="min-h-12 flex-1 rounded-xl bg-slate-900 font-bold text-white">{saving ? 'Сохранение...' : 'Добавить'}</button><button onClick={() => setShowIpadModal(false)} className="min-h-12 rounded-xl bg-slate-100 px-4">Отмена</button></div>
+            {!ipadEditId && <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button type="button" onClick={() => setIpadBulk(false)} className={`min-h-10 rounded-lg text-sm font-bold ${!ipadBulk ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Один iPad</button><button type="button" onClick={() => setIpadBulk(true)} className={`min-h-10 rounded-lg text-sm font-bold ${ipadBulk ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Несколько iPad</button></div>}
+            {managedIpadEdit && <p className="rounded-xl bg-amber-50 p-3 text-sm leading-5 text-amber-800">Этот iPad управляется активным актом. Можно изменить название, модель и заметку. Tag, Serial Number и статус изменяются только через акт.</p>}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block"><span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Название *</span><input value={ipadForm.device_name} onChange={event => setIpadForm({...ipadForm, device_name: event.target.value})} placeholder="iPad" className="min-h-11 w-full rounded-xl border px-3"/></label>
+              <label className="block"><span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Модель</span><input value={ipadForm.model} onChange={event => setIpadForm({...ipadForm, model: event.target.value})} placeholder="Например, 10th Gen" className="min-h-11 w-full rounded-xl border px-3"/></label>
+            </div>
+            <label className="block"><span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Статус</span><select disabled={managedIpadEdit} value={ipadForm.status} onChange={event => setIpadForm({...ipadForm, status: event.target.value})} className="min-h-11 w-full rounded-xl border px-3 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500">{managedIpadEdit && <option value={ipadForm.status}>{ipadStatusLabel(ipadForm.status)}</option>}<option value="AVAILABLE">Не выдан</option><option value="MAINTENANCE">На обслуживании</option><option value="RETIRED">Списан</option></select></label>
+            {ipadBulk ? <label className="block"><span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Список Tag и Serial Number *</span><textarea value={ipadForm.list} onChange={event => setIpadForm({...ipadForm, list: event.target.value})} rows={9} placeholder={'Tag    Serial Number\n116563 DMPFJS82Q1GG'} className="w-full rounded-xl border p-3 font-mono text-sm"/></label> : <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block"><span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Tag *</span><input disabled={managedIpadEdit} value={ipadForm.tag} onChange={event => setIpadForm({...ipadForm, tag: event.target.value})} placeholder="116563" className="min-h-11 w-full rounded-xl border px-3 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"/></label>
+                <label className="block"><span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Serial Number *</span><input disabled={managedIpadEdit} value={ipadForm.serial_number} onChange={event => setIpadForm({...ipadForm, serial_number: event.target.value})} placeholder="DMPFJS82Q1GG" className="min-h-11 w-full rounded-xl border px-3 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"/></label>
+              </div>
+              <label className="block"><span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Заметка</span><textarea value={ipadForm.notes} onChange={event => setIpadForm({...ipadForm, notes: event.target.value})} rows={3} placeholder="Комментарий о состоянии или особенностях iPad" className="w-full rounded-xl border p-3 text-sm"/></label>
+            </>}
+          </div><div className="mt-5 flex gap-2"><button disabled={saving} onClick={saveIpads} className="min-h-12 flex-1 rounded-xl bg-slate-900 font-bold text-white disabled:opacity-50">{saving ? 'Сохранение...' : ipadEditId ? 'Сохранить изменения' : ipadBulk ? 'Добавить iPad' : 'Добавить iPad'}</button><button disabled={saving} onClick={() => { setShowIpadModal(false); setIpadEditId(null); }} className="min-h-12 rounded-xl bg-slate-100 px-4 disabled:opacity-50">Отмена</button></div>
         </Modal>
       )}
 
@@ -1035,96 +1108,22 @@ export default function InventoryPage() {
         </Modal>
       )}
 
-      {showCategoryModal && (
-        <Modal onClose={() => { setShowCategoryModal(false); setShowCategoryEmojiPicker(false); }} title="Категории инвентаря">
-          <div className="max-h-48 space-y-2 overflow-auto rounded-xl bg-slate-50 p-3">
-            {categories.map(category => (
-              <div key={category.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm shadow-sm">
-                <span>{category.icon} <span className="font-medium text-slate-700">{category.name}</span></span>
-                <div className="flex items-center gap-2">
-                  <code className="text-xs text-slate-400">{category.code}</code>
-                  <button type="button" onClick={() => showCategoryDevices(category.code)}
-                    className="rounded-lg bg-blue-50 px-2 py-1 text-xs font-medium text-blue-600 transition hover:bg-blue-100">
-                    Показать
-                  </button>
-                  {!category.is_system && (
-                    <button type="button" onClick={() => setDeleteCategoryTarget(category)}
-                      className="rounded-lg bg-rose-50 px-2 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-100">
-                      Удалить
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+      {ipadDeleteTarget && (
+        <Modal onClose={() => { if (!ipadDeleting) setIpadDeleteTarget(null); }} title="Удалить iPad навсегда?">
+          <div className="rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <p className="font-black text-slate-900">{ipadDeleteTarget.model || ipadDeleteTarget.device_name}</p>
+            <p className="mt-1 font-mono text-sm text-slate-600">Tag {ipadDeleteTarget.tag}</p>
+            <p className="font-mono text-xs text-slate-500">Serial Number: {ipadDeleteTarget.serial_number}</p>
           </div>
-          <div className="mt-5 space-y-3 border-t border-slate-200 pt-5">
-            <h3 className="text-sm font-bold text-slate-800">Добавить категорию</h3>
-            <div className="grid grid-cols-[72px_1fr] gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">Значок</label>
-                <input value={categoryForm.icon} onChange={e => setCategoryForm({ ...categoryForm, icon: e.target.value })}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-center text-lg outline-none focus:border-blue-400" maxLength={4} />
-                <button type="button" onClick={() => setShowCategoryEmojiPicker(value => !value)}
-                  className="mt-1 w-full rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-100">
-                  {showCategoryEmojiPicker ? 'Скрыть' : 'Выбрать'}
-                </button>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">Название *</label>
-                <input value={categoryForm.name} onChange={e => setCategoryForm({ ...categoryForm, name: e.target.value })}
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Камера" />
-              </div>
-            </div>
-            {showCategoryEmojiPicker && (
-              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-                <EmojiPicker
-                  width="100%"
-                  height={320}
-                  searchDisabled={false}
-                  skinTonesDisabled
-                  previewConfig={{ showPreview: false }}
-                  onEmojiClick={(emojiData) => {
-                    setCategoryForm(current => ({ ...current, icon: emojiData.emoji }));
-                    setShowCategoryEmojiPicker(false);
-                  }}
-                />
-              </div>
-            )}
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">Код для backup-папки</label>
-              <input value={categoryForm.code} onChange={e => setCategoryForm({ ...categoryForm, code: e.target.value })}
-                className="w-full rounded-xl border border-gray-200 px-3 py-2 font-mono text-sm outline-none focus:border-blue-400" placeholder="camera (можно оставить пустым)" />
-              <p className="mt-1 text-xs text-slate-400">Если оставить пустым, код сформируется из названия автоматически.</p>
-            </div>
-          </div>
-          <div className="mt-5 flex gap-3">
-            <button onClick={handleCreateCategory} disabled={categorySaving}
-              className="flex-1 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">
-              {categorySaving ? 'Добавление...' : 'Добавить категорию'}
-            </button>
-            <button onClick={() => { setShowCategoryModal(false); setShowCategoryEmojiPicker(false); }} className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">Закрыть</button>
+          <p className="mt-4 text-sm leading-6 text-slate-600">Вы уверены, что хотите удалить этот iPad? Восстановить устройство после удаления будет невозможно.</p>
+          <p className="mt-2 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700">Удаление разрешено только для iPad без активной выдачи и без истории актов.</p>
+          <div className="mt-6 flex gap-3">
+            <button disabled={ipadDeleting} onClick={deleteIpad} className="min-h-12 flex-1 rounded-xl bg-red-600 px-4 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50">{ipadDeleting ? 'Удаление...' : 'Удалить навсегда'}</button>
+            <button disabled={ipadDeleting} onClick={() => setIpadDeleteTarget(null)} className="min-h-12 rounded-xl bg-gray-100 px-4 text-sm font-medium text-gray-700 disabled:opacity-50">Отмена</button>
           </div>
         </Modal>
       )}
 
-      {deleteCategoryTarget && (
-        <Modal onClose={() => setDeleteCategoryTarget(null)} title="Удалить категорию?">
-          <p className="text-sm text-slate-500">
-            Категория <span className="font-semibold text-slate-800">{deleteCategoryTarget.icon} {deleteCategoryTarget.name}</span> будет удалена.
-          </p>
-          <p className="mt-2 text-xs text-slate-400">Устройства из этой категории будут автоматически перенесены в категорию «Другое».</p>
-          <div className="mt-6 flex gap-3">
-            <button onClick={handleDeleteCategory}
-              className="flex-1 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-rose-700">
-              Удалить
-            </button>
-            <button onClick={() => setDeleteCategoryTarget(null)}
-              className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm text-gray-700">
-              Отмена
-            </button>
-          </div>
-        </Modal>
-      )}
       {deleteSmallEquipmentTarget && (
         <Modal onClose={() => { if (!deletingSmallEquipment) setDeleteSmallEquipmentTarget(null); }} title="Удалить мелкую технику?">
           <p className="text-sm text-slate-600">Точно удалить позицию <span className="font-bold text-slate-900">{deleteSmallEquipmentTarget.name}{deleteSmallEquipmentTarget.model ? ` · ${deleteSmallEquipmentTarget.model}` : ''}</span> из справочника?</p>

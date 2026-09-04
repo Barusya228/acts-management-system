@@ -77,3 +77,29 @@ def test_bulk_resolve_matches_serials_and_reports_unavailable_devices(http_env):
     assert items[0]["device"]["serial_number"] == "F4YF3F90H7"
     assert items[1]["device"]["status"] == "ISSUED"
     assert items[2]["device"] is None
+
+
+def test_unused_ipad_can_be_deleted_but_active_ipad_cannot(http_env):
+    client, db, _admin, _signer = http_env
+    headers = admin_headers(client)
+    unused = IpadDevice(
+        device_name="iPad",
+        tag="DELETE-FREE",
+        serial_number="DELETE-FREE-SERIAL",
+        status="AVAILABLE",
+    )
+    active = IpadDevice(
+        device_name="iPad",
+        tag="DELETE-ACTIVE",
+        serial_number="DELETE-ACTIVE-SERIAL",
+        status="RESERVED",
+    )
+    db.add_all([unused, active])
+    db.commit()
+
+    unused_response = client.delete(f"/api/ipad-inventory/{unused.id}", headers=headers)
+    active_response = client.delete(f"/api/ipad-inventory/{active.id}", headers=headers)
+
+    assert unused_response.status_code == 204, unused_response.text
+    assert active_response.status_code == 409, active_response.text
+    assert "нельзя удалить" in active_response.json()["detail"]

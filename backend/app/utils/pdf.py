@@ -1,6 +1,7 @@
 from io import BytesIO
 import os
 from collections.abc import Callable
+from xml.sax.saxutils import escape as xml_escape
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
@@ -517,25 +518,39 @@ def _draw_bottom_signatures(
 ) -> float:
     max_cols = 3
     rows = [parties[i:i+max_cols] for i in range(0, len(parties), max_cols)]
-    
+
     for row in rows:
-        if y < 70:
-            y = start_new_page_func()
-            
-        num_cols = len(row)
         total_width = margin_right - margin_left
-        col_width = total_width / num_cols
-        
+        col_width = total_width / max_cols
+        name_style = ParagraphStyle(
+            "BottomSignatureName",
+            fontName=font_name,
+            fontSize=9,
+            leading=11,
+            alignment=1,
+        )
+        name_paragraphs = []
+        max_name_height = 0.0
+        for party in row:
+            paragraph = Paragraph(xml_escape(str(party.get("name") or "—")), name_style)
+            _, paragraph_height = paragraph.wrap(col_width - 8, 100)
+            name_paragraphs.append((paragraph, paragraph_height))
+            max_name_height = max(max_name_height, paragraph_height)
+        row_height = 30 + max_name_height + 14
+
+        if y - row_height < 60:
+            y = start_new_page_func()
+
         pdf.setFont(bold_font_name, 11)
         for col_idx, party in enumerate(row):
             col_x = margin_left + col_idx * col_width
             pdf.drawString(col_x, y, party["label"])
-            
+
         signature_width = 80
         signature_height = 24
         signature_gap = 4
         signature_y = y - (signature_height / 2)
-        
+
         for col_idx, party in enumerate(row):
             col_x = margin_left + col_idx * col_width
             label_width = pdf.stringWidth(party["label"], bold_font_name, 11)
@@ -561,18 +576,14 @@ def _draw_bottom_signatures(
             else:
                 pdf.setFont(font_name, 10)
                 pdf.drawString(sig_x, y, "_" * 15)
-                
-        name_y = y - 24
-        pdf.setFont(font_name, 9)
-        for col_idx, party in enumerate(row):
+
+        name_top = y - 28
+        for col_idx, (paragraph, paragraph_height) in enumerate(name_paragraphs):
             col_x = margin_left + col_idx * col_width
-            label_width = pdf.stringWidth(party["label"], bold_font_name, 11)
-            sig_x = col_x + label_width + signature_gap
-            name = party["name"] or ""
-            pdf.drawString(sig_x, name_y, name[:30])
-            
-        y -= 45
-        
+            paragraph.drawOn(pdf, col_x + 4, name_top - paragraph_height)
+
+        y -= row_height
+
     return y
 
 
@@ -615,6 +626,35 @@ def build_act_pdf_v2(
         pdf.showPage()
         y = margin_top
         return y
+
+    def draw_wrapped_text(
+        text: str,
+        *,
+        indent: float = 0,
+        font_size: int = 11,
+        leading: int = 15,
+        gap: int = 5,
+        hanging_indent: bool = False,
+    ) -> None:
+        nonlocal y
+        paragraph = Paragraph(
+            xml_escape(str(text)).replace("\n", "<br/>") or " ",
+            ParagraphStyle(
+                "ActBodyText",
+                fontName=font_name,
+                fontSize=font_size,
+                leading=leading,
+                leftIndent=16 if hanging_indent else 0,
+                firstLineIndent=-16 if hanging_indent else 0,
+                textColor=colors.black,
+            ),
+        )
+        available_width = margin_right - margin_left - indent
+        _, paragraph_height = paragraph.wrap(available_width, height)
+        if y - paragraph_height < 60:
+            start_new_page()
+        paragraph.drawOn(pdf, margin_left + indent, y - paragraph_height)
+        y -= paragraph_height + gap
 
     def draw_paginated_party_rows(rows: list[tuple[str, str, str | None]]) -> None:
         nonlocal y
@@ -689,12 +729,11 @@ def build_act_pdf_v2(
         }]
 
     # Вводная часть - таблица со сторонами
-    pdf.setFont(font_name, 11)
-    intro_text = "ТОО «Школа 21 века», в лице представителя, и получатель оборудования,"
-    pdf.drawString(margin_left, y, intro_text)
-    y -= 15
-    pdf.drawString(margin_left, y, "далее совместно именуемые «Стороны», составили настоящий Акт о нижеследующем:")
-    y -= 25
+    draw_wrapped_text(
+        "ТОО «Школа 21 века», в лице представителя, и получатель оборудования, далее совместно "
+        "именуемые «Стороны», составили настоящий Акт о нижеследующем:",
+        gap=10,
+    )
     
     # Таблица со сторонами. Если получателей несколько, для каждого делаем отдельную строку и колонку подписи.
     party_rows = _build_numbered_party_rows(
@@ -712,28 +751,26 @@ def build_act_pdf_v2(
     is_ipad_template = template_code == 'IPAD'
 
     # Пункт 1
-    pdf.setFont(font_name, 11)
-    clause1 = "1. Настоящий Акт приема-передачи оборудования удостоверяет, что Передающая сторона передала,"
-    pdf.drawString(margin_left, y, clause1)
-    y -= 15
     if accessories_only:
-        pdf.drawString(margin_left + 10, y, "а Принимающая сторона приняла во временное пользование оборудование и имущество:")
-        y -= 20
+        clause1 = (
+            "1. Настоящий Акт приема-передачи оборудования удостоверяет, что Передающая сторона передала, "
+            "а Принимающая сторона приняла во временное пользование оборудование и имущество:"
+        )
     else:
-        pdf.drawString(margin_left + 10, y, "а Принимающая сторона приняла во временное пользование следующие основные средства")
-        y -= 15
-        pdf.drawString(margin_left + 10, y, "(далее - ОС):")
-        y -= 20
+        clause1 = (
+            "1. Настоящий Акт приема-передачи оборудования удостоверяет, что Передающая сторона передала, "
+            "а Принимающая сторона приняла во временное пользование следующие основные средства (далее - ОС):"
+        )
+    draw_wrapped_text(clause1, hanging_indent=True, gap=10)
 
     if is_ipad_template and not accessories_only:
-        pdf.setFont(bold_font_name, 11)
         ipad_advisory = extra_data.get("ipad_advisory") if isinstance(extra_data.get("ipad_advisory"), dict) else {}
         advisory_label = ipad_advisory.get("advisory_group") or extra_data.get('advisory_note', '') or '______________________________'
         academic_year = ipad_advisory.get("academic_year")
-        pdf.drawString(margin_left + 10, y, f"Advisory: {advisory_label}")
+        advisory_text = f"Advisory: {advisory_label}"
         if academic_year:
-            pdf.drawRightString(margin_right, y, f"Учебный год: {academic_year}")
-        y -= 20
+            advisory_text += f". Учебный год: {academic_year}"
+        draw_wrapped_text(advisory_text, indent=10, gap=5)
     
     # Таблица оборудования
     if accessories_only:
@@ -809,13 +846,11 @@ def build_act_pdf_v2(
                 except (TypeError, ValueError):
                     return '—'
 
-            block_height_estimate = 20 + len(applied_appendices) * 14
-            if y - block_height_estimate < 100:
+            if y < 90:
                 start_new_page()
             pdf.setFont(bold_font_name, 10)
             pdf.drawString(margin_left, y, 'Изменения по приложениям к акту:')
             y -= 16
-            pdf.setFont(font_name, 9)
             for appendix_info in applied_appendices:
                 if not isinstance(appendix_info, dict):
                     continue
@@ -828,11 +863,7 @@ def build_act_pdf_v2(
                     f" (подписи: {appendix_info.get('responsible_name', '—')} {_short_date(appendix_info.get('responsible_signed_at'))}, "
                     f"{appendix_info.get('issuer_name', '—')} {_short_date(appendix_info.get('issuer_signed_at'))})"
                 )
-                if y < 100:
-                    start_new_page()
-                    pdf.setFont(font_name, 9)
-                pdf.drawString(margin_left, y, line)
-                y -= 14
+                draw_wrapped_text(line, font_size=9, leading=12, gap=2)
             y -= 8
     else:
         table = Table(table_data, colWidths=[40, margin_right - margin_left - 180, 140])
@@ -882,45 +913,33 @@ def build_act_pdf_v2(
         accessory_table.drawOn(pdf, margin_left, y - accessory_height)
         y -= accessory_height + 20
     
-    # Пункт 2
-    if y < 85:
-        start_new_page()
-    pdf.setFont(font_name, 11)
-    pdf.drawString(margin_left, y, "2. Стороны при приеме-передаче осмотрели ОС и пришли к соглашению, что")
-    y -= 15
-    pdf.drawString(margin_left + 10, y, "передаваемые ОС находятся в рабочем и приемлемом для использования состоянии.")
-    y -= 20
-    
-    # Пункт 3
-    if y < 115:
-        start_new_page()
-    pdf.setFont(font_name, 11)
-    pdf.drawString(margin_left, y, "3. Стороны пришли к соглашению, что в случае потери или повреждения принятых ОС")
-    y -= 15
-    pdf.drawString(margin_left + 10, y, "в результате действий Принимающей стороны, Принимающая сторона обязуется полностью возместить")
-    y -= 15
-    pdf.drawString(margin_left + 10, y, "Передающей стороне рыночную стоимость данного имущества в течение 30 (тридцати) календарных дней")
-    y -= 15
-    pdf.drawString(margin_left + 10, y, "с момента предъявления требования от Передающей стороны.")
-    y -= 20
-    
-    # Пункт 4
-    if y < 85:
-        start_new_page()
-    pdf.setFont(font_name, 11)
-    pdf.drawString(margin_left, y, "4. Вынос оборудования за пределы школы разрешается только с согласования")
-    y -= 15
-    pdf.drawString(margin_left + 10, y, "с администрацией (Руководителя IT-отдела).")
-    y -= 20
-    
-    # Пункт 5
-    if y < 95:
-        start_new_page()
-    pdf.setFont(font_name, 11)
-    pdf.drawString(margin_left, y, "5. Настоящий Акт составлен в двух экземплярах, имеющих одинаковую юридическую")
-    y -= 15
-    pdf.drawString(margin_left + 10, y, "силу, по одному для каждой Стороны.")
-    y -= 30
+    # Пункты 2-5
+    draw_wrapped_text(
+        "2. Стороны при приеме-передаче осмотрели ОС и пришли к соглашению, что передаваемые ОС "
+        "находятся в рабочем и приемлемом для использования состоянии.",
+        hanging_indent=True,
+        gap=5,
+    )
+    draw_wrapped_text(
+        "3. Стороны пришли к соглашению, что в случае потери или повреждения принятых ОС в результате "
+        "действий Принимающей стороны, Принимающая сторона обязуется полностью возместить Передающей "
+        "стороне рыночную стоимость данного имущества в течение 30 (тридцати) календарных дней с момента "
+        "предъявления требования от Передающей стороны.",
+        hanging_indent=True,
+        gap=5,
+    )
+    draw_wrapped_text(
+        "4. Вынос оборудования за пределы школы разрешается только с согласования с администрацией "
+        "(Руководителя IT-отдела).",
+        hanging_indent=True,
+        gap=5,
+    )
+    draw_wrapped_text(
+        "5. Настоящий Акт составлен в двух экземплярах, имеющих одинаковую юридическую силу, по одному "
+        "для каждой Стороны.",
+        hanging_indent=True,
+        gap=20,
+    )
     
     # Блок подписей (если один получатель или это шаблон iPad)
     if len(normalized_recipients) == 1 or template_code == 'IPAD':
@@ -1070,24 +1089,22 @@ def build_act_pdf_v2(
             pdf.drawString(margin_left, y, f"Дата возврата: {formatted_return_date}")
             y -= 20
         
-        pdf.setFont(font_name, 11)
-        pdf.drawString(margin_left, y, "Принимающая сторона передает, а Передающая сторона принимает ОС, согласно пункту 1 настоящего Акта.")
-        y -= 15
-        pdf.drawString(margin_left, y, "Стороны при приеме-передаче осмотрели ОС и пришли к соглашению, что передаваемые")
-        y -= 15
-        pdf.drawString(margin_left, y, "ОС находятся в рабочем и приемлемом для использования состоянии.")
-        y -= 20
+        draw_wrapped_text(
+            "Принимающая сторона передает, а Передающая сторона принимает ОС, согласно пункту 1 "
+            "настоящего Акта. Стороны при приеме-передаче осмотрели ОС и пришли к соглашению, что "
+            "передаваемые ОС находятся в рабочем и приемлемом для использования состоянии.",
+            gap=10,
+        )
         
         # Примечания
-        pdf.setFont(bold_font_name, 11)
-        pdf.drawString(margin_left, y, "Примечания:")
-        pdf.setFont(font_name, 10)
         note_text = act_data.get("return_note", "")
         if note_text:
-            pdf.drawString(margin_left + 100, y, note_text[:80])
+            draw_wrapped_text(f"Примечания: {note_text}", font_size=10, leading=14, gap=10)
         else:
+            pdf.setFont(bold_font_name, 11)
+            pdf.drawString(margin_left, y, "Примечания:")
             pdf.line(margin_left + 100, y, margin_right, y)
-        y -= 30
+            y -= 30
         
         # Подписи возврата: только если один получатель или это шаблон iPad
         if len(normalized_recipients) == 1 or template_code == 'IPAD':

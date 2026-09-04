@@ -3,7 +3,7 @@ from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import BigInteger, case, cast, func, or_
+from sqlalchemy import BigInteger, String, case, cast, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ def _serialize(
     device: IpadDevice,
     assignment: IpadStudentAssignment | None = None,
     duplicate_tag_count: int = 1,
+    has_history: bool = False,
 ) -> dict:
     return {
         "id": str(device.id),
@@ -36,7 +37,49 @@ def _serialize(
         "created_at": device.created_at.isoformat(),
         "updated_at": device.updated_at.isoformat(),
         "duplicate_tag_count": duplicate_tag_count,
+        "has_history": has_history,
     }
+
+
+def _payload_device_ids(payload: object) -> set[str]:
+    if not isinstance(payload, dict):
+        return set()
+    device_ids = {
+        str(payload.get(key))
+        for key in ("device_id", "old_device_id", "new_device_id")
+        if payload.get(key)
+    }
+    items = payload.get("items")
+    if isinstance(items, list):
+        device_ids.update(
+            str(item.get("device_id"))
+            for item in items
+            if isinstance(item, dict) and item.get("device_id")
+        )
+    return device_ids
+
+
+def _history_device_ids(db: Session, device_ids: list[UUID]) -> set[UUID]:
+    if not device_ids:
+        return set()
+    history_ids = {
+        item_id
+        for item_id, in db.query(IpadStudentAssignment.ipad_device_id).filter(
+            IpadStudentAssignment.ipad_device_id.in_(device_ids)
+        ).distinct().all()
+        if item_id
+    }
+    string_ids = {str(item_id): item_id for item_id in device_ids}
+    appendix_filters = [
+        cast(IpadActAppendix.payload_json, String).contains(string_id)
+        for string_id in string_ids
+    ]
+    payloads = db.query(IpadActAppendix.payload_json).filter(or_(*appendix_filters)).all()
+    for payload, in payloads:
+        for referenced_id in _payload_device_ids(payload):
+            if referenced_id in string_ids:
+                history_ids.add(string_ids[referenced_id])
+    return history_ids
 
 
 @router.get("/available")
@@ -162,10 +205,19 @@ def list_ipads(
         IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES),
     ).all() if device_ids else []
     assignment_by_device = {item.ipad_device_id: item for item in assignments}
+    history_device_ids = _history_device_ids(db, device_ids)
     tag_counts = dict(db.query(IpadDevice.tag, func.count(IpadDevice.id)).filter(
         IpadDevice.tag.in_([item.tag for item in devices])
     ).group_by(IpadDevice.tag).all()) if devices else {}
-    return {"items": [_serialize(item, assignment_by_device.get(item.id), tag_counts.get(item.tag, 1)) for item in devices], "total": total, "page": page, "page_size": page_size}
+    return {"items": [
+        _serialize(
+            item,
+            assignment_by_device.get(item.id),
+            tag_counts.get(item.tag, 1),
+            has_history=item.id in history_device_ids,
+        )
+        for item in devices
+    ], "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -288,15 +340,17 @@ def ipad_history(
 
     events.sort(key=lambda item: item["created_at"], reverse=True)
     return {
-        "device": _serialize(device),
+        "device": _serialize(device, has_history=bool(events)),
         "events": events,
     }
 
 
 @router.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_ipad(device_id: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
-    device = db.query(IpadDevice).filter(IpadDevice.id == device_id).first()
+    device = db.query(IpadDevice).filter(IpadDevice.id == device_id).with_for_update().first()
     if not device: raise HTTPException(status_code=404, detail="iPad не найден")
-    if db.query(IpadStudentAssignment.id).filter(IpadStudentAssignment.ipad_device_id == device.id).first():
+    if device.status in {"RESERVED", "ISSUED", "RETURN_PENDING"}:
+        raise HTTPException(status_code=409, detail="Активный или зарезервированный iPad нельзя удалить")
+    if device.id in _history_device_ids(db, [device.id]):
         raise HTTPException(status_code=409, detail="iPad имеет историю актов и не может быть удалён")
     record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_DELETED", {"tag": device.tag}); db.flush(); db.delete(device); db.commit()

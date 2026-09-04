@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw
 from sqlalchemy import text
 
 import app.api.ipad_acts as ipad_api
+import app.api.ipad_inventory as ipad_inventory_api
 from app.api.acts import delete_act
 from app.core.database import Base, SessionLocal, engine
 from app.db.models import (
@@ -160,6 +161,10 @@ def test_replacement_creates_new_revision_with_new_tag(ipad_data):
     # PDF приложения сгенерирован.
     appendix = db.query(IpadActAppendix).filter(IpadActAppendix.id == UUID(appendix_data["id"])).one()
     assert appendix.pdf_storage_path
+    with pytest.raises(HTTPException) as delete_error:
+        ipad_inventory_api.delete_ipad(old_device.id, db, user)
+    assert delete_error.value.status_code == 409
+    assert "историю актов" in delete_error.value.detail
 
 
 def test_cancel_replacement_appendix_releases_reserved_ipad(ipad_data):
