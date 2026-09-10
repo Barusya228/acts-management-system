@@ -11,6 +11,9 @@ from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from pypdf import PdfReader, PdfWriter
+
+from app.utils.pdf_i18n import IPAD_PDF_TEXT, MACHINE_TRANSLATION_NOTICE
 
 
 class _NumberedReferenceCanvas(canvas.Canvas):
@@ -62,6 +65,41 @@ def _draw_page_reference(
 
     pdf.setFont(font_name, marker_font_size)
     pdf.drawString(left_offset, top_offset, marker)
+
+
+def _merge_multilingual_pdf_sections(
+    sections: list[tuple[str, bytes]],
+    font_name: str,
+    act_reference: str,
+) -> bytes:
+    readers = [(language, PdfReader(BytesIO(content))) for language, content in sections]
+    pages = [
+        (language, page)
+        for language, reader in readers
+        for page in reader.pages
+    ]
+    total_pages = len(pages)
+    writer = PdfWriter()
+    width, height = A4
+
+    for page_number, (language, page) in enumerate(pages, start=1):
+        overlay_buffer = BytesIO()
+        overlay = canvas.Canvas(overlay_buffer, pagesize=A4)
+        overlay.setFont(font_name, 8)
+        overlay.setFillColor(colors.black)
+        overlay.drawString(50, height - 25, f"{act_reference} | {language} | {page_number}/{total_pages}")
+        if language in {"KZ", "EN"}:
+            overlay.setFont(font_name, 7)
+            overlay.setFillColor(colors.grey)
+            overlay.drawRightString(width - 50, height - 25, MACHINE_TRANSLATION_NOTICE)
+        overlay.save()
+        page.merge_page(PdfReader(BytesIO(overlay_buffer.getvalue())).pages[0])
+        writer.add_page(page)
+
+    writer.add_metadata({"/Title": "Акт приема-передачи оборудования / Equipment Handover Act"})
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 def _register_font() -> str:
@@ -173,8 +211,10 @@ def _draw_party_table(
     font_name: str,
     bold_font_name: str,
     rows: list[tuple[str, str, str | None]],
+    labels: dict | None = None,
 ):
-    table_data = [['Сторона', 'ФИО / Наименование', 'Подпись']]
+    labels = labels or IPAD_PDF_TEXT["RU"]
+    table_data = [[labels['party_header'], labels['name_header'], labels['signature_header']]]
     table_data.extend([[side, name or '—', ''] for side, name, _ in rows])
     side_column_width = 140
     name_column_width = 230
@@ -217,10 +257,10 @@ def _draw_party_table(
                 )
             except Exception:
                 pdf.setFont(font_name, 8)
-                pdf.drawString(signature_col_x + 18, current_row_top - row_height + 22, "Нет подписи")
+                pdf.drawString(signature_col_x + 18, current_row_top - row_height + 22, labels["no_signature"])
         else:
             pdf.setFont(font_name, 8)
-            pdf.drawString(signature_col_x + 18, current_row_top - row_height + 22, "Нет подписи")
+            pdf.drawString(signature_col_x + 18, current_row_top - row_height + 22, labels["no_signature"])
         current_row_top -= row_height
 
     return table_height
@@ -233,18 +273,20 @@ def _build_numbered_party_rows(
     recipient_signature_paths: list[str | None],
     party1_role: str,
     recipient_role: str,
+    labels: dict | None = None,
 ) -> list[tuple[str, str, str | None]]:
+    labels = labels or IPAD_PDF_TEXT["RU"]
     rows = [(
-        f"Сторона 1\n({party1_role})",
-        f"ТОО «Школа 21 века»\nв лице: {party1_name or '_' * 40}",
+        f"{labels['party_word']} 1\n({party1_role})",
+        f"{labels['organization']}\n{labels['represented_by']} {party1_name or '_' * 40}",
         party1_signature_path,
     )]
     for index, recipient in enumerate(recipients, start=1):
-        recipient_details = [recipient.get("full_name") or f"Получатель {index}"]
+        recipient_details = [recipient.get("full_name") or f"{labels['recipient_fallback']} {index}"]
         if recipient.get("email"):
             recipient_details.append(recipient["email"])
         rows.append((
-            f"Сторона {index + 1}\n({recipient_role})",
+            f"{labels['party_word']} {index + 1}\n({recipient_role})",
             "\n".join(recipient_details),
             recipient_signature_paths[index - 1] if index - 1 < len(recipient_signature_paths) else None,
         ))
@@ -349,16 +391,17 @@ def _draw_ipad_tables(
     return max_height
 
 
-def _build_accessory_table_data(accessories):
+def _build_accessory_table_data(accessories, labels: dict | None = None):
+    labels = labels or IPAD_PDF_TEXT["RU"]
     accessory_items = [item for item in accessories if isinstance(item, dict)]
     show_model = any(str(item.get('model', '') or '').strip() for item in accessory_items)
     show_note = any(str(item.get('note', '') or '').strip() for item in accessory_items)
-    header = ['№', 'Мелкая техника']
+    header = ['№', labels['small_equipment']]
     if show_model:
-        header.append('Модель')
-    header.append('Кол-во')
+        header.append(labels['model'])
+    header.append(labels['quantity'])
     if show_note:
-        header.append('Заметка')
+        header.append(labels['note'])
     data = [header]
     for index, item in enumerate(accessory_items, start=1):
         row = [str(index), str(item.get('name', '') or '—')]
@@ -597,22 +640,46 @@ def build_act_pdf_v2(
     return_signature_party2_path: str | None = None,
     issue_recipient_signature_paths: list[str | None] | None = None,
     return_recipient_signature_paths: list[str | None] | None = None,
+    _language: str | None = None,
+    _suppress_reference: bool = False,
 ) -> bytes:
     """
     Генерирует PDF акта приема-передачи оборудования версии 2
     с улучшенным дизайном и форматированием
     """
+    font_name = _register_font()
+    act_reference = _format_act_reference(str(act_data.get("id", "-")))
+    if template_code == "IPAD" and _language is None:
+        sections = [(
+            language,
+            build_act_pdf_v2(
+                act_data,
+                template_name=template_name,
+                template_code=template_code,
+                issue_signature_party1_path=issue_signature_party1_path,
+                issue_signature_party2_path=issue_signature_party2_path,
+                return_signature_party1_path=return_signature_party1_path,
+                return_signature_party2_path=return_signature_party2_path,
+                issue_recipient_signature_paths=issue_recipient_signature_paths,
+                return_recipient_signature_paths=return_recipient_signature_paths,
+                _language=language,
+                _suppress_reference=True,
+            ),
+        ) for language in ("RU", "KZ", "EN")]
+        return _merge_multilingual_pdf_sections(sections, font_name, act_reference)
+
+    language = _language or "RU"
+    text = IPAD_PDF_TEXT[language if template_code == "IPAD" else "RU"]
     buffer = BytesIO()
     pdf = _NumberedReferenceCanvas(buffer, pagesize=A4)
     width, height = A4
-    font_name = _register_font()
     bold_font_name = _resolve_bold_font_name(font_name)
     issue_recipient_signature_paths = issue_recipient_signature_paths or []
     return_recipient_signature_paths = return_recipient_signature_paths or []
-    act_reference = _format_act_reference(str(act_data.get("id", "-")))
-    pdf.set_reference_drawer(
-        lambda c, page, total: _draw_page_reference(c, font_name, act_reference, page, total)
-    )
+    if not _suppress_reference:
+        pdf.set_reference_drawer(
+            lambda c, page, total: _draw_page_reference(c, font_name, act_reference, page, total)
+        )
     
     # Отступы
     margin_left = 50
@@ -673,23 +740,24 @@ def build_act_pdf_v2(
                 font_name,
                 bold_font_name,
                 page_rows,
+                labels=text,
             )
             y -= table_height + 20
             if remaining_rows:
                 start_new_page()
     
-    pdf.setTitle(f"Акт приема-передачи оборудования")
+    pdf.setTitle(text["title"])
     
     # Заголовок документа
     pdf.setFont(font_name, 14)
-    title = "АКТ ПРИЕМА-ПЕРЕДАЧИ ОБОРУДОВАНИЯ"
+    title = text["title"]
     title_width = pdf.stringWidth(title, font_name, 14)
     pdf.drawString((width - title_width) / 2, y, title)
     y -= 40
     
     # Место и дата
     pdf.setFont(font_name, 12)
-    pdf.drawString(margin_left, y, "г. Алматы")
+    pdf.drawString(margin_left, y, text["city"])
     
     # Дата из act_data или пустое поле
     date_str = act_data.get('issue_date', '«____» ____________ 20___ г.')
@@ -700,9 +768,10 @@ def build_act_pdf_v2(
                 date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
             else:
                 date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-            months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-                     'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
-            date_str = f"«{date_obj.day}» {months[date_obj.month - 1]} {date_obj.year} г."
+            if language == "EN":
+                date_str = f"{text['months'][date_obj.month - 1]} {date_obj.day}, {date_obj.year}"
+            else:
+                date_str = f"«{date_obj.day}» {text['months'][date_obj.month - 1]} {date_obj.year} {text['year_suffix']}"
         except:
             pass
     
@@ -730,8 +799,7 @@ def build_act_pdf_v2(
 
     # Вводная часть - таблица со сторонами
     draw_wrapped_text(
-        "ТОО «Школа 21 века», в лице представителя, и получатель оборудования, далее совместно "
-        "именуемые «Стороны», составили настоящий Акт о нижеследующем:",
+        text["intro"],
         gap=10,
     )
     
@@ -741,8 +809,9 @@ def build_act_pdf_v2(
         normalized_recipients,
         issue_signature_party1_path,
         issue_recipient_signature_paths,
-        "Передающая сторона",
-        "Принимающая сторона",
+        text["transmitting_role"],
+        text["receiving_role"],
+        labels=text,
     )
 
     draw_paginated_party_rows(party_rows)
@@ -752,24 +821,18 @@ def build_act_pdf_v2(
 
     # Пункт 1
     if accessories_only:
-        clause1 = (
-            "1. Настоящий Акт приема-передачи оборудования удостоверяет, что Передающая сторона передала, "
-            "а Принимающая сторона приняла во временное пользование оборудование и имущество:"
-        )
+        clause1 = text["clause1_accessories"]
     else:
-        clause1 = (
-            "1. Настоящий Акт приема-передачи оборудования удостоверяет, что Передающая сторона передала, "
-            "а Принимающая сторона приняла во временное пользование следующие основные средства (далее - ОС):"
-        )
+        clause1 = text["clause1_assets"]
     draw_wrapped_text(clause1, hanging_indent=True, gap=10)
 
     if is_ipad_template and not accessories_only:
         ipad_advisory = extra_data.get("ipad_advisory") if isinstance(extra_data.get("ipad_advisory"), dict) else {}
         advisory_label = ipad_advisory.get("advisory_group") or extra_data.get('advisory_note', '') or '______________________________'
         academic_year = ipad_advisory.get("academic_year")
-        advisory_text = f"Advisory: {advisory_label}"
+        advisory_text = f"{text['advisory']}: {advisory_label}"
         if academic_year:
-            advisory_text += f". Учебный год: {academic_year}"
+            advisory_text += f". {text['academic_year']}: {academic_year}"
         draw_wrapped_text(advisory_text, indent=10, gap=5)
     
     # Таблица оборудования
@@ -831,13 +894,7 @@ def build_act_pdf_v2(
         ipad_advisory_data = extra_data.get("ipad_advisory") if isinstance(extra_data.get("ipad_advisory"), dict) else {}
         applied_appendices = ipad_advisory_data.get("appendices") or []
         if isinstance(applied_appendices, list) and applied_appendices:
-            appendix_titles = {
-                'IPAD_REPLACEMENT': 'Замена iPad',
-                'STUDENT_DEPARTURE': 'Выбытие ученика',
-                'STUDENT_ADDITION': 'Добавление ученика',
-                'LATE_RETURN': 'Поздний возврат iPad',
-                'YEAR_END_RETURN': 'Годовой возврат Advisory',
-            }
+            appendix_titles = text["operation_titles"]
 
             def _short_date(value) -> str:
                 try:
@@ -849,18 +906,18 @@ def build_act_pdf_v2(
             if y < 90:
                 start_new_page()
             pdf.setFont(bold_font_name, 10)
-            pdf.drawString(margin_left, y, 'Изменения по приложениям к акту:')
+            pdf.drawString(margin_left, y, text["appendix_changes"])
             y -= 16
             for appendix_info in applied_appendices:
                 if not isinstance(appendix_info, dict):
                     continue
                 title = appendix_titles.get(appendix_info.get('operation_type'), str(appendix_info.get('operation_type', '')))
                 student = appendix_info.get('student_name')
-                line = f"Приложение №{appendix_info.get('appendix_number', '?')}: {title}"
+                line = f"{text['appendix']} №{appendix_info.get('appendix_number', '?')}: {title}"
                 if student:
                     line += f" — {student}"
                 line += (
-                    f" (подписи: {appendix_info.get('responsible_name', '—')} {_short_date(appendix_info.get('responsible_signed_at'))}, "
+                    f" ({text['signatures']}: {appendix_info.get('responsible_name', '—')} {_short_date(appendix_info.get('responsible_signed_at'))}, "
                     f"{appendix_info.get('issuer_name', '—')} {_short_date(appendix_info.get('issuer_signed_at'))})"
                 )
                 draw_wrapped_text(line, font_size=9, leading=12, gap=2)
@@ -889,7 +946,7 @@ def build_act_pdf_v2(
 
     accessories = extra_data.get("accessories", [])
     if isinstance(accessories, list) and accessories:
-        accessory_data, accessory_widths, quantity_column = _build_accessory_table_data(accessories)
+        accessory_data, accessory_widths, quantity_column = _build_accessory_table_data(accessories, labels=text)
         accessory_table = Table(accessory_data, colWidths=accessory_widths)
         accessory_table.setStyle(TableStyle([
             ('FONT', (0, 0), (-1, -1), font_name, 8),
@@ -908,35 +965,29 @@ def build_act_pdf_v2(
         if y - accessory_height - 15 < 100:
             start_new_page()
         pdf.setFont(bold_font_name, 10)
-        pdf.drawString(margin_left, y, "Мелкая техника")
+        pdf.drawString(margin_left, y, text["small_equipment"])
         y -= 15
         accessory_table.drawOn(pdf, margin_left, y - accessory_height)
         y -= accessory_height + 20
     
     # Пункты 2-5
     draw_wrapped_text(
-        "2. Стороны при приеме-передаче осмотрели ОС и пришли к соглашению, что передаваемые ОС "
-        "находятся в рабочем и приемлемом для использования состоянии.",
+        text["clause2"],
         hanging_indent=True,
         gap=5,
     )
     draw_wrapped_text(
-        "3. Стороны пришли к соглашению, что в случае потери или повреждения принятых ОС в результате "
-        "действий Принимающей стороны, Принимающая сторона обязуется полностью возместить Передающей "
-        "стороне рыночную стоимость данного имущества в течение 30 (тридцати) календарных дней с момента "
-        "предъявления требования от Передающей стороны.",
+        text["clause3"],
         hanging_indent=True,
         gap=5,
     )
     draw_wrapped_text(
-        "4. Вынос оборудования за пределы школы разрешается только с согласования с администрацией "
-        "(Руководителя IT-отдела).",
+        text["clause4"],
         hanging_indent=True,
         gap=5,
     )
     draw_wrapped_text(
-        "5. Настоящий Акт составлен в двух экземплярах, имеющих одинаковую юридическую силу, по одному "
-        "для каждой Стороны.",
+        text["clause5"],
         hanging_indent=True,
         gap=20,
     )
@@ -946,14 +997,14 @@ def build_act_pdf_v2(
         if template_code == 'IPAD':
             parties = []
             parties.append({
-                "label": "Сторона 1:",
+                "label": f"{text['party_word']} 1:",
                 "name": act_data.get('party1_name', ''),
                 "sig_path": issue_signature_party1_path
             })
             for idx, rec in enumerate(normalized_recipients):
                 sig_p = issue_recipient_signature_paths[idx] if idx < len(issue_recipient_signature_paths) else None
                 parties.append({
-                    "label": f"Сторона {idx + 2}:",
+                    "label": f"{text['party_word']} {idx + 2}:",
                     "name": rec.get('full_name', ''),
                     "sig_path": sig_p
                 })
@@ -1065,7 +1116,7 @@ def build_act_pdf_v2(
         y -= 30
         
         pdf.setFont(bold_font_name, 12)
-        return_title = "ПОМЕТКА О ВОЗВРАТЕ ОС"
+        return_title = text["return_title"]
         return_title_width = pdf.stringWidth(return_title, bold_font_name, 12)
         pdf.drawString((width - return_title_width) / 2, y, return_title)
         y -= 25
@@ -1079,30 +1130,29 @@ def build_act_pdf_v2(
                     date_obj = datetime.fromisoformat(return_date_str.replace('Z', '+00:00'))
                 else:
                     date_obj = datetime.strptime(return_date_str, '%Y-%m-%d')
-                months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-                         'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
-                formatted_return_date = f"«{date_obj.day}» {months[date_obj.month - 1]} {date_obj.year} г."
+                if language == "EN":
+                    formatted_return_date = f"{text['months'][date_obj.month - 1]} {date_obj.day}, {date_obj.year}"
+                else:
+                    formatted_return_date = f"«{date_obj.day}» {text['months'][date_obj.month - 1]} {date_obj.year} {text['year_suffix']}"
             except:
                 formatted_return_date = return_date_str
             
             pdf.setFont(bold_font_name, 11)
-            pdf.drawString(margin_left, y, f"Дата возврата: {formatted_return_date}")
+            pdf.drawString(margin_left, y, f"{text['return_date']}: {formatted_return_date}")
             y -= 20
         
         draw_wrapped_text(
-            "Принимающая сторона передает, а Передающая сторона принимает ОС, согласно пункту 1 "
-            "настоящего Акта. Стороны при приеме-передаче осмотрели ОС и пришли к соглашению, что "
-            "передаваемые ОС находятся в рабочем и приемлемом для использования состоянии.",
+            text["return_body"],
             gap=10,
         )
         
         # Примечания
         note_text = act_data.get("return_note", "")
         if note_text:
-            draw_wrapped_text(f"Примечания: {note_text}", font_size=10, leading=14, gap=10)
+            draw_wrapped_text(f"{text['notes']}: {note_text}", font_size=10, leading=14, gap=10)
         else:
             pdf.setFont(bold_font_name, 11)
-            pdf.drawString(margin_left, y, "Примечания:")
+            pdf.drawString(margin_left, y, f"{text['notes']}:")
             pdf.line(margin_left + 100, y, margin_right, y)
             y -= 30
         
@@ -1111,14 +1161,14 @@ def build_act_pdf_v2(
             if template_code == 'IPAD':
                 parties_return = []
                 parties_return.append({
-                    "label": "Сторона 1:",
+                    "label": f"{text['party_word']} 1:",
                     "name": act_data.get('party1_name', ''),
                     "sig_path": return_signature_party1_path
                 })
                 for idx, rec in enumerate(normalized_recipients):
                     sig_p = return_recipient_signature_paths[idx] if idx < len(return_recipient_signature_paths) else None
                     parties_return.append({
-                        "label": f"Сторона {idx + 2}:",
+                        "label": f"{text['party_word']} {idx + 2}:",
                         "name": rec.get('full_name', ''),
                         "sig_path": sig_p
                     })
@@ -1220,8 +1270,9 @@ def build_act_pdf_v2(
                 normalized_recipients,
                 return_signature_party1_path,
                 return_recipient_signature_paths,
-                "Принимает возврат",
-                "Возвращает технику",
+                text["accepts_return"],
+                text["returns_equipment"],
+                labels=text,
             )
             draw_paginated_party_rows(return_party_rows)
     

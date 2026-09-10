@@ -3,6 +3,7 @@ from io import BytesIO
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from pypdf import PdfReader
 
 from app.utils.pdf import (
     _build_numbered_party_rows,
@@ -153,6 +154,48 @@ def test_pdf_generation_ipad_advisory_multiple_recipients_signatures():
     assert len(pdf_bytes) > 0
 
 
+def test_ipad_pdf_contains_ru_kz_en_sections_and_translation_notice():
+    act_data = {
+        "id": "multilingual-act",
+        "current_version": 1,
+        "status": "COMPLETED",
+        "party1_name": "IT Manager",
+        "party2_name": "Class Advisor",
+        "issue_date": "2026-09-04",
+        "item_name": "IPAD",
+        "item_serial": None,
+        "receiver_email": "advisor@example.com",
+        "extra_data_json": {
+            "recipients": [{"full_name": "Class Advisor", "email": "advisor@example.com"}],
+            "ipad_advisory": {
+                "advisory_group": "Grade 5",
+                "academic_year": "2026-2027",
+                "students": [{
+                    "student_name": "Student Name",
+                    "student_status": "ACTIVE",
+                    "ipad_tag": "12345",
+                    "serial_number": "SERIAL-12345",
+                }],
+                "appendices": [],
+            },
+        },
+    }
+
+    pdf_bytes = build_act_pdf_v2(act_data=act_data, template_code="IPAD")
+    reader = PdfReader(BytesIO(pdf_bytes))
+    page_texts = [page.extract_text() or "" for page in reader.pages]
+    full_text = "\n".join(page_texts)
+
+    assert len(reader.pages) == 3
+    assert full_text.index("АКТ ПРИЕМА-ПЕРЕДАЧИ ОБОРУДОВАНИЯ") < full_text.index("ЖАБДЫҚТЫ ҚАБЫЛДАУ-ТАПСЫРУ АКТІСІ")
+    assert full_text.index("ЖАБДЫҚТЫ ҚАБЫЛДАУ-ТАПСЫРУ АКТІСІ") < full_text.index("EQUIPMENT HANDOVER AND ACCEPTANCE ACT")
+    assert sum("Машинный перевод. Оригинал на русском языке." in page_text for page_text in page_texts) == 2
+    assert sum("Student name" in page_text for page_text in page_texts) == 3
+    assert "ACT-MULTILINGUAL | RU | 1/3" in page_texts[0]
+    assert "ACT-MULTILINGUAL | KZ | 2/3" in page_texts[1]
+    assert "ACT-MULTILINGUAL | EN | 3/3" in page_texts[2]
+
+
 def test_bottom_signatures_start_new_page_before_bottom_margin():
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
@@ -228,4 +271,4 @@ def test_large_ipad_pdf_paginates_many_students_and_parties():
     )
 
     page_count = len(re.findall(rb"/Type\s*/Page(?!s)", pdf_bytes))
-    assert page_count >= 4
+    assert page_count >= 12

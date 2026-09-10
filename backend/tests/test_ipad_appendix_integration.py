@@ -37,6 +37,7 @@ from app.schemas.schemas import (
     IpadAppendixSignatureRequest,
     IpadAppendixYearEndReturnCreate,
     IpadStudentAssignmentUpdate,
+    IpadSigningOrderUpdate,
     IpadYearEndReturnItem,
 )
 
@@ -360,6 +361,40 @@ def test_participants_cannot_be_replaced_after_ipad_act_completion(ipad_data):
         )
 
     assert error.value.status_code == 409
+
+
+def test_pending_responsibles_can_be_reordered_without_new_pdf_version(ipad_data):
+    db, user, _issuer, responsible, act, _assignment, _old_device, _new_device = ipad_data
+    second = Participant(full_name="Second Advisor", email="second@example.com", kind=ParticipantKind.EMPLOYEE)
+    third = Participant(full_name="Third Advisor", email="third@example.com", kind=ParticipantKind.EMPLOYEE)
+    db.add_all([second, third])
+    db.flush()
+    extra = dict(act.extra_data_json or {})
+    extra["recipients"] = [
+        extra["recipients"][0],
+        {"participant_id": str(second.id), "full_name": second.full_name, "email": second.email, "signed_at": None},
+        {"participant_id": str(third.id), "full_name": third.full_name, "email": third.email, "signed_at": None},
+    ]
+    extra["recipient_signing_order"] = [str(responsible.id), str(second.id), str(third.id)]
+    act.extra_data_json = extra
+    act.status = ActStatus.DRAFT
+    previous_version = act.current_version
+    db.commit()
+
+    result = ipad_api.update_ipad_signing_order(
+        act.id,
+        IpadSigningOrderUpdate(pending_participant_ids=[third.id, second.id]),
+        db,
+        user,
+    )
+
+    db.refresh(act)
+    assert act.current_version == previous_version
+    assert [item["participant_id"] for item in result["responsibles"]] == [
+        str(responsible.id), str(second.id), str(third.id),
+    ]
+    assert result["responsibles"][0]["signed_at"] is not None
+    assert result["signing_order"] == [str(responsible.id), str(third.id), str(second.id)]
 
 
 def test_year_end_return_is_applied_after_both_signatures(ipad_data, monkeypatch):

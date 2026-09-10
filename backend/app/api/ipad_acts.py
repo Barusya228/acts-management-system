@@ -13,7 +13,9 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.services.act_shared import (
     PARTY1_PARTICIPANT_ID_KEY,
     RECIPIENTS_KEY,
+    RECIPIENT_SIGNING_ORDER_KEY,
     build_party2_summary as _build_party2_summary,
+    get_recipient_signing_order,
     get_primary_recipient_email as _get_primary_recipient_email,
     get_selectable_participant as _get_selectable_participant,
     require_active_template as _require_active_template,
@@ -43,6 +45,7 @@ from app.schemas.schemas import (
     IpadAdvisoryActCreate,
     IpadAdvisoryAssignmentsUpdate,
     IpadAdvisoryParticipantsUpdate,
+    IpadSigningOrderUpdate,
     IpadAppendixReplacementCreate,
     IpadAppendixDepartureCreate,
     IpadAppendixStudentAddCreate,
@@ -171,6 +174,9 @@ def _appendix_change_note(appendix: IpadActAppendix) -> str:
 
 def _serialize(act: Act) -> dict:
     profile = act.ipad_profile
+    recipients = (act.extra_data_json or {}).get(RECIPIENTS_KEY, [])
+    if not isinstance(recipients, list):
+        recipients = []
     return {
         "id": str(act.id),
         "template_id": str(act.template_id),
@@ -179,7 +185,8 @@ def _serialize(act: Act) -> dict:
         "issue_date": act.issue_date.isoformat(),
         "issuer": act.party1_name,
         "issuer_participant_id": (act.extra_data_json or {}).get(PARTY1_PARTICIPANT_ID_KEY),
-        "responsibles": (act.extra_data_json or {}).get(RECIPIENTS_KEY, []),
+        "responsibles": recipients,
+        "signing_order": get_recipient_signing_order(act.extra_data_json, recipients),
         "status": act.status.value,
         "current_version": act.current_version,
         "students": [{
@@ -355,6 +362,7 @@ def create_ipad_advisory_act(
     extra_data = {
         PARTY1_PARTICIPANT_ID_KEY: str(issuer.id),
         RECIPIENTS_KEY: responsibles,
+        RECIPIENT_SIGNING_ORDER_KEY: [item["participant_id"] for item in responsibles],
         "advisory_group": group,
         "academic_year": academic_year,
     }
@@ -535,6 +543,7 @@ def update_ipad_advisory_participants(
     } for participant in responsibles]
     extra[PARTY1_PARTICIPANT_ID_KEY] = str(issuer.id)
     extra[RECIPIENTS_KEY] = recipients
+    extra[RECIPIENT_SIGNING_ORDER_KEY] = [str(participant.id) for participant in responsibles]
     act.extra_data_json = extra
     flag_modified(act, "extra_data_json")
     act.party1_name = issuer.full_name
@@ -569,6 +578,56 @@ def update_ipad_advisory_participants(
     })
     db.commit()
     background_tasks.add_task(backup_pdf_by_ids, act.id, version.id, pdf_asset.id)
+    db.refresh(act)
+    return _serialize(act)
+
+
+@router.patch("/{act_id}/signing-order")
+def update_ipad_signing_order(
+    act_id: UUID,
+    payload: IpadSigningOrderUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_guest_or_admin_user),
+):
+    act = db.query(Act).filter(Act.id == act_id).populate_existing().with_for_update().first()
+    if not act or not act.ipad_profile:
+        raise HTTPException(status_code=404, detail="iPad-акт не найден")
+    if act.status != ActStatus.DRAFT:
+        raise HTTPException(status_code=409, detail="Очередь можно менять только во время подписания ответственных")
+
+    extra = dict(act.extra_data_json or {})
+    recipients = extra.get(RECIPIENTS_KEY, [])
+    if not isinstance(recipients, list):
+        raise HTTPException(status_code=409, detail="Список ответственных в акте повреждён")
+    recipient_by_id = {
+        str(item.get("participant_id")): item
+        for item in recipients
+        if isinstance(item, dict) and item.get("participant_id")
+    }
+    current_order = get_recipient_signing_order(extra, recipients)
+    pending_ids = [
+        participant_id
+        for participant_id in current_order
+        if participant_id in recipient_by_id and not recipient_by_id[participant_id].get("signed_at")
+    ]
+    requested_pending_ids = [str(item) for item in payload.pending_participant_ids]
+    if len(pending_ids) < 2:
+        raise HTTPException(status_code=409, detail="В очереди осталось меньше двух ответственных")
+    if len(requested_pending_ids) != len(set(requested_pending_ids)) or set(requested_pending_ids) != set(pending_ids):
+        raise HTTPException(status_code=422, detail="Передайте всех ожидающих ответственных без повторов")
+
+    signed_ids = [participant_id for participant_id in current_order if participant_id not in pending_ids]
+    new_order = signed_ids + requested_pending_ids
+    if new_order == current_order:
+        return _serialize(act)
+    extra[RECIPIENT_SIGNING_ORDER_KEY] = new_order
+    act.extra_data_json = extra
+    flag_modified(act, "extra_data_json")
+    act.updated_at = datetime.utcnow()
+    record_audit(db, current_user, "ACT", act.id, "IPAD_SIGNING_ORDER_UPDATED", {
+        "pending_participant_ids": requested_pending_ids,
+    })
+    db.commit()
     db.refresh(act)
     return _serialize(act)
 

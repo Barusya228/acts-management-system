@@ -6,6 +6,8 @@ import pytest
 from fastapi import HTTPException
 from PIL import Image
 
+import app.api.acts as acts_api
+
 from app.api.acts import (
     _normalize_recipients,
     _sign_recipient,
@@ -55,6 +57,38 @@ def test_recipient_signature_must_match_expected_participant():
             participant_id="82cc30a6-c937-427b-b454-c80c8cbd4d72",
         )
     assert exc_info.value.status_code == 409
+
+
+def test_recipient_signature_uses_configured_signing_order(monkeypatch):
+    first_id = "4cebaea3-4633-4e65-a612-a0b1807fc7c0"
+    second_id = "82cc30a6-c937-427b-b454-c80c8cbd4d72"
+    act = SimpleNamespace(
+        id="25cb320a-2719-43b3-8836-7be09b8bbf3e",
+        current_version=1,
+        extra_data_json={
+            "recipients": [
+                {"participant_id": first_id, "full_name": "First", "email": "first@example.com"},
+                {"participant_id": second_id, "full_name": "Second", "email": "second@example.com"},
+            ],
+            "recipient_signing_order": [second_id, first_id],
+        },
+        party2_name="First and Second",
+        receiver_email="first@example.com",
+    )
+    monkeypatch.setattr(acts_api, "save_data_url_file", lambda *_args, **_kwargs: (
+        "signature.png", "image/png", 10, "hash",
+    ))
+
+    _asset, signed_name, signed_index = _sign_recipient(
+        act,
+        _png_data_url(),
+        participant_id=second_id,
+    )
+
+    assert signed_name == "Second"
+    assert signed_index == 1
+    assert act.extra_data_json["recipients"][0].get("signed_at") is None
+    assert act.extra_data_json["recipients"][1]["signed_at"] is not None
 
 
 def test_party1_signature_must_match_selected_manager():

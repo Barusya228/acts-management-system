@@ -9,6 +9,7 @@ import SignaturePad from '@/components/SignaturePad';
 import SignatureUpload from '@/components/SignatureUpload';
 import IpadPickerModal, { ipadLabel } from '@/components/IpadPickerModal';
 import IpadParticipantsModal from '@/components/IpadParticipantsModal';
+import IpadSigningOrderModal from '@/components/IpadSigningOrderModal';
 import CustomIpadOptionSelect from '@/components/CustomIpadOptionSelect';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -103,6 +104,7 @@ interface IpadAct {
   issuer: string;
   issuer_participant_id: string;
   responsibles: Responsible[];
+  signing_order: string[];
   status: string;
   students: Student[];
   appendices: Appendix[];
@@ -175,6 +177,7 @@ export default function IpadActPage() {
   const [assignmentDrafts, setAssignmentDrafts] = useState<AssignmentDraft[]>([]);
   const [assignmentPickerIndex, setAssignmentPickerIndex] = useState<number | null>(null);
   const [participantsEditorOpen, setParticipantsEditorOpen] = useState(false);
+  const [signingOrderOpen, setSigningOrderOpen] = useState(false);
   const setHistoryOpen = (open: boolean) => {
     if (open) setContentTab('events');
   };
@@ -235,10 +238,16 @@ export default function IpadActPage() {
     return <div className="theme-shell flex min-h-screen items-center justify-center bg-slate-50 text-slate-400">Загрузка...</div>;
   }
 
-  const pendingResponsible = act.responsibles.find(item => !item.signed_at);
+  const responsibleById = new Map(act.responsibles.map(item => [item.participant_id, item]));
+  const orderedResponsibles = [
+    ...(act.signing_order || []).map(id => responsibleById.get(id)).filter((item): item is Responsible => Boolean(item)),
+    ...act.responsibles.filter(item => !(act.signing_order || []).includes(item.participant_id)),
+  ];
+  const pendingResponsible = orderedResponsibles.find(item => !item.signed_at);
   const canIssuerSign = act.status === 'SIGNED_PARTY2';
   const pendingAppendix = act.appendices.find(item => ['WAITING_RESPONSIBLE', 'WAITING_ISSUER'].includes(item.status));
   const signedCount = act.responsibles.filter(item => item.signed_at).length;
+  const pendingResponsibleCount = act.responsibles.length - signedCount;
   const shortId = `ACT-${act.id.split('-')[0].toUpperCase()}`;
   const finalRevisions = selectFinalRevisions(revisions);
   const activeStudents = act.students.filter(item => item.student_status === 'ACTIVE');
@@ -587,7 +596,7 @@ export default function IpadActPage() {
           <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-black text-blue-800">{statusLabel}</span><p className="mt-3 text-sm text-slate-500">Advisory {act.advisory_group} · учебный год {act.academic_year}</p></div><div className="text-right"><p className="text-xs text-slate-400">Дата выдачи</p><p className="font-black">{new Date(act.issue_date).toLocaleDateString('ru-RU')}</p></div></div>
           <div className="mt-5 grid grid-cols-3 items-start gap-2 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-center"><Progress active label={`Ответственные ${signedCount}/${act.responsibles.length}`} /><span className="hidden h-px bg-slate-200 sm:block"/><Progress active={act.status !== 'DRAFT'} label="Подтверждение IT"/><span className="hidden h-px bg-slate-200 sm:block"/><Progress active={act.status === 'COMPLETED' || act.status === 'RETURNED'} label="Завершено"/></div>
         </div>
-        <div className="grid items-start gap-3 sm:grid-cols-2"><PeopleCard title="Ответственные" names={act.responsibles.map(item => item.full_name)} detail={responsibleCountLabel} accent="bg-blue-600" onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/><PeopleCard title="Выдающий" names={[act.issuer]} detail="Сотрудник IT" accent="bg-slate-900" onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/></div>
+        <div className="grid items-start gap-3 sm:grid-cols-2"><PeopleCard title="Ответственные" names={orderedResponsibles.map((item, index) => `${index + 1}. ${item.full_name}${item.signed_at ? ' ✓' : ''}`)} detail={responsibleCountLabel} accent="bg-blue-600" onOrder={act.status === 'DRAFT' && pendingResponsibleCount >= 2 ? () => setSigningOrderOpen(true) : undefined} onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/><PeopleCard title="Выдающий" names={[act.issuer]} detail="Сотрудник IT" accent="bg-slate-900" onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/></div>
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Ученики и iPad</p><h2 className="mt-1 text-xl font-black">{activeStudents.length} активных назначений</h2></div>
@@ -648,6 +657,13 @@ export default function IpadActPage() {
       responsibleParticipantIds={act.responsibles.map(item => item.participant_id)}
       onUpdated={async () => { clearSignature(); await load(); }}
       onClose={() => setParticipantsEditorOpen(false)}
+    />}
+    {signingOrderOpen && <IpadSigningOrderModal
+      actId={act.id}
+      responsibles={act.responsibles}
+      signingOrder={act.signing_order || []}
+      onUpdated={load}
+      onClose={() => setSigningOrderOpen(false)}
     />}
     {operation && <OperationModalV2 operation={operation} student={selectedStudent} form={form} setForm={setForm} responsibles={act.responsibles} itManagers={itManagers} issuerName={act.issuer} availableIpads={availableIpads} busy={busy} onSubmit={submitOperation} onClose={() => setOperation(null)} />}
     {pdfOpen && <div className="fixed inset-0 z-50 flex flex-col bg-slate-950/90 p-3"><div className="mx-auto mb-3 flex w-full max-w-6xl flex-wrap justify-end gap-2"><a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="flex min-h-11 items-center rounded-xl bg-blue-600 px-4 font-bold text-white">Открыть в новой вкладке</a><a href={pdfUrl} download={`${shortId}.pdf`} className="flex min-h-11 items-center rounded-xl bg-white px-4 font-bold">Скачать</a><button onClick={closePdf} className="min-h-11 rounded-xl bg-white px-5 font-bold">Закрыть</button></div><iframe src={pdfUrl} title="PDF акта" className="mx-auto h-full w-full max-w-6xl rounded-2xl bg-white"/></div>}
@@ -716,8 +732,8 @@ function Progress({ active, label }: { active: boolean; label: string }) {
   return <div className="text-center"><span className={`mx-auto block h-3 w-3 rounded-full ${active ? 'bg-blue-600 ring-4 ring-blue-100' : 'bg-slate-200'}`}/><span className="mt-2 block text-[11px] font-bold leading-tight text-slate-500 sm:text-[10px]">{label}</span></div>;
 }
 
-function PeopleCard({ title, names, detail, accent, onEdit }: { title: string; names: string[]; detail: string; accent: string; onEdit?: () => void }) {
-  return <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><div className="flex gap-3"><span className={`min-h-11 w-1 shrink-0 rounded-full ${accent}`}/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">{title}</p>{onEdit && <button type="button" onClick={onEdit} className="min-h-9 shrink-0 rounded-lg bg-blue-50 px-3 text-xs font-bold text-blue-700">Изменить</button>}</div><div className="mt-1 space-y-1">{names.map((name, index) => <p key={`${name}-${index}`} className="break-words font-black leading-snug">{name}</p>)}</div><p className="mt-1 text-xs text-slate-500">{detail}</p></div></div></div>;
+function PeopleCard({ title, names, detail, accent, onEdit, onOrder }: { title: string; names: string[]; detail: string; accent: string; onEdit?: () => void; onOrder?: () => void }) {
+  return <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><div className="flex gap-3"><span className={`min-h-11 w-1 shrink-0 rounded-full ${accent}`}/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">{title}</p><div className="flex flex-wrap justify-end gap-1">{onOrder && <button type="button" onClick={onOrder} className="min-h-9 shrink-0 rounded-lg bg-violet-50 px-3 text-xs font-bold text-violet-700">Очередь</button>}{onEdit && <button type="button" onClick={onEdit} className="min-h-9 shrink-0 rounded-lg bg-blue-50 px-3 text-xs font-bold text-blue-700">Изменить</button>}</div></div><div className="mt-1 space-y-1">{names.map((name, index) => <p key={`${name}-${index}`} className="break-words font-black leading-snug">{name}</p>)}</div><p className="mt-1 text-xs text-slate-500">{detail}</p></div></div></div>;
 }
 
 function FieldLabel({ text, children }: { text: string; children: React.ReactNode }) {

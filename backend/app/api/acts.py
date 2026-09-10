@@ -36,6 +36,7 @@ from app.services.recipients import extract_recipients
 from app.services.act_shared import (
     PARTY1_PARTICIPANT_ID_KEY,
     RECIPIENTS_KEY,
+    get_recipient_signing_order,
     build_party2_summary,
     get_primary_recipient_email,
     get_selectable_participant,
@@ -687,7 +688,23 @@ def _sign_recipient(
 
     target_key = "return_signed_at" if return_flow else "signed_at"
     signature_path_key = "return_signature_file_path" if return_flow else "signature_file_path"
-    pending_index = next((index for index, recipient in enumerate(recipients) if not recipient.get(target_key)), None)
+    pending_index = None
+    signing_order = get_recipient_signing_order(extra_data, recipients)
+    for ordered_participant_id in signing_order:
+        candidate_index = next(
+            (
+                index
+                for index, recipient in enumerate(recipients)
+                if str(recipient.get("participant_id") or "") == ordered_participant_id
+                and not recipient.get(target_key)
+            ),
+            None,
+        )
+        if candidate_index is not None:
+            pending_index = candidate_index
+            break
+    if pending_index is None:
+        pending_index = next((index for index, recipient in enumerate(recipients) if not recipient.get(target_key)), None)
     if pending_index is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -16,6 +16,28 @@ from app.utils.storage import validate_signature_data_url
 
 # Ключи extra_data_json, используемые обоими роутерами.
 PARTY1_PARTICIPANT_ID_KEY = "party1_participant_id"
+RECIPIENT_SIGNING_ORDER_KEY = "recipient_signing_order"
+
+
+def get_recipient_signing_order(extra_data: object, recipients: list[dict]) -> list[str]:
+    recipient_ids = [
+        str(item.get("participant_id"))
+        for item in recipients
+        if item.get("participant_id")
+    ]
+    if not isinstance(extra_data, dict):
+        return recipient_ids
+    stored_order = extra_data.get(RECIPIENT_SIGNING_ORDER_KEY)
+    if not isinstance(stored_order, list):
+        return recipient_ids
+    valid_ids = set(recipient_ids)
+    normalized: list[str] = []
+    for item in stored_order:
+        item_id = str(item)
+        if item_id in valid_ids and item_id not in normalized:
+            normalized.append(item_id)
+    normalized.extend(item_id for item_id in recipient_ids if item_id not in normalized)
+    return normalized
 
 
 def build_party2_summary(recipients: list[dict]) -> str:

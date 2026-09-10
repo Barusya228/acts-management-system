@@ -199,6 +199,10 @@ class IpadAdvisoryParticipantsUpdate(BaseModel):
     responsible_participant_ids: list[UUID4] = Field(min_length=1)
 
 
+class IpadSigningOrderUpdate(BaseModel):
+    pending_participant_ids: list[UUID4] = Field(min_length=2)
+
+
 class IpadAdvisoryActCreate(BaseModel):
     template_id: UUID4
     advisory_group: str
