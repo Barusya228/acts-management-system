@@ -565,6 +565,14 @@ export default function IpadActPage() {
       : canIssuerSign
         ? `Подтверждает IT: ${act.issuer}`
         : statusLabel;
+  const actionDescription = pendingAppendix
+    ? pendingAppendix.status === 'WAITING_RESPONSIBLE'
+      ? `Сейчас подписывает ответственный: ${pendingAppendix.responsible_name}. Затем подтверждает IT: ${pendingAppendix.issuer_name}. Изменение применится после обеих подписей.`
+      : `Ответственный ${pendingAppendix.responsible_name} подписал. Сейчас подтверждает IT: ${pendingAppendix.issuer_name}.`
+    : canSignMainAct
+      ? 'Подтвердите передачу полного комплекта iPad.'
+      : 'Основной акт подписан. Последующие изменения оформляются приложениями.';
+  const canChooseNextResponsible = !pendingAppendix && act.status === 'DRAFT' && pendingResponsibleCount >= 2;
 
   return <div className="theme-shell min-h-screen bg-[#eef2f6] text-slate-900">
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
@@ -596,7 +604,13 @@ export default function IpadActPage() {
           <div className="flex flex-wrap items-start justify-between gap-3"><div><span className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-xs font-black text-blue-800">{statusLabel}</span><p className="mt-3 text-sm text-slate-500">Advisory {act.advisory_group} · учебный год {act.academic_year}</p></div><div className="text-right"><p className="text-xs text-slate-400">Дата выдачи</p><p className="font-black">{new Date(act.issue_date).toLocaleDateString('ru-RU')}</p></div></div>
           <div className="mt-5 grid grid-cols-3 items-start gap-2 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-center"><Progress active label={`Ответственные ${signedCount}/${act.responsibles.length}`} /><span className="hidden h-px bg-slate-200 sm:block"/><Progress active={act.status !== 'DRAFT'} label="Подтверждение IT"/><span className="hidden h-px bg-slate-200 sm:block"/><Progress active={act.status === 'COMPLETED' || act.status === 'RETURNED'} label="Завершено"/></div>
         </div>
-        <div className="grid items-start gap-3 sm:grid-cols-2"><PeopleCard title="Ответственные" names={orderedResponsibles.map((item, index) => `${index + 1}. ${item.full_name}${item.signed_at ? ' ✓' : ''}`)} detail={responsibleCountLabel} accent="bg-blue-600" onOrder={act.status === 'DRAFT' && pendingResponsibleCount >= 2 ? () => setSigningOrderOpen(true) : undefined} onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/><PeopleCard title="Выдающий" names={[act.issuer]} detail="Сотрудник IT" accent="bg-slate-900" onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/></div>
+        <div className="grid items-start gap-3 sm:grid-cols-2">
+          <PeopleCard title="Ответственные" names={orderedResponsibles.map((item, index) => `${index + 1}. ${item.full_name}${item.signed_at ? ' ✓' : ''}`)} detail={responsibleCountLabel} accent="bg-blue-600" onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/>
+          <div className="space-y-3">
+            <PeopleCard title="Выдающий" names={[act.issuer]} detail="Сотрудник IT" accent="bg-slate-900" onEdit={canEditAssignments ? () => setParticipantsEditorOpen(true) : undefined}/>
+            <CurrentActionCard canSign={canSign} title={actionTitle} description={actionDescription} onChoose={canChooseNextResponsible ? () => setSigningOrderOpen(true) : undefined}/>
+          </div>
+        </div>
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Ученики и iPad</p><h2 className="mt-1 text-xl font-black">{activeStudents.length} активных назначений</h2></div>
@@ -639,9 +653,6 @@ export default function IpadActPage() {
         </div>
       </section>
       <section className="flex min-h-[52vh] flex-col overflow-hidden rounded-3xl bg-white shadow-xl ring-1 ring-slate-200 lg:sticky lg:top-[84px] lg:h-[calc(100vh-104px)]">
-        <div className="border-b border-slate-100 p-5"><p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600">{canSign ? 'Текущее действие' : 'Итог документа'}</p><h2 className="mt-2 text-2xl font-black">{actionTitle}</h2><p className="mt-2 text-sm leading-6 text-slate-500">{pendingAppendix ? (pendingAppendix.status === 'WAITING_RESPONSIBLE'
-  ? `Сейчас подписывает ответственный: ${pendingAppendix.responsible_name}. Затем подтверждает IT: ${pendingAppendix.issuer_name}. Изменение применится после обеих подписей.`
-  : `Ответственный ${pendingAppendix.responsible_name} подписал. Сейчас подтверждает IT: ${pendingAppendix.issuer_name}.`) : canSignMainAct ? 'Подтвердите передачу полного комплекта iPad.' : 'Основной акт подписан. Последующие изменения оформляются приложениями.'}</p></div>
         {canSign ? <><div className="flex flex-1 flex-col p-5"><div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1"><button onClick={() => changeSignatureMode('draw')} className={`min-h-11 rounded-lg text-sm font-bold ${signatureMode === 'draw' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Рисовать подпись</button><button onClick={() => changeSignatureMode('upload')} className={`min-h-11 rounded-lg text-sm font-bold ${signatureMode === 'upload' ? 'bg-white shadow-sm' : 'text-slate-500'}`}>Загрузить файл</button></div>{signatureMode === 'draw' ? <div className="mt-4 flex flex-1 flex-col justify-center"><SignaturePad key={signatureResetKey} onSave={setSignatureData} onClear={() => setSignatureData('')} /></div> : <div className="mt-4 flex flex-1 items-center justify-center"><SignatureUpload key={signatureResetKey} onUpload={readSignatureFile} /></div>}</div><div className="grid grid-cols-[120px_1fr] gap-3 border-t p-5"><button onClick={clearSignature} className="min-h-12 rounded-xl bg-slate-100 font-bold text-slate-600">Очистить</button><button disabled={!signatureData || busy} onClick={submitSignature} className="min-h-12 rounded-xl bg-blue-600 font-black text-white disabled:opacity-40">{busy ? 'Сохранение...' : 'Подписать'}</button></div>{pendingAppendix && <button disabled={busy} onClick={() => cancelAppendix(pendingAppendix)} className="mx-5 mb-5 min-h-11 rounded-xl bg-red-50 font-bold text-red-700">Отменить приложение</button>}</> : <div className="flex flex-1 items-center justify-center p-6"><div className="w-full max-w-md text-center"><div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100 text-3xl font-black text-emerald-700">✓</div><h3 className="mt-4 text-xl font-black">{act.status === 'RETURNED' ? 'Возврат завершён' : 'Выдача завершена'}</h3><p className="mt-2 text-sm text-slate-500">{act.status === 'RETURNED' ? 'Все iPad возвращены и результаты проверки сохранены.' : 'Все ответственные и IT подписали Advisory-акт.'}</p>{act.status === 'COMPLETED' && <button onClick={() => openOperation('year-end-return')} className="mt-5 min-h-12 w-full rounded-xl bg-violet-600 font-bold text-white">Оформить годовой возврат</button>}<button onClick={() => openPdf()} className={`${act.status === 'COMPLETED' ? 'mt-3' : 'mt-5'} min-h-12 w-full rounded-xl bg-blue-600 font-bold text-white`}>Открыть финальный PDF</button><button onClick={downloadPdf} className="mt-3 min-h-12 w-full rounded-xl bg-slate-100 font-bold">Скачать PDF</button><button onClick={() => setHistoryOpen(true)} className="mt-3 min-h-12 w-full rounded-xl bg-slate-900 font-bold text-white">История изменений</button></div></div>}
       </section>
     </main>
@@ -732,8 +743,12 @@ function Progress({ active, label }: { active: boolean; label: string }) {
   return <div className="text-center"><span className={`mx-auto block h-3 w-3 rounded-full ${active ? 'bg-blue-600 ring-4 ring-blue-100' : 'bg-slate-200'}`}/><span className="mt-2 block text-[11px] font-bold leading-tight text-slate-500 sm:text-[10px]">{label}</span></div>;
 }
 
-function PeopleCard({ title, names, detail, accent, onEdit, onOrder }: { title: string; names: string[]; detail: string; accent: string; onEdit?: () => void; onOrder?: () => void }) {
-  return <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><div className="flex gap-3"><span className={`min-h-11 w-1 shrink-0 rounded-full ${accent}`}/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">{title}</p><div className="flex flex-wrap justify-end gap-1">{onOrder && <button type="button" onClick={onOrder} className="min-h-9 shrink-0 rounded-lg bg-violet-50 px-3 text-xs font-bold text-violet-700">Очередь</button>}{onEdit && <button type="button" onClick={onEdit} className="min-h-9 shrink-0 rounded-lg bg-blue-50 px-3 text-xs font-bold text-blue-700">Изменить</button>}</div></div><div className="mt-1 space-y-1">{names.map((name, index) => <p key={`${name}-${index}`} className="break-words font-black leading-snug">{name}</p>)}</div><p className="mt-1 text-xs text-slate-500">{detail}</p></div></div></div>;
+function PeopleCard({ title, names, detail, accent, onEdit }: { title: string; names: string[]; detail: string; accent: string; onEdit?: () => void }) {
+  return <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><div className="flex gap-3"><span className={`min-h-11 w-1 shrink-0 rounded-full ${accent}`}/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">{title}</p>{onEdit && <button type="button" onClick={onEdit} className="min-h-9 shrink-0 rounded-lg bg-blue-50 px-3 text-xs font-bold text-blue-700">Изменить</button>}</div><div className="mt-1 space-y-1">{names.map((name, index) => <p key={`${name}-${index}`} className="break-words font-black leading-snug">{name}</p>)}</div><p className="mt-1 text-xs text-slate-500">{detail}</p></div></div></div>;
+}
+
+function CurrentActionCard({ canSign, title, description, onChoose }: { canSign: boolean; title: string; description: string; onChoose?: () => void }) {
+  return <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600">{canSign ? 'Текущее действие' : 'Итог документа'}</p><h2 className="mt-2 break-words text-xl font-black">{title}</h2></div>{onChoose && <button type="button" onClick={onChoose} className="min-h-10 shrink-0 rounded-xl bg-violet-600 px-4 text-sm font-black text-white hover:bg-violet-700">Выбрать</button>}</div><p className="mt-2 text-sm leading-6 text-slate-500">{description}</p></div>;
 }
 
 function FieldLabel({ text, children }: { text: string; children: React.ReactNode }) {
