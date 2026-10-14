@@ -12,6 +12,7 @@ python-dotenv==1.0.0
 ldap3==2.9.1
 reportlab==4.0.9
 pypdf==4.0.1
+openpyxl==3.1.5
 pillow==10.2.0
 aiosmtplib==3.0.1
 email-validator==2.1.0

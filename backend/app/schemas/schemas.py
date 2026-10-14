@@ -303,6 +303,12 @@ class IpadAvailableResolveRequest(BaseModel):
     serial_numbers: list[str] = Field(min_length=1, max_length=500)
 
 
+class IpadInventorySyncRequest(BaseModel):
+    csv_text: str = Field(default="", max_length=2_000_000)
+    file_name: Optional[str] = Field(default=None, max_length=255)
+    file_base64: Optional[str] = Field(default=None, max_length=15_000_000)
+
+
 class IpadBulkRow(BaseModel):
     tag: str
     serial_number: str

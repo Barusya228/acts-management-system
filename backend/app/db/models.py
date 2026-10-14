@@ -387,6 +387,7 @@ class IpadDevice(Base):
     tag = Column(String, nullable=False, index=True)
     serial_number = Column(String, unique=True, nullable=False, index=True)
     status = Column(String, nullable=False, default="AVAILABLE", index=True)
+    is_archived = Column(Boolean, nullable=False, default=False, index=True)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

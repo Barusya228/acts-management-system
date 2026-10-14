@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 import { useToast } from '@/contexts/ToastContext';
+import IpadInventorySyncModal from '@/components/IpadInventorySyncModal';
 
 interface Device {
   id: string;
@@ -63,7 +64,7 @@ interface ManualAccessory {
 }
 interface SmallEquipmentGroup { id: string; name: string; model: string; active_quantity: number; active_assignments: Array<{ id: string; act_id: string; act_reference: string; recipient_name: string; quantity: number; status: string; note?: string | null; issue_date: string }>; }
 
-interface IpadInventoryItem { id: string; device_name: string; model?: string | null; tag: string; serial_number: string; status: string; notes?: string | null; student_name?: string | null; act_id?: string | null; duplicate_tag_count: number; has_history: boolean; }
+interface IpadInventoryItem { id: string; device_name: string; model?: string | null; tag: string; serial_number: string; status: string; notes?: string | null; student_name?: string | null; act_id?: string | null; duplicate_tag_count: number; has_history: boolean; is_archived: boolean; }
 interface IpadGroup { device_name: string; model: string; count: number; }
 
 const groupKey = (group: Pick<DeviceGroup, 'name' | 'model'>) => `${group.name}\u0000${group.model}`;
@@ -135,6 +136,8 @@ export default function InventoryPage() {
   const [ipadGroups, setIpadGroups] = useState<IpadGroup[]>([]);
   const [selectedIpadGroup, setSelectedIpadGroup] = useState('');
   const [showIpadModal, setShowIpadModal] = useState(false);
+  const [showIpadSyncModal, setShowIpadSyncModal] = useState(false);
+  const [showArchivedIpads, setShowArchivedIpads] = useState(false);
   const [ipadEditId, setIpadEditId] = useState<string | null>(null);
   const [ipadDeleteTarget, setIpadDeleteTarget] = useState<IpadInventoryItem | null>(null);
   const [ipadDeleting, setIpadDeleting] = useState(false);
@@ -224,10 +227,10 @@ export default function InventoryPage() {
       else if (inventoryView === 'accessories') fetchManualAccessories();
       else fetchIpads();
     }
-  }, [user, filtersReady, inventoryView, catFilter, statusFilter, ipadStatusFilter, ipadTagOrder, selectedGroup, selectedIpadGroup, duplicateIpadTagsOnly, page, refreshKey]);
+  }, [user, filtersReady, inventoryView, catFilter, statusFilter, ipadStatusFilter, ipadTagOrder, selectedGroup, selectedIpadGroup, duplicateIpadTagsOnly, showArchivedIpads, page, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN' && filtersReady && inventoryView === 'ipads') fetchIpadGroups();
-  }, [user, filtersReady, inventoryView, ipadStatusFilter, duplicateIpadTagsOnly, refreshKey]);
+  }, [user, filtersReady, inventoryView, ipadStatusFilter, duplicateIpadTagsOnly, showArchivedIpads, refreshKey]);
   useEffect(() => {
     if (user?.role === 'ADMIN') fetchGroups();
   }, [user, catFilter, statusFilter, refreshKey]);
@@ -329,6 +332,7 @@ export default function InventoryPage() {
       if (ipadStatusFilter) params.set('status', ipadStatusFilter);
       params.set('tag_order', ipadTagOrder);
       if (duplicateIpadTagsOnly) params.set('duplicate_tags_only', 'true');
+      if (showArchivedIpads) params.set('include_archived', 'true');
       const activeGroup = ipadGroups.find(group => `${group.device_name}\u0000${group.model}` === selectedIpadGroup);
       if (activeGroup) params.set('model', activeGroup.model);
       const response = await api.get(`/api/ipad-inventory?${params}`);
@@ -341,6 +345,7 @@ export default function InventoryPage() {
     try {
       const params = new URLSearchParams();
       if (ipadStatusFilter) params.set('status', ipadStatusFilter);
+      if (showArchivedIpads) params.set('include_archived', 'true');
       const response = await api.get(`/api/ipad-inventory/groups?${params}`);
       const nextGroups = Array.isArray(response.data) ? response.data : [];
       setIpadGroups(nextGroups);
@@ -426,6 +431,7 @@ export default function InventoryPage() {
     setCatFilter('');
     setStatusFilter('');
     setIpadStatusFilter('');
+    setShowArchivedIpads(false);
     setPage(1);
     setSelectedGroup('');
     setSelectedIpadGroup('');
@@ -441,6 +447,7 @@ export default function InventoryPage() {
     setSelectedGroup('');
     setSelectedIpadGroup('');
     setDuplicateIpadTagsOnly(false);
+    setShowArchivedIpads(false);
     setPage(1);
     const params = new URLSearchParams(window.location.search);
     params.set('view', view);
@@ -666,10 +673,8 @@ export default function InventoryPage() {
               </button>
             )}
             {inventoryView === 'ipads' && (
-              <button type="button" onClick={openCreateIpad}
-                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700">
-                + Добавить iPad
-              </button>
+              <><button type="button" onClick={() => setShowIpadSyncModal(true)} className="min-h-11 rounded-xl bg-white px-4 text-sm font-bold text-blue-700 shadow-sm ring-1 ring-blue-200 transition hover:bg-blue-50">Синхронизировать список</button><button type="button" onClick={openCreateIpad}
+                className="min-h-11 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white transition hover:bg-blue-700">+ Добавить iPad</button></>
             )}
           </div>
         </div>
@@ -738,9 +743,9 @@ export default function InventoryPage() {
             <button type="button" onClick={() => { setSelectedIpadGroup(''); setPage(1); }} className={`min-h-12 rounded-xl border px-4 text-left transition ${!selectedIpadGroup ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-gray-200 bg-white text-slate-700 hover:border-blue-300'}`}><span className="block text-sm font-semibold">Все iPad</span><span className={`text-xs ${!selectedIpadGroup ? 'text-blue-100' : 'text-slate-400'}`}>{ipadGroups.reduce((sum, group) => sum + group.count, 0)} шт.</span></button>
             {ipadGroups.map(group => { const key = `${group.device_name}\u0000${group.model}`; const active = selectedIpadGroup === key; return <button key={key} type="button" onClick={() => { setSelectedIpadGroup(key); setPage(1); }} className={`min-h-12 rounded-xl border px-4 text-left transition ${active ? 'border-blue-500 bg-blue-600 text-white shadow-sm' : 'border-gray-200 bg-white text-slate-700 hover:border-blue-300'}`}><span className="block max-w-52 truncate text-sm font-semibold">{group.device_name}</span><span className={`block max-w-52 truncate text-xs ${active ? 'text-blue-100' : 'text-slate-400'}`}>{group.model || 'Без модели'} · {group.count} шт.</span></button>; })}
           </div></div>}
-          <div className="mb-5 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
             <div><p className="text-sm font-bold text-amber-900">Контроль повторяющихся Tag</p><p className="text-xs text-amber-700">Дубликаты разрешены временно. Serial Number остаётся уникальным.</p></div>
-            <label className="flex min-h-11 items-center gap-2 text-sm font-semibold text-amber-900"><input type="checkbox" checked={duplicateIpadTagsOnly} onChange={event => { setDuplicateIpadTagsOnly(event.target.checked); setPage(1); }} className="h-5 w-5" />Только дубликаты</label>
+            <div className="flex flex-wrap gap-4"><label className="flex min-h-11 items-center gap-2 text-sm font-semibold text-amber-900"><input type="checkbox" checked={duplicateIpadTagsOnly} onChange={event => { setDuplicateIpadTagsOnly(event.target.checked); setPage(1); }} className="h-5 w-5" />Только дубликаты</label><label className="flex min-h-11 items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={showArchivedIpads} onChange={event => { setShowArchivedIpads(event.target.checked); setPage(1); }} className="h-5 w-5" />Показать архивные</label></div>
           </div>
           </>
         )}
@@ -784,7 +789,7 @@ export default function InventoryPage() {
                   </thead>
                   <tbody>
                     {ipadItems.map(item => (
-                      <tr key={item.id} className={`border-b border-slate-100 last:border-b-0 hover:bg-slate-50 ${item.duplicate_tag_count > 1 ? 'bg-amber-50/60' : ''}`}>
+                      <tr key={item.id} className={`border-b border-slate-100 last:border-b-0 hover:bg-slate-50 ${item.is_archived ? 'bg-slate-100/80 opacity-70' : item.duplicate_tag_count > 1 ? 'bg-amber-50/60' : ''}`}>
                         <td className="max-w-[200px] px-4 py-3">
                           <span className="block truncate font-bold text-slate-900" title={item.notes || undefined}>📱 {item.device_name}{item.notes ? ' 📝' : ''}</span>
                           <span className="block truncate text-xs text-slate-400">{item.model || 'Без модели'}</span>
@@ -795,8 +800,8 @@ export default function InventoryPage() {
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-600">{item.serial_number}</td>
                         <td className="whitespace-nowrap px-4 py-3">
-                          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : item.status === 'RETIRED' ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'}`}>
-                            {ipadStatusLabel(item.status)}
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.is_archived ? 'bg-slate-300 text-slate-700' : item.status === 'AVAILABLE' ? 'bg-emerald-100 text-emerald-700' : item.status === 'MAINTENANCE' ? 'bg-red-100 text-red-700' : item.status === 'RETIRED' ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-700'}`}>
+                            {item.is_archived ? 'Архив' : ipadStatusLabel(item.status)}
                           </span>
                         </td>
                         <td className="max-w-[180px] px-4 py-3">
@@ -1097,6 +1102,16 @@ export default function InventoryPage() {
           </div><div className="mt-5 flex gap-2"><button disabled={saving} onClick={saveIpads} className="min-h-12 flex-1 rounded-xl bg-slate-900 font-bold text-white disabled:opacity-50">{saving ? 'Сохранение...' : ipadEditId ? 'Сохранить изменения' : ipadBulk ? 'Добавить iPad' : 'Добавить iPad'}</button><button disabled={saving} onClick={() => { setShowIpadModal(false); setIpadEditId(null); }} className="min-h-12 rounded-xl bg-slate-100 px-4 disabled:opacity-50">Отмена</button></div>
         </Modal>
       )}
+
+      {showIpadSyncModal && <IpadInventorySyncModal
+        onClose={() => setShowIpadSyncModal(false)}
+        onApplied={async () => {
+          setPage(1);
+          setSelectedIpadGroup('');
+          setShowArchivedIpads(false);
+          setRefreshKey(value => value + 1);
+        }}
+      />}
 
       {deleteTarget && (
         <Modal onClose={() => setDeleteTarget(null)} title="Удалить устройство?">

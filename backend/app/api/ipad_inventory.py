@@ -1,4 +1,7 @@
 import uuid
+import csv
+import base64
+from io import BytesIO, StringIO
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -6,12 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import BigInteger, String, case, cast, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from openpyxl import load_workbook
 
 from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
 from app.db.models import Act, IpadActAppendix, IpadDevice, IpadStudentAssignment, User
 from app.db.states import ACTIVE_IPAD_ASSIGNMENT_STATUSES
-from app.schemas.schemas import IpadAvailableResolveRequest, IpadDeviceBulkCreate, IpadDeviceCreate, IpadDeviceUpdate
+from app.schemas.schemas import IpadAvailableResolveRequest, IpadDeviceBulkCreate, IpadDeviceCreate, IpadDeviceUpdate, IpadInventorySyncRequest
 from app.services.audit_service import record_audit
 
 
@@ -38,6 +42,7 @@ def _serialize(
         "updated_at": device.updated_at.isoformat(),
         "duplicate_tag_count": duplicate_tag_count,
         "has_history": has_history,
+        "is_archived": device.is_archived,
     }
 
 
@@ -82,13 +87,222 @@ def _history_device_ids(db: Session, device_ids: list[UUID]) -> set[UUID]:
     return history_ids
 
 
+def _parse_ipad_sync_csv(csv_text: str) -> tuple[list[dict], list[str]]:
+    parsed: list[dict] = []
+    errors: list[str] = []
+    reader = csv.reader(StringIO(csv_text.lstrip("\ufeff")))
+    for row in reader:
+        line_number = reader.line_num
+        if not row or not any(str(value).strip() for value in row):
+            continue
+        # Некоторые MDM-экспорты оборачивают целую CSV-строку в одну колонку:
+        # "46303,""Model"",...". Разворачиваем вложенную строку повторно.
+        if len(row) == 1 and "," in str(row[0]):
+            row = next(csv.reader([str(row[0])]))
+        normalized = [str(value).strip() for value in row]
+        first_column = normalized[0].casefold() if normalized else ""
+        fourth_column = normalized[3].casefold() if len(normalized) > 3 else ""
+        if reader.line_num == 1 and (
+            first_column in {"tag", "tags", "asset tag", "ipad tag"}
+            or fourth_column in {"serial", "serial number", "serial_number"}
+        ):
+            continue
+        if len(normalized) < 4:
+            errors.append(f"Строка {line_number}: ожидается минимум 4 колонки")
+            continue
+        tag, model, device_name, serial_number = normalized[:4]
+        asset_tag = normalized[4] if len(normalized) > 4 else ""
+        assigned_user = "" if (
+            not asset_tag
+            or asset_tag == "-"
+            or asset_tag.casefold() == (device_name or "iPad").casefold()
+        ) else asset_tag
+        raw_group = normalized[5] if len(normalized) > 5 else ""
+        group = "" if raw_group == "-" else raw_group
+        if not tag or not serial_number:
+            errors.append(f"Строка {line_number}: Tag и Serial Number обязательны")
+            continue
+        parsed.append({
+            "line_number": line_number,
+            "tag": tag,
+            "model": model or None,
+            "device_name": device_name or "iPad",
+            "serial_number": serial_number,
+            "assigned_user": assigned_user,
+            "group": group,
+        })
+
+    serial_lines: dict[str, list[int]] = {}
+    tag_lines: dict[str, list[int]] = {}
+    for row in parsed:
+        serial_lines.setdefault(row["serial_number"].casefold(), []).append(row["line_number"])
+        tag_lines.setdefault(row["tag"].casefold(), []).append(row["line_number"])
+    for lines in serial_lines.values():
+        if len(lines) > 1:
+            errors.append(f"Serial Number повторяется в строках: {', '.join(map(str, lines))}")
+    for lines in tag_lines.values():
+        if len(lines) > 1:
+            errors.append(f"Tag повторяется в строках: {', '.join(map(str, lines))}")
+    if not parsed:
+        errors.append("Список не содержит ни одной корректной строки")
+    return parsed, errors
+
+
+def _sync_request_to_csv(payload: IpadInventorySyncRequest) -> str:
+    if payload.csv_text.strip():
+        return payload.csv_text
+    if not payload.file_base64 or not payload.file_name:
+        raise HTTPException(status_code=422, detail="Передайте CSV-текст или Excel-файл")
+    if not payload.file_name.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=422, detail="Поддерживаются только файлы .csv и .xlsx")
+    try:
+        content = base64.b64decode(payload.file_base64, validate=True)
+        workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        worksheet = workbook[workbook.sheetnames[0]]
+        output = StringIO()
+        writer = csv.writer(output)
+        for row in worksheet.iter_rows(values_only=True):
+            writer.writerow(["" if value is None else value for value in row])
+        workbook.close()
+        return output.getvalue()
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Не удалось прочитать Excel-файл") from exc
+
+
+def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False) -> tuple[dict, list[dict]]:
+    rows, blocking_errors = _parse_ipad_sync_csv(csv_text)
+    device_query = db.query(IpadDevice).order_by(IpadDevice.id)
+    if lock_devices:
+        device_query = device_query.with_for_update()
+    devices = device_query.all()
+    device_ids = [item.id for item in devices]
+    history_ids = _history_device_ids(db, device_ids)
+    active_assignments = db.query(IpadStudentAssignment).filter(
+        IpadStudentAssignment.ipad_device_id.in_(device_ids),
+        IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES),
+    ).all() if device_ids else []
+    active_by_device = {item.ipad_device_id: item for item in active_assignments}
+
+    devices_by_serial: dict[str, IpadDevice] = {}
+    duplicate_db_serials: set[str] = set()
+    for device in devices:
+        key = device.serial_number.strip().casefold()
+        if key in devices_by_serial:
+            duplicate_db_serials.add(device.serial_number)
+        else:
+            devices_by_serial[key] = device
+    if duplicate_db_serials:
+        blocking_errors.append("В базе повторяются Serial Number: " + ", ".join(sorted(duplicate_db_serials)))
+
+    input_serials = {row["serial_number"].casefold() for row in rows}
+    missing_devices = [
+        device for device in devices
+        if not device.is_archived and device.serial_number.strip().casefold() not in input_serials
+    ]
+    deletable_ids = {
+        device.id for device in missing_devices
+        if device.status == "AVAILABLE"
+        and device.id not in active_by_device
+        and device.id not in history_ids
+    }
+    active_device_statuses = set(ACTIVE_IPAD_ASSIGNMENT_STATUSES)
+    operations: list[dict] = []
+    result_rows: list[dict] = []
+
+    for row in rows:
+        existing = devices_by_serial.get(row["serial_number"].casefold())
+        active_assignment = active_by_device.get(existing.id) if existing else None
+        assigned_in_csv = bool(row["assigned_user"])
+        action = "UNCHANGED"
+        message = "Уже совпадает с реестром"
+
+        if assigned_in_csv and not active_assignment:
+            action = "CONFLICT"
+            message = "В CSV указано назначение, но активного электронного акта нет"
+        else:
+            conflicting_tag_devices = [
+                device for device in devices
+                if device.tag.strip().casefold() == row["tag"].casefold()
+                and (not existing or device.id != existing.id)
+                and not device.is_archived
+                and device.id not in deletable_ids
+            ]
+            if conflicting_tag_devices:
+                action = "CONFLICT"
+                message = "Tag уже используется другим сохраняемым iPad"
+            elif existing and active_assignment:
+                action = "KEEP_ACTIVE"
+                message = "iPad находится в активном акте; данные защищены"
+            elif existing and existing.status in active_device_statuses:
+                action = "CONFLICT"
+                message = "Активный статус iPad не подтверждён назначением"
+            elif existing:
+                changed = (
+                    existing.tag != row["tag"]
+                    or existing.model != row["model"]
+                    or existing.device_name != row["device_name"]
+                )
+                if existing.is_archived:
+                    action = "REACTIVATE"
+                    message = "Архивный iPad будет восстановлен"
+                    operations.append({"action": action, "device": existing, "row": row})
+                elif changed:
+                    action = "UPDATE"
+                    message = "Данные iPad будут обновлены"
+                    operations.append({"action": action, "device": existing, "row": row})
+            else:
+                action = "ADD"
+                message = "Новый iPad будет добавлен как свободный"
+                operations.append({"action": action, "device": None, "row": row})
+
+        result_rows.append({**row, "action": action, "message": message, "device_id": str(existing.id) if existing else None})
+
+    removals = []
+    for device in missing_devices:
+        if device.id in active_by_device or device.status in active_device_statuses:
+            action = "KEEP_ACTIVE"
+            message = "Отсутствует в CSV, но защищён активным актом"
+        elif device.id in history_ids or device.status != "AVAILABLE":
+            action = "ARCHIVE"
+            message = "Отсутствует в CSV; будет скрыт с сохранением истории"
+            operations.append({"action": action, "device": device, "row": None})
+        else:
+            action = "DELETE"
+            message = "Свободный iPad без истории будет удалён"
+            operations.append({"action": action, "device": device, "row": None})
+        removals.append({
+            "device_id": str(device.id),
+            "tag": device.tag,
+            "serial_number": device.serial_number,
+            "action": action,
+            "message": message,
+        })
+
+    action_counts = {
+        action: sum(1 for item in result_rows + removals if item["action"] == action)
+        for action in ("ADD", "UPDATE", "REACTIVATE", "DELETE", "ARCHIVE", "KEEP_ACTIVE", "CONFLICT", "UNCHANGED")
+    }
+    response = {
+        "summary": {"input_rows": len(rows), **{key.lower(): value for key, value in action_counts.items()}},
+        "rows": result_rows,
+        "missing_devices": removals,
+        "blocking_errors": blocking_errors,
+        "can_apply": not blocking_errors,
+        "safe_changes": len(operations),
+    }
+    return response, operations
+
+
 @router.get("/available")
 def available_ipads(
     search: Optional[str] = None,
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_guest_or_admin_user),
 ):
-    query = db.query(IpadDevice).filter(IpadDevice.status == "AVAILABLE")
+    query = db.query(IpadDevice).filter(
+        IpadDevice.status == "AVAILABLE",
+        IpadDevice.is_archived.is_(False),
+    )
     if search:
         value = f"%{search}%"
         query = query.filter(
@@ -115,7 +329,8 @@ def resolve_available_ipads(
 
     normalized = {item.casefold() for item in requested}
     devices = db.query(IpadDevice).filter(
-        func.lower(IpadDevice.serial_number).in_(normalized)
+        func.lower(IpadDevice.serial_number).in_(normalized),
+        IpadDevice.is_archived.is_(False),
     ).order_by(IpadDevice.serial_number).all()
     devices_by_serial = {item.serial_number.casefold(): item for item in devices}
 
@@ -140,10 +355,13 @@ def resolve_available_ipads(
 @router.get("/groups")
 def ipad_groups(
     status_value: Optional[str] = Query(None, alias="status"),
+    include_archived: bool = Query(False),
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_admin_user),
 ):
     query = db.query(IpadDevice.device_name, IpadDevice.model, func.count(IpadDevice.id))
+    if not include_archived:
+        query = query.filter(IpadDevice.is_archived.is_(False))
     if status_value:
         query = query.filter(IpadDevice.status == status_value)
     return [{"device_name": name, "model": model or "", "count": count} for name, model, count in query.group_by(IpadDevice.device_name, IpadDevice.model).order_by(func.count(IpadDevice.id).desc()).all()]
@@ -156,12 +374,15 @@ def list_ipads(
     model: Optional[str] = None,
     duplicate_tags_only: bool = Query(False),
     tag_order: Literal["asc", "desc"] = Query("asc"),
+    include_archived: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     db: Session = Depends(get_db),
     _current_user: User = Depends(get_current_admin_user),
 ):
     query = db.query(IpadDevice)
+    if not include_archived:
+        query = query.filter(IpadDevice.is_archived.is_(False))
     if status_value:
         query = query.filter(IpadDevice.status == status_value)
     if model is not None:
@@ -218,6 +439,76 @@ def list_ipads(
         )
         for item in devices
     ], "total": total, "page": page, "page_size": page_size}
+
+
+@router.post("/sync/preview")
+def preview_ipad_inventory_sync(
+    payload: IpadInventorySyncRequest,
+    db: Session = Depends(get_db),
+    _current_user: User = Depends(get_current_admin_user),
+):
+    preview, _operations = _build_ipad_sync_plan(db, _sync_request_to_csv(payload))
+    return preview
+
+
+@router.post("/sync/apply")
+def apply_ipad_inventory_sync(
+    payload: IpadInventorySyncRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    preview, operations = _build_ipad_sync_plan(db, _sync_request_to_csv(payload), lock_devices=True)
+    if preview["blocking_errors"]:
+        raise HTTPException(status_code=422, detail=preview["blocking_errors"])
+
+    for operation in operations:
+        action = operation["action"]
+        device = operation["device"]
+        row = operation["row"]
+        if action == "DELETE":
+            record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_SYNC_DELETED", {
+                "tag": device.tag,
+                "serial_number": device.serial_number,
+            })
+            db.delete(device)
+        elif action == "ARCHIVE":
+            device.is_archived = True
+            record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_SYNC_ARCHIVED", {
+                "tag": device.tag,
+                "serial_number": device.serial_number,
+            })
+        elif action in {"UPDATE", "REACTIVATE"}:
+            device.tag = row["tag"]
+            device.model = row["model"]
+            device.device_name = row["device_name"]
+            device.is_archived = False
+            record_audit(db, current_user, "IPAD_DEVICE", device.id, f"IPAD_DEVICE_SYNC_{action}", {
+                "tag": device.tag,
+                "serial_number": device.serial_number,
+            })
+        elif action == "ADD":
+            device = IpadDevice(
+                id=uuid.uuid4(),
+                device_name=row["device_name"],
+                model=row["model"],
+                tag=row["tag"],
+                serial_number=row["serial_number"],
+                status="AVAILABLE",
+                is_archived=False,
+            )
+            db.add(device)
+            record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_SYNC_ADDED", {
+                "tag": device.tag,
+                "serial_number": device.serial_number,
+            })
+
+    record_audit(db, current_user, "IPAD_INVENTORY", current_user.id, "IPAD_INVENTORY_SYNC_APPLIED", preview["summary"])
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Синхронизация конфликтует с текущим реестром iPad")
+    return {**preview, "applied": True}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
