@@ -75,8 +75,9 @@ def test_ipad_csv_sync_previews_and_applies_safe_changes(http_env):
     summary = preview.json()["summary"]
     assert summary["add"] == 2
     assert summary["update"] == 1
-    assert summary["delete"] == 1
-    assert summary["archive"] == 2
+    assert summary["delete"] == 0
+    assert summary["archive"] == 0
+    assert summary["keep_existing"] == 3
     assert summary["keep_active"] == 1
     assert summary["conflict"] == 0
     assert preview.json()["can_apply"] is True
@@ -88,7 +89,7 @@ def test_ipad_csv_sync_previews_and_applies_safe_changes(http_env):
     )
     assert applied.status_code == 200, applied.text
 
-    assert db.query(IpadDevice).filter(IpadDevice.serial_number == "STALE-SERIAL").first() is None
+    assert db.query(IpadDevice).filter(IpadDevice.serial_number == "STALE-SERIAL").one().id == stale.id
     externally_named = db.query(IpadDevice).filter(IpadDevice.serial_number == "CONFLICT-SERIAL").one()
     assert externally_named.status == "AVAILABLE"
     assert externally_named.device_name == "iPad"
@@ -103,14 +104,22 @@ def test_ipad_csv_sync_previews_and_applies_safe_changes(http_env):
     assert active.tag == "100"
     assert active.model == "Active model"
     assert active.is_archived is False
-    assert historical.is_archived is True
-    assert maintenance.is_archived is True
+    assert historical.is_archived is False
+    assert maintenance.is_archived is False
+    assert maintenance.status == "MAINTENANCE"
 
     hidden = client.get("/api/ipad-inventory?search=HISTORY-SERIAL", headers=headers)
     visible = client.get("/api/ipad-inventory?search=HISTORY-SERIAL&include_archived=true", headers=headers)
-    assert hidden.json()["total"] == 0
+    assert hidden.json()["total"] == 1
     assert visible.json()["total"] == 1
-    assert visible.json()["items"][0]["is_archived"] is True
+    assert visible.json()["items"][0]["is_archived"] is False
+
+    repeated = client.post(
+        "/api/ipad-inventory/sync/apply", headers=headers, json={"csv_text": csv_text},
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["safe_changes"] == 0
+    assert db.query(IpadDevice).count() == 7
 
 
 def test_ipad_csv_sync_blocks_duplicate_serial(http_env):
@@ -136,6 +145,33 @@ def test_ipad_csv_sync_blocks_duplicate_serial(http_env):
     assert preview.json()["can_apply"] is False
     assert len(preview.json()["blocking_errors"]) == 1
     assert applied.status_code == 422
+
+
+def test_partial_ipad_list_merges_by_serial_without_removing_other_records(http_env):
+    client, db, _admin, _signer = http_env
+    headers = admin_headers(client)
+    changed = IpadDevice(device_name="Old name", tag="100", serial_number="AbC123", status="AVAILABLE")
+    untouched = IpadDevice(device_name="iPad", tag="200", serial_number="OTHER", status="AVAILABLE")
+    archived = IpadDevice(device_name="iPad", tag="300", serial_number="ARCHIVED", status="AVAILABLE", is_archived=True)
+    db.add_all([changed, untouched, archived])
+    db.commit()
+    response = client.post("/api/ipad-inventory/sync/apply", headers=headers, json={
+        "csv_text": "101,Updated model,Ignored name, abc123 ,,\n400,New model,iPad,NEW,,",
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["delete"] == 0
+    assert response.json()["summary"]["archive"] == 0
+    assert db.query(IpadDevice).count() == 4
+    db.refresh(changed)
+    db.refresh(untouched)
+    db.refresh(archived)
+    assert changed.serial_number == "AbC123"
+    assert changed.tag == "101"
+    assert changed.model == "Updated model"
+    assert changed.device_name == "iPad"
+    assert untouched.tag == "200"
+    assert untouched.is_archived is False
+    assert archived.is_archived is True
 
 
 def test_ipad_sync_keeps_duplicate_tags_and_warns_without_blocking(http_env):

@@ -165,7 +165,6 @@ def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False
         device_query = device_query.with_for_update()
     devices = device_query.all()
     device_ids = [item.id for item in devices]
-    history_ids = _history_device_ids(db, device_ids)
     active_assignments = db.query(IpadStudentAssignment).filter(
         IpadStudentAssignment.ipad_device_id.in_(device_ids),
         IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES),
@@ -225,20 +224,15 @@ def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False
 
         result_rows.append({**row, "action": action, "message": message, "device_id": str(existing.id) if existing else None})
 
-    removals = []
+    missing_results = []
     for device in missing_devices:
         if device.id in active_by_device or device.status in active_device_statuses:
             action = "KEEP_ACTIVE"
             message = "Отсутствует в CSV, но защищён активным актом"
-        elif device.id in history_ids or device.status != "AVAILABLE":
-            action = "ARCHIVE"
-            message = "Отсутствует в CSV; будет скрыт с сохранением истории"
-            operations.append({"action": action, "device": device, "row": None})
         else:
-            action = "DELETE"
-            message = "Свободный iPad без истории будет удалён"
-            operations.append({"action": action, "device": device, "row": None})
-        removals.append({
+            action = "KEEP_EXISTING"
+            message = "Отсутствует в файле; остаётся в реестре без изменений"
+        missing_results.append({
             "device_id": str(device.id),
             "tag": device.tag,
             "serial_number": device.serial_number,
@@ -253,24 +247,20 @@ def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False
         for device in devices if not device.is_archived
     }
     for operation in operations:
-        device = operation["device"]
         row = operation["row"]
-        if operation["action"] in {"DELETE", "ARCHIVE"}:
-            projected_tags.pop(device.serial_number.strip().casefold(), None)
-        elif row:
-            projected_tags[row["serial_number"].casefold()] = row["tag"].casefold()
+        projected_tags[row["serial_number"].casefold()] = row["tag"].casefold()
     tag_counts: dict[str, int] = {}
     for tag in projected_tags.values():
         tag_counts[tag] = tag_counts.get(tag, 0) + 1
-    for item in result_rows + removals:
+    for item in result_rows + missing_results:
         serial_key = item["serial_number"].strip().casefold()
         count = tag_counts.get(projected_tags.get(serial_key, ""), 0)
         item["duplicate_tag_count"] = count if count > 1 else 0
         item["warning"] = "Tag повторяется; устройства сохраняются по уникальному Serial Number" if count > 1 else ""
 
     action_counts = {
-        action: sum(1 for item in result_rows + removals if item["action"] == action)
-        for action in ("ADD", "UPDATE", "REACTIVATE", "DELETE", "ARCHIVE", "KEEP_ACTIVE", "CONFLICT", "UNCHANGED")
+        action: sum(1 for item in result_rows + missing_results if item["action"] == action)
+        for action in ("ADD", "UPDATE", "REACTIVATE", "DELETE", "ARCHIVE", "KEEP_ACTIVE", "KEEP_EXISTING", "CONFLICT", "UNCHANGED")
     }
     response = {
         "summary": {
@@ -279,7 +269,7 @@ def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False
             **{key.lower(): value for key, value in action_counts.items()},
         },
         "rows": result_rows,
-        "missing_devices": removals,
+        "missing_devices": missing_results,
         "blocking_errors": blocking_errors,
         "can_apply": not blocking_errors,
         "safe_changes": len(operations),
@@ -459,19 +449,7 @@ def apply_ipad_inventory_sync(
         action = operation["action"]
         device = operation["device"]
         row = operation["row"]
-        if action == "DELETE":
-            record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_SYNC_DELETED", {
-                "tag": device.tag,
-                "serial_number": device.serial_number,
-            })
-            db.delete(device)
-        elif action == "ARCHIVE":
-            device.is_archived = True
-            record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_SYNC_ARCHIVED", {
-                "tag": device.tag,
-                "serial_number": device.serial_number,
-            })
-        elif action in {"UPDATE", "REACTIVATE"}:
+        if action in {"UPDATE", "REACTIVATE"}:
             device.tag = row["tag"]
             device.model = row["model"]
             device.device_name = row["device_name"]
