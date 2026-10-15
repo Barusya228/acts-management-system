@@ -110,15 +110,7 @@ def _parse_ipad_sync_csv(csv_text: str) -> tuple[list[dict], list[str]]:
         if len(normalized) < 4:
             errors.append(f"Строка {line_number}: ожидается минимум 4 колонки")
             continue
-        tag, model, device_name, serial_number = normalized[:4]
-        asset_tag = normalized[4] if len(normalized) > 4 else ""
-        assigned_user = "" if (
-            not asset_tag
-            or asset_tag == "-"
-            or asset_tag.casefold() == (device_name or "iPad").casefold()
-        ) else asset_tag
-        raw_group = normalized[5] if len(normalized) > 5 else ""
-        group = "" if raw_group == "-" else raw_group
+        tag, model, _device_name, serial_number = normalized[:4]
         if not tag or not serial_number:
             errors.append(f"Строка {line_number}: Tag и Serial Number обязательны")
             continue
@@ -126,10 +118,12 @@ def _parse_ipad_sync_csv(csv_text: str) -> tuple[list[dict], list[str]]:
             "line_number": line_number,
             "tag": tag,
             "model": model or None,
-            "device_name": device_name or "iPad",
+            "device_name": "iPad",
             "serial_number": serial_number,
-            "assigned_user": assigned_user,
-            "group": group,
+            # Назначения оформляются только актами SmartAct. Дополнительные
+            # колонки MDM (Asset Tag / user / group) намеренно игнорируются.
+            "assigned_user": "",
+            "group": "",
         })
 
     serial_lines: dict[str, list[int]] = {}
@@ -212,48 +206,43 @@ def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False
     for row in rows:
         existing = devices_by_serial.get(row["serial_number"].casefold())
         active_assignment = active_by_device.get(existing.id) if existing else None
-        assigned_in_csv = bool(row["assigned_user"])
         action = "UNCHANGED"
         message = "Уже совпадает с реестром"
 
-        if assigned_in_csv and not active_assignment:
+        conflicting_tag_devices = [
+            device for device in devices
+            if device.tag.strip().casefold() == row["tag"].casefold()
+            and (not existing or device.id != existing.id)
+            and not device.is_archived
+            and device.id not in deletable_ids
+        ]
+        if conflicting_tag_devices:
             action = "CONFLICT"
-            message = "В CSV указано назначение, но активного электронного акта нет"
+            message = "Tag уже используется другим сохраняемым iPad"
+        elif existing and active_assignment:
+            action = "KEEP_ACTIVE"
+            message = "iPad находится в активном акте; данные защищены"
+        elif existing and existing.status in active_device_statuses:
+            action = "CONFLICT"
+            message = "Активный статус iPad не подтверждён назначением"
+        elif existing:
+            changed = (
+                existing.tag != row["tag"]
+                or existing.model != row["model"]
+                or existing.device_name != "iPad"
+            )
+            if existing.is_archived:
+                action = "REACTIVATE"
+                message = "Архивный iPad будет восстановлен"
+                operations.append({"action": action, "device": existing, "row": row})
+            elif changed:
+                action = "UPDATE"
+                message = "Tag и модель iPad будут обновлены"
+                operations.append({"action": action, "device": existing, "row": row})
         else:
-            conflicting_tag_devices = [
-                device for device in devices
-                if device.tag.strip().casefold() == row["tag"].casefold()
-                and (not existing or device.id != existing.id)
-                and not device.is_archived
-                and device.id not in deletable_ids
-            ]
-            if conflicting_tag_devices:
-                action = "CONFLICT"
-                message = "Tag уже используется другим сохраняемым iPad"
-            elif existing and active_assignment:
-                action = "KEEP_ACTIVE"
-                message = "iPad находится в активном акте; данные защищены"
-            elif existing and existing.status in active_device_statuses:
-                action = "CONFLICT"
-                message = "Активный статус iPad не подтверждён назначением"
-            elif existing:
-                changed = (
-                    existing.tag != row["tag"]
-                    or existing.model != row["model"]
-                    or existing.device_name != row["device_name"]
-                )
-                if existing.is_archived:
-                    action = "REACTIVATE"
-                    message = "Архивный iPad будет восстановлен"
-                    operations.append({"action": action, "device": existing, "row": row})
-                elif changed:
-                    action = "UPDATE"
-                    message = "Данные iPad будут обновлены"
-                    operations.append({"action": action, "device": existing, "row": row})
-            else:
-                action = "ADD"
-                message = "Новый iPad будет добавлен как свободный"
-                operations.append({"action": action, "device": None, "row": row})
+            action = "ADD"
+            message = "Новый iPad будет добавлен как свободный"
+            operations.append({"action": action, "device": None, "row": row})
 
         result_rows.append({**row, "action": action, "message": message, "device_id": str(existing.id) if existing else None})
 

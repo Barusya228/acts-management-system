@@ -73,12 +73,12 @@ def test_ipad_csv_sync_previews_and_applies_safe_changes(http_env):
 
     assert preview.status_code == 200, preview.text
     summary = preview.json()["summary"]
-    assert summary["add"] == 1
+    assert summary["add"] == 2
     assert summary["update"] == 1
     assert summary["delete"] == 1
     assert summary["archive"] == 2
     assert summary["keep_active"] == 1
-    assert summary["conflict"] == 1
+    assert summary["conflict"] == 0
     assert preview.json()["can_apply"] is True
 
     applied = client.post(
@@ -89,7 +89,9 @@ def test_ipad_csv_sync_previews_and_applies_safe_changes(http_env):
     assert applied.status_code == 200, applied.text
 
     assert db.query(IpadDevice).filter(IpadDevice.serial_number == "STALE-SERIAL").first() is None
-    assert db.query(IpadDevice).filter(IpadDevice.serial_number == "CONFLICT-SERIAL").first() is None
+    externally_named = db.query(IpadDevice).filter(IpadDevice.serial_number == "CONFLICT-SERIAL").one()
+    assert externally_named.status == "AVAILABLE"
+    assert externally_named.device_name == "iPad"
     new_device = db.query(IpadDevice).filter(IpadDevice.serial_number == "NEW-SERIAL").one()
     assert new_device.status == "AVAILABLE"
     updated = db.query(IpadDevice).filter(IpadDevice.serial_number == "UPDATE-SERIAL").one()
@@ -162,7 +164,7 @@ def test_ipad_sync_accepts_xlsx_upload(http_env):
     assert response.json()["rows"][0]["serial_number"] == "DMPCVBV2MF3R"
 
 
-def test_ipad_sync_unwraps_mdm_csv_exported_as_single_quoted_column(http_env):
+def test_ipad_sync_unwraps_mdm_csv_and_ignores_user_and_group_columns(http_env):
     client, _db, _admin, _signer = http_env
     headers = admin_headers(client)
     csv_text = "\n".join([
@@ -181,8 +183,9 @@ def test_ipad_sync_unwraps_mdm_csv_exported_as_single_quoted_column(http_env):
     data = response.json()
     assert data["blocking_errors"] == []
     assert data["summary"]["input_rows"] == 2
-    assert data["summary"]["add"] == 1
-    assert data["summary"]["conflict"] == 1
+    assert data["summary"]["add"] == 2
+    assert data["summary"]["conflict"] == 0
     assert data["rows"][0]["assigned_user"] == ""
-    assert data["rows"][0]["group"] == "HTA science"
-    assert data["rows"][1]["assigned_user"] == "Ospanov Meirali"
+    assert data["rows"][0]["group"] == ""
+    assert data["rows"][1]["assigned_user"] == ""
+    assert all(row["device_name"] == "iPad" for row in data["rows"])
