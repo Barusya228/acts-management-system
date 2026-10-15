@@ -127,16 +127,11 @@ def _parse_ipad_sync_csv(csv_text: str) -> tuple[list[dict], list[str]]:
         })
 
     serial_lines: dict[str, list[int]] = {}
-    tag_lines: dict[str, list[int]] = {}
     for row in parsed:
         serial_lines.setdefault(row["serial_number"].casefold(), []).append(row["line_number"])
-        tag_lines.setdefault(row["tag"].casefold(), []).append(row["line_number"])
     for lines in serial_lines.values():
         if len(lines) > 1:
             errors.append(f"Serial Number повторяется в строках: {', '.join(map(str, lines))}")
-    for lines in tag_lines.values():
-        if len(lines) > 1:
-            errors.append(f"Tag повторяется в строках: {', '.join(map(str, lines))}")
     if not parsed:
         errors.append("Список не содержит ни одной корректной строки")
     return parsed, errors
@@ -193,12 +188,6 @@ def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False
         device for device in devices
         if not device.is_archived and device.serial_number.strip().casefold() not in input_serials
     ]
-    deletable_ids = {
-        device.id for device in missing_devices
-        if device.status == "AVAILABLE"
-        and device.id not in active_by_device
-        and device.id not in history_ids
-    }
     active_device_statuses = set(ACTIVE_IPAD_ASSIGNMENT_STATUSES)
     operations: list[dict] = []
     result_rows: list[dict] = []
@@ -209,17 +198,7 @@ def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False
         action = "UNCHANGED"
         message = "Уже совпадает с реестром"
 
-        conflicting_tag_devices = [
-            device for device in devices
-            if device.tag.strip().casefold() == row["tag"].casefold()
-            and (not existing or device.id != existing.id)
-            and not device.is_archived
-            and device.id not in deletable_ids
-        ]
-        if conflicting_tag_devices:
-            action = "CONFLICT"
-            message = "Tag уже используется другим сохраняемым iPad"
-        elif existing and active_assignment:
+        if existing and active_assignment:
             action = "KEEP_ACTIVE"
             message = "iPad находится в активном акте; данные защищены"
         elif existing and existing.status in active_device_statuses:
@@ -267,12 +246,38 @@ def _build_ipad_sync_plan(db: Session, csv_text: str, lock_devices: bool = False
             "message": message,
         })
 
+    # Предупреждения отражают итоговый реестр, включая защищённые устройства,
+    # которые сохраняют прежний Tag, а не значение из входного файла.
+    projected_tags = {
+        device.serial_number.strip().casefold(): device.tag.strip().casefold()
+        for device in devices if not device.is_archived
+    }
+    for operation in operations:
+        device = operation["device"]
+        row = operation["row"]
+        if operation["action"] in {"DELETE", "ARCHIVE"}:
+            projected_tags.pop(device.serial_number.strip().casefold(), None)
+        elif row:
+            projected_tags[row["serial_number"].casefold()] = row["tag"].casefold()
+    tag_counts: dict[str, int] = {}
+    for tag in projected_tags.values():
+        tag_counts[tag] = tag_counts.get(tag, 0) + 1
+    for item in result_rows + removals:
+        serial_key = item["serial_number"].strip().casefold()
+        count = tag_counts.get(projected_tags.get(serial_key, ""), 0)
+        item["duplicate_tag_count"] = count if count > 1 else 0
+        item["warning"] = "Tag повторяется; устройства сохраняются по уникальному Serial Number" if count > 1 else ""
+
     action_counts = {
         action: sum(1 for item in result_rows + removals if item["action"] == action)
         for action in ("ADD", "UPDATE", "REACTIVATE", "DELETE", "ARCHIVE", "KEEP_ACTIVE", "CONFLICT", "UNCHANGED")
     }
     response = {
-        "summary": {"input_rows": len(rows), **{key.lower(): value for key, value in action_counts.items()}},
+        "summary": {
+            "input_rows": len(rows),
+            "duplicate_tags": sum(1 for count in tag_counts.values() if count > 1),
+            **{key.lower(): value for key, value in action_counts.items()},
+        },
         "rows": result_rows,
         "missing_devices": removals,
         "blocking_errors": blocking_errors,

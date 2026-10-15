@@ -113,7 +113,7 @@ def test_ipad_csv_sync_previews_and_applies_safe_changes(http_env):
     assert visible.json()["items"][0]["is_archived"] is True
 
 
-def test_ipad_csv_sync_blocks_duplicate_serial_and_tag(http_env):
+def test_ipad_csv_sync_blocks_duplicate_serial(http_env):
     client, _db, _admin, _signer = http_env
     headers = admin_headers(client)
     csv_text = "\n".join([
@@ -134,8 +134,43 @@ def test_ipad_csv_sync_blocks_duplicate_serial_and_tag(http_env):
 
     assert preview.status_code == 200, preview.text
     assert preview.json()["can_apply"] is False
-    assert len(preview.json()["blocking_errors"]) == 2
+    assert len(preview.json()["blocking_errors"]) == 1
     assert applied.status_code == 422
+
+
+def test_ipad_sync_keeps_duplicate_tags_and_warns_without_blocking(http_env):
+    client, db, _admin, _signer = http_env
+    headers = admin_headers(client)
+    protected = IpadDevice(device_name="iPad", tag="100", serial_number="PROTECTED", status="RESERVED")
+    existing = IpadDevice(device_name="iPad", tag="200", serial_number="EXISTING", status="AVAILABLE")
+    db.add_all([protected, existing])
+    db.commit()
+    csv_text = "\n".join([
+        "100,Model,iPad,NEW-1,,",
+        "100,Model,iPad,NEW-2,,",
+        "100,Model,iPad,EXISTING,,",
+    ])
+    payload = {"csv_text": csv_text}
+    preview = client.post("/api/ipad-inventory/sync/preview", headers=headers, json=payload)
+    assert preview.status_code == 200, preview.text
+    data = preview.json()
+    assert data["can_apply"] is True
+    assert data["blocking_errors"] == []
+    assert data["summary"]["conflict"] == 0
+    assert data["summary"]["duplicate_tags"] == 1
+    assert data["summary"]["add"] == 2
+    assert data["summary"]["update"] == 1
+    assert all(item["duplicate_tag_count"] == 4 for item in data["rows"] + data["missing_devices"])
+
+    applied = client.post("/api/ipad-inventory/sync/apply", headers=headers, json=payload)
+    assert applied.status_code == 200, applied.text
+    assert db.query(IpadDevice).filter(IpadDevice.tag == "100").count() == 4
+    db.refresh(protected)
+    assert protected.status == "RESERVED"
+    assert protected.is_archived is False
+    listed = client.get("/api/ipad-inventory?duplicate_tags_only=true", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 4
 
 
 def test_ipad_sync_accepts_xlsx_upload(http_env):
