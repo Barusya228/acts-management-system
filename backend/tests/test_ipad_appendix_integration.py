@@ -190,6 +190,23 @@ def test_cancel_replacement_appendix_releases_reserved_ipad(ipad_data):
     assert new_device.status == "AVAILABLE"
 
 
+def test_bulk_retire_checks_active_assignment_even_if_device_status_is_available(ipad_data):
+    from app.schemas.schemas import IpadBulkRetireRequest
+
+    db, user, _issuer, _responsible, _act, _assignment, old_device, new_device = ipad_data
+    old_device.status = "AVAILABLE"
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        ipad_inventory_api.retire_ipads(
+            IpadBulkRetireRequest(device_ids=[old_device.id, new_device.id]), db, user,
+        )
+    assert error.value.status_code == 409
+    db.refresh(old_device)
+    db.refresh(new_device)
+    assert old_device.status == "AVAILABLE"
+    assert new_device.status == "AVAILABLE"
+
+
 def test_custom_replacement_reason_is_saved_with_maintenance_result(ipad_data):
     db, user, _issuer, responsible, act, assignment, _old_device, new_device = ipad_data
     option = IpadOperationOption(

@@ -309,6 +309,10 @@ class IpadInventorySyncRequest(BaseModel):
     file_base64: Optional[str] = Field(default=None, max_length=15_000_000)
 
 
+class IpadBulkRetireRequest(BaseModel):
+    device_ids: list[UUID4] = Field(min_length=1, max_length=500)
+
+
 class IpadBulkRow(BaseModel):
     tag: str
     serial_number: str

@@ -132,6 +132,9 @@ export default function InventoryPage() {
   const [smallEquipmentGroups, setSmallEquipmentGroups] = useState<SmallEquipmentGroup[]>([]);
   const [manualTotal, setManualTotal] = useState(0);
   const [ipadItems, setIpadItems] = useState<IpadInventoryItem[]>([]);
+  const [selectedIpads, setSelectedIpads] = useState<IpadInventoryItem[]>([]);
+  const [retireConfirmOpen, setRetireConfirmOpen] = useState(false);
+  const [retiring, setRetiring] = useState(false);
   const [ipadTotal, setIpadTotal] = useState(0);
   const [ipadGroups, setIpadGroups] = useState<IpadGroup[]>([]);
   const [selectedIpadGroup, setSelectedIpadGroup] = useState('');
@@ -149,6 +152,34 @@ export default function InventoryPage() {
   const [ipadForm, setIpadForm] = useState({ device_name: 'iPad', model: '', status: 'AVAILABLE', tag: '', serial_number: '', notes: '', list: '' });
   const [ipadHistory, setIpadHistory] = useState<{ device: IpadInventoryItem; events: { type: string; title: string; detail: string; status: string; act_id: string; created_at: string }[] } | null>(null);
   const [ipadHistoryLoading, setIpadHistoryLoading] = useState(false);
+
+  const canRetireIpad = (item: IpadInventoryItem) => !item.is_archived && !item.act_id
+    && ['AVAILABLE', 'MAINTENANCE'].includes(item.status);
+  const selectablePageIpads = ipadItems.filter(canRetireIpad);
+  const allPageIpadsSelected = selectablePageIpads.length > 0
+    && selectablePageIpads.every(item => selectedIpads.some(selected => selected.id === item.id));
+
+  const retireSelectedIpads = async () => {
+    if (!selectedIpads.length || retiring) return;
+    setRetiring(true);
+    try {
+      const response = await api.post('/api/ipad-inventory/bulk/retire', {
+        device_ids: selectedIpads.map(item => item.id),
+      });
+      showToast(`Списано iPad: ${response.data.retired}. История сохранена`, 'success');
+      setSelectedIpads([]);
+      setRetireConfirmOpen(false);
+      setRefreshKey(value => value + 1);
+    } catch (error: any) {
+      showToast(error.response?.data?.detail || 'Не удалось списать iPad', 'error');
+    } finally {
+      setRetiring(false);
+    }
+  };
+
+  useEffect(() => {
+    setSelectedIpads([]);
+  }, [inventoryView, ipadStatusFilter, selectedIpadGroup, duplicateIpadTagsOnly, showArchivedIpads, refreshKey]);
 
   const openIpadHistory = async (deviceId: string) => {
     setIpadHistoryLoading(true);
@@ -759,6 +790,10 @@ export default function InventoryPage() {
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{loadError}</div>
         ) : inventoryView === 'ipads' ? (
           <>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-3 ring-1 ring-slate-200">
+              <div><p className="text-sm font-bold text-slate-800">Выбрано iPad: {selectedIpads.length}</p><p className="text-xs text-slate-500">Выбор сохраняется между страницами. Выданные, архивные и уже списанные устройства недоступны.</p></div>
+              <div className="flex gap-2"><button type="button" disabled={!selectedIpads.length} onClick={() => setSelectedIpads([])} className="min-h-11 rounded-xl bg-slate-100 px-3 text-sm font-bold text-slate-600 disabled:opacity-40">Снять выбор</button><button type="button" disabled={!selectedIpads.length} onClick={() => setRetireConfirmOpen(true)} className="min-h-11 rounded-xl bg-red-600 px-4 text-sm font-bold text-white disabled:opacity-40">Списать выбранные ({selectedIpads.length})</button></div>
+            </div>
             {ipadItems.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
                 <p className="font-black text-slate-700">iPad не найдены</p>
@@ -769,6 +804,11 @@ export default function InventoryPage() {
                 <table className="w-full min-w-[980px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                      <th className="px-3 py-3"><input type="checkbox" aria-label="Выбрать доступные iPad на этой странице" disabled={!selectablePageIpads.length} checked={allPageIpadsSelected} onChange={event => {
+                        const pageIds = new Set(selectablePageIpads.map(item => item.id));
+                        const checked = event.target.checked;
+                        setSelectedIpads(current => checked ? [...current.filter(item => !pageIds.has(item.id)), ...selectablePageIpads] : current.filter(item => !pageIds.has(item.id)));
+                      }} className="h-5 w-5"/></th>
                       <th className="px-4 py-3 font-semibold">iPad</th>
                        <th className="px-4 py-3 font-semibold" aria-sort={ipadTagOrder === 'asc' ? 'ascending' : 'descending'}>
                          <button
@@ -790,6 +830,10 @@ export default function InventoryPage() {
                   <tbody>
                     {ipadItems.map(item => (
                       <tr key={item.id} className={`border-b border-slate-100 last:border-b-0 hover:bg-slate-50 ${item.is_archived ? 'bg-slate-100/80 opacity-70' : item.duplicate_tag_count > 1 ? 'bg-amber-50/60' : ''}`}>
+                        <td className="px-3 py-3"><input type="checkbox" aria-label={`Выбрать iPad Tag ${item.tag}, Serial ${item.serial_number}`} disabled={!canRetireIpad(item)} checked={selectedIpads.some(selected => selected.id === item.id)} onChange={event => {
+                          const checked = event.target.checked;
+                          setSelectedIpads(current => checked ? [...current.filter(selected => selected.id !== item.id), item] : current.filter(selected => selected.id !== item.id));
+                        }} className="h-5 w-5 disabled:opacity-30"/></td>
                         <td className="max-w-[200px] px-4 py-3">
                           <span className="block truncate font-bold text-slate-900" title={item.notes || undefined}>📱 {item.device_name}{item.notes ? ' 📝' : ''}</span>
                           <span className="block truncate text-xs text-slate-400">{item.model || 'Без модели'}</span>
@@ -1112,6 +1156,12 @@ export default function InventoryPage() {
           setRefreshKey(value => value + 1);
         }}
       />}
+
+      {retireConfirmOpen && <Modal onClose={() => { if (!retiring) setRetireConfirmOpen(false); }} title="Списать выбранные iPad?">
+        <p className="text-sm leading-6 text-slate-600">Вы уверены, что хотите списать {selectedIpads.length} iPad? Статус станет «Списан». Устройства исчезнут из доступных для выдачи, но останутся в реестре вместе с историей актов.</p>
+        <div className="mt-4 max-h-60 space-y-2 overflow-y-auto">{selectedIpads.map(item => <div key={item.id} className="rounded-xl bg-slate-50 p-3"><p className="text-sm font-bold">{item.model || item.device_name} · Tag {item.tag}</p><p className="font-mono text-xs text-slate-500">{item.serial_number}</p></div>)}</div>
+        <div className="mt-5 flex gap-3"><button type="button" disabled={retiring || !selectedIpads.length} onClick={retireSelectedIpads} className="min-h-12 flex-1 rounded-xl bg-red-600 px-4 text-sm font-bold text-white disabled:opacity-50">{retiring ? 'Списание...' : 'Подтвердить списание'}</button><button type="button" disabled={retiring} onClick={() => setRetireConfirmOpen(false)} className="min-h-12 rounded-xl bg-slate-100 px-4 text-sm font-bold">Отмена</button></div>
+      </Modal>}
 
       {deleteTarget && (
         <Modal onClose={() => setDeleteTarget(null)} title="Удалить устройство?">

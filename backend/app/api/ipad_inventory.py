@@ -15,7 +15,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_admin_user, get_current_guest_or_admin_user
 from app.db.models import Act, IpadActAppendix, IpadDevice, IpadStudentAssignment, User
 from app.db.states import ACTIVE_IPAD_ASSIGNMENT_STATUSES
-from app.schemas.schemas import IpadAvailableResolveRequest, IpadDeviceBulkCreate, IpadDeviceCreate, IpadDeviceUpdate, IpadInventorySyncRequest
+from app.schemas.schemas import IpadAvailableResolveRequest, IpadDeviceBulkCreate, IpadDeviceCreate, IpadDeviceUpdate, IpadInventorySyncRequest, IpadBulkRetireRequest
 from app.services.audit_service import record_audit
 
 
@@ -521,6 +521,44 @@ def bulk_create_ipads(data: IpadDeviceBulkCreate, db: Session = Depends(get_db),
     except IntegrityError:
         db.rollback(); raise HTTPException(status_code=409, detail="Serial Number уже используется")
     return {"created": len(created)}
+
+
+@router.post("/bulk/retire")
+def retire_ipads(
+    payload: IpadBulkRetireRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    device_ids = set(payload.device_ids)
+    devices = db.query(IpadDevice).filter(IpadDevice.id.in_(device_ids)).order_by(
+        IpadDevice.id
+    ).populate_existing().with_for_update().all()
+    if len(devices) != len(device_ids):
+        raise HTTPException(status_code=404, detail="Один из выбранных iPad не найден. Обновите список")
+    active_ids = {
+        device_id for device_id, in db.query(IpadStudentAssignment.ipad_device_id).filter(
+            IpadStudentAssignment.ipad_device_id.in_(device_ids),
+            IpadStudentAssignment.status.in_(ACTIVE_IPAD_ASSIGNMENT_STATUSES),
+        ).distinct().all()
+    }
+    blocked = [device for device in devices if device.is_archived or device.id in active_ids
+               or device.status not in {"AVAILABLE", "MAINTENANCE"}]
+    if blocked:
+        raise HTTPException(status_code=409, detail=(
+            "Списание не выполнено. Недоступные iPad: "
+            + ", ".join(f"Tag {device.tag} / {device.serial_number}" for device in blocked)
+            + ". Можно списать только невыданные iPad или устройства на обслуживании без активного назначения."
+        ))
+    for device in devices:
+        previous_status = device.status
+        device.status = "RETIRED"
+        record_audit(db, current_user, "IPAD_DEVICE", device.id, "IPAD_DEVICE_RETIRED", {
+            "previous_status": previous_status,
+            "tag": device.tag,
+            "serial_number": device.serial_number,
+        })
+    db.commit()
+    return {"retired": len(devices)}
 
 
 @router.patch("/{device_id}")
